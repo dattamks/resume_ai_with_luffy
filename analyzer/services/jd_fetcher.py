@@ -1,5 +1,11 @@
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
 import requests
 from bs4 import BeautifulSoup
+
+from django.conf import settings
 
 
 class JDFetcher:
@@ -12,15 +18,60 @@ class JDFetcher:
             'Chrome/120.0.0.0 Safari/537.36'
         )
     }
-    TIMEOUT = 10
+
+    # Private/loopback IP ranges that must not be reachable (SSRF protection)
+    _BLOCKED_NETWORKS = [
+        ipaddress.ip_network('127.0.0.0/8'),       # loopback
+        ipaddress.ip_network('10.0.0.0/8'),         # private class A
+        ipaddress.ip_network('172.16.0.0/12'),      # private class B
+        ipaddress.ip_network('192.168.0.0/16'),     # private class C
+        ipaddress.ip_network('169.254.0.0/16'),     # link-local
+        ipaddress.ip_network('::1/128'),             # IPv6 loopback
+        ipaddress.ip_network('fc00::/7'),            # IPv6 unique-local
+        ipaddress.ip_network('fe80::/10'),           # IPv6 link-local
+    ]
+
+    def _validate_url(self, url: str) -> None:
+        """
+        Raise ValueError if `url` is not a safe, public HTTP(S) URL.
+        Prevents SSRF attacks by blocking private/loopback addresses.
+        """
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            raise ValueError('Only http:// and https:// URLs are allowed.')
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError('Invalid URL: missing hostname.')
+
+        # Resolve hostname to IP and check against blocked ranges
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+        except socket.gaierror as exc:
+            raise ValueError(f'Could not resolve hostname "{hostname}": {exc}') from exc
+
+        for family, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                continue
+            for network in self._BLOCKED_NETWORKS:
+                if ip in network:
+                    raise ValueError(
+                        f'The URL resolves to a private/reserved IP address ({ip}) '
+                        'and cannot be fetched.'
+                    )
 
     def fetch(self, url: str) -> str:
         """
         Fetch the page at `url` and return cleaned visible text.
         Raises ValueError on fetch failure or if no content is found.
         """
+        self._validate_url(url)
+
+        timeout = getattr(settings, 'JD_FETCH_TIMEOUT', 10)
         try:
-            response = requests.get(url, headers=self.HEADERS, timeout=self.TIMEOUT)
+            response = requests.get(url, headers=self.HEADERS, timeout=timeout)
             response.raise_for_status()
         except requests.RequestException as exc:
             raise ValueError(f'Failed to fetch job description URL: {exc}') from exc
