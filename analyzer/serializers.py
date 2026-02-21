@@ -31,6 +31,13 @@ class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
             )
         if not value.name.lower().endswith('.pdf'):
             raise serializers.ValidationError('Only PDF files are accepted.')
+        # Validate PDF magic bytes to prevent disguised file uploads
+        header = value.read(4)
+        value.seek(0)
+        if header != b'%PDF':
+            raise serializers.ValidationError(
+                'File content does not appear to be a valid PDF.'
+            )
         return value
 
     def validate(self, attrs):

@@ -1,5 +1,7 @@
+import logging
 from abc import ABC, abstractmethod
 
+logger = logging.getLogger('analyzer')
 
 ANALYSIS_PROMPT_TEMPLATE = """You are an expert resume reviewer and ATS (Applicant Tracking System) optimization specialist.
 
@@ -44,6 +46,53 @@ Return ONLY valid JSON — no markdown, no explanation, no extra text. Use this 
   "overall_assessment": "<2-3 sentence summary: strengths, biggest gaps, priority actions>"
 }}
 """
+
+_REQUIRED_FIELDS = {
+    'ats_score': int,
+    'ats_score_breakdown': dict,
+    'keyword_gaps': list,
+    'section_suggestions': dict,
+    'rewritten_bullets': list,
+    'overall_assessment': str,
+}
+
+_REQUIRED_BREAKDOWN_FIELDS = {'keyword_match', 'format_score', 'relevance_score'}
+_REQUIRED_SECTION_FIELDS = {'summary', 'experience', 'skills', 'education', 'overall'}
+
+
+def validate_ai_response(data: dict) -> None:
+    """
+    Validate that the AI response matches the expected schema.
+    Raises ValueError with a descriptive message on any mismatch.
+    """
+    for field, expected_type in _REQUIRED_FIELDS.items():
+        if field not in data:
+            raise ValueError(f'AI response missing required field: "{field}"')
+        if not isinstance(data[field], expected_type):
+            raise ValueError(
+                f'AI response field "{field}" expected {expected_type.__name__}, '
+                f'got {type(data[field]).__name__}'
+            )
+
+    # Validate ats_score range
+    score = data['ats_score']
+    if not (0 <= score <= 100):
+        raise ValueError(f'AI response "ats_score" out of range [0, 100]: {score}')
+
+    # Validate breakdown sub-fields
+    breakdown = data['ats_score_breakdown']
+    missing = _REQUIRED_BREAKDOWN_FIELDS - set(breakdown.keys())
+    if missing:
+        raise ValueError(f'AI response "ats_score_breakdown" missing fields: {missing}')
+    for k in _REQUIRED_BREAKDOWN_FIELDS:
+        if not isinstance(breakdown.get(k), (int, float)):
+            raise ValueError(f'AI response "ats_score_breakdown.{k}" must be numeric')
+
+    # Validate section_suggestions sub-fields
+    sections = data['section_suggestions']
+    missing_sections = _REQUIRED_SECTION_FIELDS - set(sections.keys())
+    if missing_sections:
+        raise ValueError(f'AI response "section_suggestions" missing fields: {missing_sections}')
 
 
 class AIProvider(ABC):

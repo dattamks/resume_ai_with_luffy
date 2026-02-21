@@ -1,8 +1,11 @@
+import logging
+
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from .models import ResumeAnalysis
@@ -13,6 +16,13 @@ from .serializers import (
 )
 from .services.analyzer import ResumeAnalyzer
 
+logger = logging.getLogger('analyzer')
+
+
+class AnalyzeThrottle(UserRateThrottle):
+    """Separate, stricter throttle for the expensive AI analysis endpoint."""
+    scope = 'analyze'
+
 
 class AnalyzeResumeView(APIView):
     """
@@ -21,6 +31,7 @@ class AnalyzeResumeView(APIView):
     """
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = [AnalyzeThrottle]
 
     def post(self, request):
         serializer = ResumeAnalysisCreateSerializer(data=request.data)
@@ -34,12 +45,24 @@ class AnalyzeResumeView(APIView):
             result = analyzer.run(analysis)
             detail = ResumeAnalysisDetailSerializer(result)
             return Response(detail.data, status=status.HTTP_201_CREATED)
-        except Exception as exc:
+        except ValueError as exc:
+            # Expected errors: bad PDF, bad URL, AI provider misconfiguration, etc.
+            logger.warning('Analysis failed (user=%s): %s', request.user.id, exc)
             analysis.status = ResumeAnalysis.STATUS_FAILED
             analysis.error_message = str(exc)
             analysis.save(update_fields=['status', 'error_message'])
             return Response(
-                {'detail': 'Analysis failed.', 'error': str(exc)},
+                {'detail': str(exc)},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        except Exception as exc:
+            # Unexpected server errors
+            logger.exception('Unexpected error during analysis (user=%s)', request.user.id)
+            analysis.status = ResumeAnalysis.STATUS_FAILED
+            analysis.error_message = str(exc)
+            analysis.save(update_fields=['status', 'error_message'])
+            return Response(
+                {'detail': 'An unexpected server error occurred. Please try again later.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

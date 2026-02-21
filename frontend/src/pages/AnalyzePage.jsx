@@ -31,21 +31,34 @@ export default function AnalyzePage() {
 
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }))
 
+  const MAX_FILE_BYTES = 5 * 1024 * 1024
+
   const handleDrop = (e) => {
     e.preventDefault()
     setDragging(false)
     const dropped = e.dataTransfer.files[0]
-    if (dropped?.type === 'application/pdf') {
-      setFile(dropped)
-      setError('')
-    } else {
+    if (!dropped) return
+    if (dropped.type !== 'application/pdf') {
       setError('Only PDF files are accepted.')
+      return
     }
+    if (dropped.size > MAX_FILE_BYTES) {
+      setError('File exceeds 5 MB limit. Please choose a smaller PDF.')
+      return
+    }
+    setFile(dropped)
+    setError('')
   }
 
   const handleFileInput = (e) => {
     const picked = e.target.files[0]
-    if (picked) { setFile(picked); setError('') }
+    if (!picked) return
+    if (picked.size > MAX_FILE_BYTES) {
+      setError('File exceeds 5 MB limit. Please choose a smaller PDF.')
+      return
+    }
+    setFile(picked)
+    setError('')
   }
 
   const handleSubmit = async (e) => {
@@ -73,11 +86,15 @@ export default function AnalyzePage() {
       })
       navigate(`/results/${data.id}`)
     } catch (err) {
-      const errs = err.response?.data
-      if (errs && typeof errs === 'object') {
-        setError(Object.values(errs).flat().join(' '))
+      const responseData = err.response?.data
+      if (responseData?.detail) {
+        setError(responseData.detail)
+      } else if (responseData && typeof responseData === 'object') {
+        setError(Object.values(responseData).flat().join(' '))
+      } else if (err.response?.status === 429) {
+        setError('Too many requests. Please wait before submitting another analysis.')
       } else {
-        setError('Analysis failed. Ensure your API key is configured.')
+        setError('An unexpected error occurred. Please try again.')
       }
     } finally {
       setLoading(false)
