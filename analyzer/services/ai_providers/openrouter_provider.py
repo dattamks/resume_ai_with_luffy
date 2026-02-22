@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 
 from openai import OpenAI
@@ -9,6 +10,9 @@ from .base import AIProvider, validate_ai_response
 from .json_repair import repair_json
 
 logger = logging.getLogger('analyzer')
+
+# Strip markdown code fences that LLMs often wrap JSON in
+_MD_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)\n?\s*```$', re.DOTALL)
 
 
 class OpenRouterProvider(AIProvider):
@@ -53,6 +57,11 @@ class OpenRouterProvider(AIProvider):
         print(f'[DEBUG]   OpenRouter: response received in {elapsed:.2f}s')
 
         raw = response.choices[0].message.content.strip()
+
+        # Strip markdown code fences (```json ... ```) that LLMs often wrap around JSON
+        fence_match = _MD_FENCE_RE.match(raw)
+        if fence_match:
+            raw = fence_match.group(1).strip()
 
         # Try to parse JSON — repair if needed
         try:
