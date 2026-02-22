@@ -1,6 +1,6 @@
 import logging
-import threading
 
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -15,44 +15,9 @@ from .serializers import (
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
 )
-from .services.analyzer import ResumeAnalyzer
+from .tasks import run_analysis_task
 
 logger = logging.getLogger('analyzer')
-
-
-def _run_analysis_in_background(analysis_id, user_id):
-    """Run the analysis pipeline in a background thread."""
-    import django
-    django.db.connections.close_all()
-
-    try:
-        analysis = ResumeAnalysis.objects.get(id=analysis_id)
-        analyzer = ResumeAnalyzer()
-        print(f'[DEBUG] Background thread: starting analysis pipeline (id={analysis_id})')
-        result = analyzer.run(analysis)
-        print(f'[DEBUG] Background thread: ✅ analysis complete (id={analysis_id}, ATS={result.ats_score})')
-    except ValueError as exc:
-        print(f'[DEBUG] Background thread: ❌ ValueError: {exc}')
-        logger.warning('Analysis failed (user=%s): %s', user_id, exc)
-        try:
-            analysis = ResumeAnalysis.objects.get(id=analysis_id)
-            analysis.status = ResumeAnalysis.STATUS_FAILED
-            analysis.pipeline_step = ResumeAnalysis.STEP_FAILED
-            analysis.error_message = str(exc)
-            analysis.save(update_fields=['status', 'pipeline_step', 'error_message'])
-        except Exception:
-            pass
-    except Exception as exc:
-        print(f'[DEBUG] Background thread: ❌ Unexpected error: {type(exc).__name__}: {exc}')
-        logger.exception('Unexpected error during analysis (user=%s)', user_id)
-        try:
-            analysis = ResumeAnalysis.objects.get(id=analysis_id)
-            analysis.status = ResumeAnalysis.STATUS_FAILED
-            analysis.pipeline_step = ResumeAnalysis.STEP_FAILED
-            analysis.error_message = str(exc)
-            analysis.save(update_fields=['status', 'pipeline_step', 'error_message'])
-        except Exception:
-            pass
 
 
 class AnalyzeThrottle(UserRateThrottle):
@@ -70,36 +35,17 @@ class AnalyzeResumeView(APIView):
     throttle_classes = [AnalyzeThrottle]
 
     def post(self, request):
-        print(f'\n{"="*60}')
-        print(f'[DEBUG] POST /api/analyze/ — user={request.user.username}')
-        print(f'[DEBUG] Request data keys: {list(request.data.keys())}')
-        print(f'[DEBUG] jd_input_type: {request.data.get("jd_input_type")}')
-        if request.FILES.get('resume_file'):
-            f = request.FILES['resume_file']
-            print(f'[DEBUG] Resume file: {f.name} ({f.size} bytes)')
-        print(f'{"="*60}')
-
-        print('[DEBUG] Step: Validating request data...')
         serializer = ResumeAnalysisCreateSerializer(data=request.data)
         if not serializer.is_valid():
-            print(f'[DEBUG] ❌ Validation FAILED: {serializer.errors}')
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        print('[DEBUG] ✅ Validation passed')
 
         analysis = serializer.save(user=request.user, status=ResumeAnalysis.STATUS_PROCESSING)
-        print(f'[DEBUG] ✅ Analysis record created (id={analysis.id}, status=processing)')
+        logger.info('Analysis record created (id=%s, status=processing)', analysis.id)
 
-        # Launch analysis in background thread — return immediately to avoid gateway timeout
-        print(f'[DEBUG] Launching background thread for analysis id={analysis.id}')
-        thread = threading.Thread(
-            target=_run_analysis_in_background,
-            args=(analysis.id, request.user.id),
-            daemon=True,
-        )
-        thread.start()
+        # Dispatch to Celery worker — returns immediately
+        run_analysis_task.delay(analysis.id, request.user.id)
 
-        print(f'[DEBUG] ✅ Returning 202 Accepted (id={analysis.id})')
-        print(f'{"="*60}\n')
+        logger.info('Celery task dispatched for analysis id=%s', analysis.id)
         return Response(
             {'id': analysis.id, 'status': analysis.status},
             status=status.HTTP_202_ACCEPTED,
@@ -135,19 +81,15 @@ class RetryAnalysisView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        print(f'[DEBUG] Retrying analysis id={analysis.id} from step={analysis.pipeline_step}')
+        logger.info('Retrying analysis id=%s from step=%s', analysis.id, analysis.pipeline_step)
 
         # Reset status to processing but keep pipeline_step (so it resumes from there)
         analysis.status = ResumeAnalysis.STATUS_PROCESSING
         analysis.error_message = ''
         analysis.save(update_fields=['status', 'error_message'])
 
-        thread = threading.Thread(
-            target=_run_analysis_in_background,
-            args=(analysis.id, request.user.id),
-            daemon=True,
-        )
-        thread.start()
+        # Dispatch to Celery worker
+        run_analysis_task.delay(analysis.id, request.user.id)
 
         return Response(
             {'id': analysis.id, 'status': analysis.status, 'pipeline_step': analysis.pipeline_step},
@@ -196,7 +138,7 @@ class AnalysisDeleteView(DestroyAPIView):
 class AnalysisPDFExportView(APIView):
     """
     GET /api/analyses/<id>/export-pdf/
-    Generate and return a PDF report for the analysis.
+    Return the pre-generated PDF from R2, or generate on-the-fly as fallback.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = []
@@ -213,6 +155,12 @@ class AnalysisPDFExportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # If a pre-generated PDF exists in R2, redirect to its signed URL
+        if analysis.report_pdf:
+            from django.shortcuts import redirect
+            return redirect(analysis.report_pdf.url)
+
+        # Fallback: generate on-the-fly (e.g. for older analyses before migration)
         from .services.pdf_report import render_analysis_pdf_html
         import weasyprint
 
@@ -226,3 +174,37 @@ class AnalysisPDFExportView(APIView):
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
+
+
+class AnalysisStatusView(APIView):
+    """
+    GET /api/analyses/<id>/status/
+    Ultra-fast polling endpoint — reads from Redis cache first,
+    falls back to DB. Returns minimal payload for polling.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get(self, request, pk):
+        # Try Redis cache first (set by Celery task)
+        cached = cache.get(f'analysis_status:{pk}')
+        if cached:
+            return Response(cached)
+
+        # Fallback to DB
+        try:
+            analysis = ResumeAnalysis.objects.only(
+                'id', 'status', 'pipeline_step', 'ats_score', 'error_message',
+            ).get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = {
+            'status': analysis.status,
+            'pipeline_step': analysis.pipeline_step,
+            'ats_score': analysis.ats_score,
+            'error_message': analysis.error_message,
+        }
+        # Populate cache for next poll
+        cache.set(f'analysis_status:{pk}', data, timeout=3600)
+        return Response(data)

@@ -83,12 +83,15 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
     """Full read serializer — returned after analysis is done."""
     scrape_result = ScrapeResultSerializer(read_only=True)
     llm_response = LLMResponseSerializer(read_only=True)
+    report_pdf_url = serializers.SerializerMethodField()
+    resume_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ResumeAnalysis
         fields = (
             'id',
             'resume_file',
+            'resume_file_url',
             'jd_input_type',
             'jd_text',
             'jd_url',
@@ -111,14 +114,27 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'rewritten_bullets',
             'overall_assessment',
             'ai_provider_used',
+            'celery_task_id',
+            'report_pdf_url',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
 
+    def get_report_pdf_url(self, obj):
+        if obj.report_pdf:
+            return obj.report_pdf.url
+        return None
+
+    def get_resume_file_url(self, obj):
+        if obj.resume_file:
+            return obj.resume_file.url
+        return None
+
 
 class ResumeAnalysisListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for list views."""
+    report_pdf_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ResumeAnalysis
@@ -130,6 +146,12 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
             'pipeline_step',
             'ats_score',
             'ai_provider_used',
+            'report_pdf_url',
             'created_at',
         )
         read_only_fields = fields
+
+    def get_report_pdf_url(self, obj):
+        if obj.report_pdf:
+            return obj.report_pdf.url
+        return None

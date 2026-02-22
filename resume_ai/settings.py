@@ -3,6 +3,7 @@ from pathlib import Path
 from decouple import config
 from datetime import timedelta
 from django.core.exceptions import ImproperlyConfigured
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -30,6 +31,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
+    'storages',
+    'django_celery_beat',
     'accounts',
     'analyzer',
     'frontend_app',
@@ -66,11 +69,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'resume_ai.wsgi.application'
 
+# Database — uses DATABASE_URL env var in production (PostgreSQL on Railway),
+# falls back to SQLite for local development.
+_DATABASE_URL = config('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db.sqlite3"}')
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.parse(
+        _DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -94,7 +101,87 @@ STATICFILES_DIRS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# ── Cloudflare R2 / S3 file storage ──────────────────────────────────────────
+# When AWS_STORAGE_BUCKET_NAME is set, uploaded files (resumes) go to R2.
+# Otherwise falls back to local filesystem (MEDIA_ROOT).
+_R2_BUCKET = config('AWS_STORAGE_BUCKET_NAME', default='')
+if _R2_BUCKET:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
+    AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY')
+    AWS_STORAGE_BUCKET_NAME = _R2_BUCKET
+    AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL')  # https://<account>.r2.cloudflarestorage.com
+    AWS_S3_REGION_NAME = 'auto'  # R2 uses 'auto'
+    AWS_DEFAULT_ACL = None  # R2 doesn't support ACLs
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_QUERYSTRING_AUTH = True  # signed URLs for private files
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': 'max-age=86400',  # 1 day
+    }
+    # Media URL will be served via signed S3 URLs
+    MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{_R2_BUCKET}/'
+
+# ── Redis cache ──────────────────────────────────────────────────────────────
+# When REDIS_URL is set, use Redis for caching (DRF throttle state, sessions).
+# Otherwise falls back to in-memory cache for local development.
+_REDIS_URL = config('REDIS_URL', default='')
+if _REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': _REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            },
+        }
+    }
+    # Use Redis for session storage too
+    SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+    SESSION_CACHE_ALIAS = 'default'
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Celery (task queue) ──────────────────────────────────────────────────────
+# Uses Redis as broker and result backend when REDIS_URL is set.
+# Falls back to 'memory://' for local dev (tasks run eagerly/in-process).
+if _REDIS_URL:
+    CELERY_BROKER_URL = _REDIS_URL
+    CELERY_RESULT_BACKEND = _REDIS_URL
+else:
+    # In-memory broker for local development — tasks run synchronously
+    CELERY_BROKER_URL = 'memory://'
+    CELERY_RESULT_BACKEND = 'cache+memory://'
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 600  # 10 min hard limit
+CELERY_TASK_SOFT_TIME_LIMIT = 540  # 9 min soft limit
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# Celery Beat — periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-stale-analyses': {
+        'task': 'analyzer.tasks.cleanup_stale_analyses',
+        'schedule': 900.0,  # every 15 minutes
+    },
+    'flush-expired-tokens': {
+        'task': 'analyzer.tasks.flush_expired_tokens',
+        'schedule': 86400.0,  # once per day
+    },
+}
 
 # DRF
 REST_FRAMEWORK = {

@@ -158,6 +158,8 @@ class ResumeAnalysis(models.Model):
     overall_assessment = models.TextField(blank=True)
 
     ai_provider_used = models.CharField(max_length=50, blank=True)
+    celery_task_id = models.CharField(max_length=255, blank=True, help_text='Celery task ID for tracking')
+    report_pdf = models.FileField(upload_to='reports/', blank=True, help_text='Pre-generated PDF report (stored in R2)')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

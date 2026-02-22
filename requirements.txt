@@ -3,6 +3,21 @@ djangorestframework==3.15.2
 djangorestframework-simplejwt==5.3.1
 django-cors-headers==4.6.0
 python-decouple==3.8
+
+# Database (PostgreSQL on Railway, SQLite locally)
+dj-database-url==2.3.0
+psycopg2-binary==2.9.10
+
+# File storage (Cloudflare R2 / S3-compatible)
+django-storages[boto3]==1.14.4
+boto3==1.36.14
+
+# Cache (Redis on Railway, in-memory locally)
+django-redis==5.4.0
+
+# Task queue (Celery + Redis broker)
+celery[redis]==5.4.0
+django-celery-beat==2.7.0
 pdfplumber==0.11.4
 requests==2.32.3
 beautifulsoup4==4.12.3

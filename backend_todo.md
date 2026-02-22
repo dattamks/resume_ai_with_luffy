@@ -26,28 +26,28 @@
 
 ---
 
-## Phase 1 — PostgreSQL
+## Phase 1 — PostgreSQL  ✅
 
-- [ ] Add `psycopg2-binary` and `dj-database-url` to requirements.txt
-- [ ] Replace `DATABASES` block with `dj_database_url.config(default='sqlite:///db.sqlite3')`
-- [ ] Falls back to SQLite in local dev (no env var needed)
-- [ ] Env var: `DATABASE_URL=postgresql://user:pass@host:5432/dbname`
+- [x] Add `psycopg2-binary` and `dj-database-url` to requirements.txt
+- [x] Replace `DATABASES` block with `dj_database_url.config(default='sqlite:///db.sqlite3')`
+- [x] Falls back to SQLite in local dev (no env var needed)
+- [x] Env var: `DATABASE_URL=postgresql://user:pass@host:5432/dbname`
 - [ ] Run `migrate` on Railway via build command
 
-## Phase 2 — Cloudflare R2 (S3-compatible file storage)
+## Phase 2 — Cloudflare R2 (S3-compatible file storage)  ✅
 
-- [ ] Add `django-storages[boto3]` and `boto3` to requirements.txt
-- [ ] Configure `DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'`
-- [ ] Point at R2 endpoint (S3-compatible API)
-- [ ] Env vars: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_ENDPOINT_URL`
-- [ ] Resume PDF uploads (`resumes/`) stored in R2 instead of local `media/`
-- [ ] PDF extractor reads file via `analysis.resume_file.url` (works with both local and R2)
+- [x] Add `django-storages[boto3]` and `boto3` to requirements.txt
+- [x] Configure `DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'`
+- [x] Point at R2 endpoint (S3-compatible API)
+- [x] Env vars: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_ENDPOINT_URL`
+- [x] Resume PDF uploads (`resumes/`) stored in R2 instead of local `media/`
+- [x] PDF extractor reads file via `analysis.resume_file.url` (works with both local and R2)
 
-## Phase 3 — Redis
+## Phase 3 — Redis  ✅
 
-- [ ] Add `django-redis` to requirements.txt
-- [ ] Wire `CACHES` setting to Redis for DRF throttle state + general caching
-- [ ] Env var: `REDIS_URL=redis://host:6379/0`
+- [x] Add `django-redis` to requirements.txt
+- [x] Wire `CACHES` setting to Redis for DRF throttle state + general caching
+- [x] Env var: `REDIS_URL=redis://host:6379/0`
 - [ ] Optional future: Celery for async analysis pipeline (currently uses threading)
 
 ## Phase 4 — Separate Frontend & Backend

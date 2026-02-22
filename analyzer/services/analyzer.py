@@ -91,8 +91,8 @@ class ResumeAnalyzer:
             print(f'[DEBUG]   Skipping PDF extract — already have {len(analysis.resume_text)} chars')
             return
 
-        print(f'[DEBUG]   Extracting text from PDF: {analysis.resume_file.path}')
-        resume_text = self.pdf_extractor.extract(analysis.resume_file.path)
+        print(f'[DEBUG]   Extracting text from PDF: {analysis.resume_file.name}')
+        resume_text = self.pdf_extractor.extract(analysis.resume_file)
         analysis.resume_text = resume_text
         analysis.save(update_fields=['resume_text'])
         print(f'[DEBUG]   Extracted {len(resume_text)} chars')

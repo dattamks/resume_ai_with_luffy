@@ -1,35 +1,62 @@
+import io
+import logging
+
 import pdfplumber
+
+logger = logging.getLogger('analyzer')
 
 
 class PDFExtractor:
-    """Extracts plain text from a PDF file."""
+    """Extracts plain text from a PDF file (local or remote/R2)."""
 
-    def extract(self, file_path: str) -> str:
+    def extract(self, file_field) -> str:
         """
-        Extract all text from the PDF at `file_path`.
-        Returns the concatenated text of all pages.
-        Raises ValueError if no text could be extracted.
+        Extract all text from a PDF.
+
+        Args:
+            file_field: A Django FieldFile (FileField value), file path string,
+                        or file-like object. Works with both local storage and
+                        remote backends (S3/R2).
+
+        Returns:
+            Concatenated text of all pages.
+
+        Raises:
+            ValueError: If no text could be extracted.
         """
-        print(f'[DEBUG]   PDFExtractor: opening {file_path}')
         text_parts = []
 
-        with pdfplumber.open(file_path) as pdf:
-            print(f'[DEBUG]   PDFExtractor: PDF has {len(pdf.pages)} page(s)')
+        # Determine how to open the PDF
+        if isinstance(file_field, str):
+            # Plain file path (backward compat / local dev)
+            logger.debug('PDFExtractor: opening local path %s', file_field)
+            pdf_source = file_field
+        elif hasattr(file_field, 'open'):
+            # Django FieldFile — works with local and R2/S3 storage
+            logger.debug('PDFExtractor: reading from storage backend')
+            file_field.open('rb')
+            pdf_source = io.BytesIO(file_field.read())
+            file_field.close()
+        else:
+            # Generic file-like object
+            pdf_source = file_field
+
+        with pdfplumber.open(pdf_source) as pdf:
+            logger.debug('PDFExtractor: PDF has %d page(s)', len(pdf.pages))
             for i, page in enumerate(pdf.pages, 1):
                 page_text = page.extract_text()
                 if page_text:
                     text_parts.append(page_text.strip())
-                    print(f'[DEBUG]   PDFExtractor: page {i} — {len(page_text)} chars extracted')
+                    logger.debug('PDFExtractor: page %d — %d chars', i, len(page_text))
                 else:
-                    print(f'[DEBUG]   PDFExtractor: page {i} — no text found')
+                    logger.debug('PDFExtractor: page %d — no text found', i)
 
         if not text_parts:
-            print(f'[DEBUG]   PDFExtractor: ❌ No text extracted from any page')
             raise ValueError(
                 'Could not extract text from the uploaded PDF. '
                 'Please ensure the file is not a scanned image-only PDF.'
             )
 
         result = '\n\n'.join(text_parts)
-        print(f'[DEBUG]   PDFExtractor: ✅ total extracted: {len(result)} chars from {len(text_parts)} page(s)')
+        logger.debug('PDFExtractor: total extracted: %d chars from %d page(s)', len(result), len(text_parts))
         return result
