@@ -9,3 +9,8 @@ venv/
 dist/
 build/
 .DS_Store
+node_modules/
+package-lock.json
+logs/
+*.pdf
+luffy.md

@@ -1,95 +1,124 @@
-import ipaddress
-import socket
+import logging
 from urllib.parse import urlparse
 
-import requests
-from bs4 import BeautifulSoup
-
 from django.conf import settings
+from firecrawl import FirecrawlApp
+
+from ..models import ScrapeResult
+
+logger = logging.getLogger('analyzer')
 
 
 class JDFetcher:
-    """Fetches and cleans job description content from a URL."""
+    """Fetches and cleans job description content from a URL using Firecrawl."""
 
-    HEADERS = {
-        'User-Agent': (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36'
-        )
-    }
-
-    # Private/loopback IP ranges that must not be reachable (SSRF protection)
-    _BLOCKED_NETWORKS = [
-        ipaddress.ip_network('127.0.0.0/8'),       # loopback
-        ipaddress.ip_network('10.0.0.0/8'),         # private class A
-        ipaddress.ip_network('172.16.0.0/12'),      # private class B
-        ipaddress.ip_network('192.168.0.0/16'),     # private class C
-        ipaddress.ip_network('169.254.0.0/16'),     # link-local
-        ipaddress.ip_network('::1/128'),             # IPv6 loopback
-        ipaddress.ip_network('fc00::/7'),            # IPv6 unique-local
-        ipaddress.ip_network('fe80::/10'),           # IPv6 link-local
-    ]
+    def __init__(self):
+        api_key = getattr(settings, 'FIRECRAWL_API_KEY', '')
+        if not api_key:
+            raise ValueError('FIRECRAWL_API_KEY must be configured.')
+        self.app = FirecrawlApp(api_key=api_key)
 
     def _validate_url(self, url: str) -> None:
-        """
-        Raise ValueError if `url` is not a safe, public HTTP(S) URL.
-        Prevents SSRF attacks by blocking private/loopback addresses.
-        """
+        """Basic URL validation."""
         parsed = urlparse(url)
         if parsed.scheme not in ('http', 'https'):
             raise ValueError('Only http:// and https:// URLs are allowed.')
-        hostname = parsed.hostname
-        if not hostname:
+        if not parsed.hostname:
             raise ValueError('Invalid URL: missing hostname.')
 
-        # Resolve hostname to IP and check against blocked ranges
-        try:
-            addr_info = socket.getaddrinfo(hostname, None)
-        except socket.gaierror as exc:
-            raise ValueError(f'Could not resolve hostname "{hostname}": {exc}') from exc
-
-        for family, _, _, _, sockaddr in addr_info:
-            ip_str = sockaddr[0]
-            try:
-                ip = ipaddress.ip_address(ip_str)
-            except ValueError:
-                continue
-            for network in self._BLOCKED_NETWORKS:
-                if ip in network:
-                    raise ValueError(
-                        f'The URL resolves to a private/reserved IP address ({ip}) '
-                        'and cannot be fetched.'
-                    )
-
-    def fetch(self, url: str) -> str:
+    def fetch(self, url: str, user=None) -> tuple:
         """
-        Fetch the page at `url` and return cleaned visible text.
-        Raises ValueError on fetch failure or if no content is found.
+        Scrape the page at `url` via Firecrawl. Returns (cleaned_text, scrape_result).
+
+        Checks for a cached ScrapeResult first (same URL, < 24h old).
+        Creates and persists a ScrapeResult atomically.
+
+        Args:
+            url: The URL to scrape.
+            user: The Django User who triggered this (for FK linkage).
+
+        Returns:
+            Tuple of (cleaned_markdown_text, ScrapeResult instance).
         """
         self._validate_url(url)
 
-        timeout = getattr(settings, 'JD_FETCH_TIMEOUT', 10)
+        # ── Check cache ──
+        if user:
+            cached = ScrapeResult.find_cached(url)
+            if cached:
+                print(f'[DEBUG]   JDFetcher: ♻️ reusing cached scrape (id={cached.id}, age={cached.created_at})')
+                cleaned = self._clean_markdown(cached.markdown)
+                return cleaned, cached
+
+        # ── Create pending ScrapeResult ──
+        scrape = ScrapeResult.objects.create(
+            user=user,
+            source_url=url,
+            status=ScrapeResult.STATUS_PENDING,
+        ) if user else None
+
+        print(f'[DEBUG]   JDFetcher: scraping {url} via Firecrawl...')
         try:
-            response = requests.get(url, headers=self.HEADERS, timeout=timeout)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise ValueError(f'Failed to fetch job description URL: {exc}') from exc
+            result = self.app.scrape(url, formats=['markdown', 'json', 'summary'])
+        except Exception as exc:
+            print(f'[DEBUG]   JDFetcher: ❌ Firecrawl scrape failed: {exc}')
+            logger.error('Firecrawl scrape failed for %s: %s', url, exc)
+            if scrape:
+                scrape.status = ScrapeResult.STATUS_FAILED
+                scrape.error_message = str(exc)
+                scrape.save(update_fields=['status', 'error_message'])
+            raise ValueError(
+                f'Failed to fetch job description URL: {exc}'
+            ) from exc
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # ── Extract content from Document object ──
+        markdown = ''
+        json_data = None
+        summary = ''
 
-        # Remove script/style noise
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
-            tag.decompose()
+        if hasattr(result, 'markdown'):
+            markdown = result.markdown or ''
+        elif isinstance(result, dict):
+            markdown = result.get('markdown', '') or ''
 
-        text = soup.get_text(separator='\n')
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        cleaned = '\n'.join(lines)
+        if hasattr(result, 'json'):
+            json_data = result.json if result.json else None
+        elif isinstance(result, dict):
+            json_data = result.get('json') or None
 
-        if not cleaned:
+        if hasattr(result, 'summary'):
+            summary = result.summary or ''
+        elif isinstance(result, dict):
+            summary = result.get('summary', '') or ''
+
+        if not markdown:
+            print(f'[DEBUG]   JDFetcher: ❌ no markdown content extracted')
+            if scrape:
+                scrape.status = ScrapeResult.STATUS_FAILED
+                scrape.error_message = 'No readable content found at the provided URL.'
+                scrape.save(update_fields=['status', 'error_message'])
             raise ValueError('No readable content found at the provided URL.')
 
-        return cleaned
+        # ── Persist scrape result atomically ──
+        if scrape:
+            scrape.markdown = markdown
+            scrape.json_data = json_data
+            scrape.summary = summary
+            scrape.status = ScrapeResult.STATUS_DONE
+            scrape.save(update_fields=[
+                'markdown', 'json_data', 'summary', 'status', 'updated_at',
+            ])
+            print(f'[DEBUG]   JDFetcher: ✅ ScrapeResult saved (id={scrape.id})')
+
+        cleaned = self._clean_markdown(markdown)
+        print(f'[DEBUG]   JDFetcher: ✅ extracted {len(cleaned)} chars')
+        return cleaned, scrape
+
+    @staticmethod
+    def _clean_markdown(markdown: str) -> str:
+        """Collapse excessive whitespace from markdown."""
+        lines = [line.strip() for line in markdown.splitlines() if line.strip()]
+        return '\n'.join(lines)
 
     def build_from_form(
         self,

@@ -84,6 +84,7 @@ export default function AnalyzePage() {
       const { data } = await api.post('/analyze/', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
+      // Backend returns 202 with {id, status:'processing'} — navigate to results which will poll
       navigate(`/results/${data.id}`)
     } catch (err) {
       const responseData = err.response?.data

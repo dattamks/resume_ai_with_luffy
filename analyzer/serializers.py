@@ -1,7 +1,28 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse
+
+
+class ScrapeResultSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ScrapeResult
+        fields = (
+            'id', 'source_url', 'markdown', 'json_data', 'summary',
+            'status', 'error_message', 'created_at', 'updated_at',
+        )
+        read_only_fields = fields
+
+
+class LLMResponseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LLMResponse
+        fields = (
+            'id', 'prompt_sent', 'raw_response', 'parsed_response',
+            'model_used', 'status', 'error_message', 'duration_seconds',
+            'created_at',
+        )
+        read_only_fields = fields
 
 
 class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
@@ -60,6 +81,8 @@ class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
 
 class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
     """Full read serializer — returned after analysis is done."""
+    scrape_result = ScrapeResultSerializer(read_only=True)
+    llm_response = LLMResponseSerializer(read_only=True)
 
     class Meta:
         model = ResumeAnalysis
@@ -76,7 +99,10 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'jd_industry',
             'jd_extra_details',
             'resolved_jd',
+            'scrape_result',
+            'llm_response',
             'status',
+            'pipeline_step',
             'error_message',
             'ats_score',
             'ats_score_breakdown',
@@ -101,6 +127,7 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
             'jd_role',
             'jd_company',
             'status',
+            'pipeline_step',
             'ats_score',
             'ai_provider_used',
             'created_at',

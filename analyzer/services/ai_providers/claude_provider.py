@@ -17,14 +17,19 @@ class ClaudeProvider(AIProvider):
         self.model = model
 
     def analyze(self, resume_text: str, job_description: str) -> dict:
+        import time
         prompt = self._build_prompt(resume_text, job_description)
         max_tokens = getattr(settings, 'AI_MAX_TOKENS', 4096)
 
+        messages = [{'role': 'user', 'content': prompt}]
+
+        req_start = time.time()
         message = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            messages=[{'role': 'user', 'content': prompt}],
+            messages=messages,
         )
+        elapsed = time.time() - req_start
 
         raw = message.content[0].text.strip()
 
@@ -40,4 +45,10 @@ class ClaudeProvider(AIProvider):
             logger.error('Claude response failed schema validation: %s | raw=%s', exc, raw)
             raise
 
-        return data
+        return {
+            'parsed': data,
+            'raw': raw,
+            'prompt': json.dumps(messages),
+            'model': self.model,
+            'duration': elapsed,
+        }

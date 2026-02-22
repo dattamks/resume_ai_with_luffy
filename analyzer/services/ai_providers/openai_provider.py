@@ -17,15 +17,20 @@ class OpenAIProvider(AIProvider):
         self.model = model
 
     def analyze(self, resume_text: str, job_description: str) -> dict:
+        import time
         prompt = self._build_prompt(resume_text, job_description)
         max_tokens = getattr(settings, 'AI_MAX_TOKENS', 4096)
 
+        messages = [{'role': 'user', 'content': prompt}]
+
+        req_start = time.time()
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[{'role': 'user', 'content': prompt}],
+            messages=messages,
             max_tokens=max_tokens,
             response_format={'type': 'json_object'},
         )
+        elapsed = time.time() - req_start
 
         raw = response.choices[0].message.content.strip()
 
@@ -41,4 +46,10 @@ class OpenAIProvider(AIProvider):
             logger.error('OpenAI response failed schema validation: %s | raw=%s', exc, raw)
             raise
 
-        return data
+        return {
+            'parsed': data,
+            'raw': raw,
+            'prompt': json.dumps(messages),
+            'model': self.model,
+            'duration': elapsed,
+        }

@@ -14,7 +14,13 @@ class AnalyzerConfig(AppConfig):
         from django.conf import settings
 
         provider = getattr(settings, 'AI_PROVIDER', '').lower()
-        if provider == 'claude':
+        if provider == 'luffy':
+            if not getattr(settings, 'LUFFY_API_URL', '') or not getattr(settings, 'LUFFY_API_KEY', ''):
+                logger.warning(
+                    'AI_PROVIDER is "luffy" but LUFFY_API_URL / LUFFY_API_KEY is not set. '
+                    'Resume analysis will fail until this is configured.'
+                )
+        elif provider == 'claude':
             if not getattr(settings, 'ANTHROPIC_API_KEY', ''):
                 logger.warning(
                     'AI_PROVIDER is "claude" but ANTHROPIC_API_KEY is not set. '
@@ -28,6 +34,6 @@ class AnalyzerConfig(AppConfig):
                 )
         else:
             logger.warning(
-                'Unknown AI_PROVIDER "%s". Valid values: "claude", "openai".',
+                'Unknown AI_PROVIDER "%s". Valid values: "luffy", "claude", "openai".',
                 provider,
             )

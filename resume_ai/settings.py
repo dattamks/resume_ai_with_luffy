@@ -142,12 +142,34 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
 
 # AI Provider config
-AI_PROVIDER = config('AI_PROVIDER', default='claude')  # 'claude' or 'openai'
+AI_PROVIDER = config('AI_PROVIDER', default='luffy')  # 'luffy', 'claude', or 'openai'
+
+
+# Luffy / Self-deployed LLM
+LUFFY_API_URL = config('LUFFY_API_URL', default='')
+LUFFY_API_KEY = config('LUFFY_API_KEY', default='')
+LUFFY_MODEL = config('LUFFY_MODEL', default='luffy')
+LUFFY_TIMEOUT = config('LUFFY_TIMEOUT', default=300, cast=int)
+LUFFY_STREAM = config('LUFFY_STREAM', default=False, cast=bool)
+LUFFY_THINK = config('LUFFY_THINK', default=False, cast=bool)
+# Pipe-delimited system role(s) sent as system messages to the LLM
+LUFFY_SYSTEM_ROLE = config(
+    'LUFFY_SYSTEM_ROLE',
+    default='You are an expert resume reviewer and ATS optimization specialist. Return ONLY valid JSON — no markdown, no explanation, no extra text.',
+)
+
+# Anthropic
 ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
-OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 CLAUDE_MODEL = config('CLAUDE_MODEL', default='claude-sonnet-4-6')
+
+# OpenAI
+OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o')
+
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
+
+# Firecrawl
+FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')
 
 # Max resume file size: 5MB
 MAX_RESUME_SIZE_MB = config('MAX_RESUME_SIZE_MB', default=5, cast=int)

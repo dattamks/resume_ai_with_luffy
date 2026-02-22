@@ -93,18 +93,127 @@ export default function ResultsPage() {
   const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
-    api
-      .get(`/analyses/${id}/`)
-      .then(({ data }) => setAnalysis(data))
-      .catch(() => setError('Could not load this analysis.'))
-      .finally(() => setLoading(false))
-  }, [id])
+    let cancelled = false
+    let timer = null
+
+    const fetchAnalysis = () => {
+      api
+        .get(`/analyses/${id}/`)
+        .then(({ data }) => {
+          if (cancelled) return
+          setAnalysis(data)
+          setLoading(false)
+
+          // If still processing, poll every 4 seconds
+          if (data.status === 'processing' || data.status === 'pending') {
+            timer = setTimeout(fetchAnalysis, 4000)
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return
+          if (err.response?.status === 429) {
+            // Rate-limited — back off and retry after 10 seconds instead of giving up
+            timer = setTimeout(fetchAnalysis, 10000)
+            return
+          }
+          setError('Could not load this analysis.')
+          setLoading(false)
+        })
+    }
+
+    setLoading(true)
+    setError('')
+    fetchAnalysis()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [id, retryCount])
 
   if (loading) return <Spinner />
   if (error) return <div className="text-center py-20 text-red-500 text-sm">{error}</div>
   if (!analysis) return null
+
+  // Show loading state while analysis is still processing
+  if (analysis.status === 'processing' || analysis.status === 'pending') {
+    const stepLabels = {
+      pending: 'Queued',
+      pdf_extract: 'Extracting PDF text',
+      jd_scrape: 'Fetching job description',
+      llm_call: 'Analyzing with AI',
+      parse_result: 'Processing results',
+    }
+    const stepOrder = ['pending', 'pdf_extract', 'jd_scrape', 'llm_call', 'parse_result']
+    const currentIdx = stepOrder.indexOf(analysis.pipeline_step || 'pending')
+
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-20 text-center space-y-6">
+        <Spinner />
+        <p className="text-gray-600 text-sm">Analyzing your resume... This may take a couple of minutes.</p>
+
+        {/* Pipeline step progress */}
+        <div className="max-w-sm mx-auto space-y-2">
+          {stepOrder.map((step, idx) => {
+            const isDone = idx < currentIdx
+            const isCurrent = idx === currentIdx
+            return (
+              <div key={step} className="flex items-center gap-3 text-sm">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                  isDone ? 'bg-green-500 text-white' : isCurrent ? 'bg-indigo-500 text-white animate-pulse' : 'bg-gray-200 text-gray-400'
+                }`}>
+                  {isDone ? '✓' : idx + 1}
+                </div>
+                <span className={isDone ? 'text-green-600' : isCurrent ? 'text-indigo-600 font-medium' : 'text-gray-400'}>
+                  {stepLabels[step]}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+
+        <p className="text-gray-400 text-xs">The page will update automatically when results are ready.</p>
+      </div>
+    )
+  }
+
+  // Show error state if analysis failed
+  if (analysis.status === 'failed') {
+    const handleRetry = async () => {
+      try {
+        await api.post(`/analyses/${id}/retry/`)
+        // Bump retryCount to restart the polling useEffect
+        setRetryCount((c) => c + 1)
+      } catch (err) {
+        setError(err.response?.data?.detail || 'Failed to retry analysis.')
+      }
+    }
+
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-20 text-center space-y-4">
+        <div className="bg-red-50 border border-red-200 rounded-2xl px-6 py-8">
+          <p className="text-red-600 font-semibold mb-2">Analysis Failed</p>
+          <p className="text-sm text-red-500">{analysis.error_message || 'An unexpected error occurred.'}</p>
+          {analysis.pipeline_step && analysis.pipeline_step !== 'failed' && (
+            <p className="text-xs text-red-400 mt-2">Failed at step: {analysis.pipeline_step}</p>
+          )}
+        </div>
+        <div className="flex gap-3 justify-center mt-4">
+          <button
+            onClick={handleRetry}
+            className="text-sm bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            Retry
+          </button>
+          <Link
+            to="/"
+            className="text-sm border border-gray-300 text-gray-600 px-6 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            New Analysis
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   const bd = analysis.ats_score_breakdown || {}
   const sections = analysis.section_suggestions || {}

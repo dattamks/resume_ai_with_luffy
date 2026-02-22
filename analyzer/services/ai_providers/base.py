@@ -108,7 +108,12 @@ class AIProvider(ABC):
             job_description: Resolved job description string.
 
         Returns:
-            Parsed dict matching the schema in ANALYSIS_PROMPT_TEMPLATE.
+            Dict with keys:
+              - 'parsed': Validated dict matching the analysis schema.
+              - 'raw': Raw LLM text output as-is.
+              - 'prompt': The prompt/messages sent to the LLM.
+              - 'model': Model name used.
+              - 'duration': Seconds the API call took (float).
         """
         ...
 
