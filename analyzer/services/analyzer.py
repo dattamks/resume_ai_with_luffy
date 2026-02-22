@@ -170,12 +170,41 @@ class ResumeAnalyzer:
         analysis.rewritten_bullets = data.get('rewritten_bullets')
         analysis.overall_assessment = data.get('overall_assessment', '')
         analysis.ai_provider_used = llm_resp.model_used
-        analysis.save(update_fields=[
+
+        # Populate JD metadata from LLM when not already provided by user (text/url inputs)
+        job_meta = data.get('job_metadata', {})
+        update_fields = [
             'ats_score', 'ats_score_breakdown', 'keyword_gaps',
             'section_suggestions', 'rewritten_bullets', 'overall_assessment',
             'ai_provider_used',
-        ])
-        print(f'[DEBUG]   ✅ Results saved (ATS={analysis.ats_score})')
+        ]
+
+        if not analysis.jd_role and job_meta.get('job_title'):
+            analysis.jd_role = job_meta['job_title'][:255]
+            update_fields.append('jd_role')
+
+        if not analysis.jd_company and job_meta.get('company'):
+            analysis.jd_company = job_meta['company'][:255]
+            update_fields.append('jd_company')
+
+        if not analysis.jd_skills and job_meta.get('skills'):
+            analysis.jd_skills = job_meta['skills']
+            update_fields.append('jd_skills')
+
+        if analysis.jd_experience_years is None and job_meta.get('experience_years') is not None:
+            analysis.jd_experience_years = job_meta['experience_years']
+            update_fields.append('jd_experience_years')
+
+        if not analysis.jd_industry and job_meta.get('industry'):
+            analysis.jd_industry = job_meta['industry'][:255]
+            update_fields.append('jd_industry')
+
+        if not analysis.jd_extra_details and job_meta.get('extra_details'):
+            analysis.jd_extra_details = job_meta['extra_details']
+            update_fields.append('jd_extra_details')
+
+        analysis.save(update_fields=update_fields)
+        print(f'[DEBUG]   ✅ Results saved (ATS={analysis.ats_score}, role={analysis.jd_role}, company={analysis.jd_company})')
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

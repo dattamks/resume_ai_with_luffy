@@ -245,7 +245,7 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
 
 # AI Provider config
-AI_PROVIDER = config('AI_PROVIDER', default='luffy')  # 'luffy', 'claude', or 'openai'
+AI_PROVIDER = config('AI_PROVIDER', default='openrouter')  # 'openrouter', 'luffy', 'claude', or 'openai'
 
 
 # Luffy / Self-deployed LLM
@@ -268,6 +268,11 @@ CLAUDE_MODEL = config('CLAUDE_MODEL', default='claude-sonnet-4-6')
 # OpenAI
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o')
+
+# OpenRouter
+OPENROUTER_API_KEY = config('OPENROUTER_API_KEY', default='')
+OPENROUTER_MODEL = config('OPENROUTER_MODEL', default='anthropic/claude-3.5-haiku')
+OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
 

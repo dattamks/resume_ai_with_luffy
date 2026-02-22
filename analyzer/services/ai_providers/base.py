@@ -19,6 +19,14 @@ JOB DESCRIPTION:
 Return ONLY valid JSON — no markdown, no explanation, no extra text. Use this exact schema:
 
 {{
+  "job_metadata": {{
+    "job_title": "<job title/role extracted from the job description>",
+    "company": "<company name extracted from the job description, or empty string if not found>",
+    "skills": "<comma-separated key skills/technologies required by the JD>",
+    "experience_years": <integer or null — years of experience required, null if not stated>,
+    "industry": "<industry or domain the role belongs to, e.g. 'FinTech', 'Healthcare', or empty string if unclear>",
+    "extra_details": "<2-4 sentence summary of other important JD details: location, benefits, team size, work model, etc.>"
+  }},
   "ats_score": <integer 0-100>,
   "ats_score_breakdown": {{
     "keyword_match": <integer 0-100, how many JD keywords appear in resume>,
@@ -48,6 +56,7 @@ Return ONLY valid JSON — no markdown, no explanation, no extra text. Use this 
 """
 
 _REQUIRED_FIELDS = {
+    'job_metadata': dict,
     'ats_score': int,
     'ats_score_breakdown': dict,
     'keyword_gaps': list,
@@ -55,6 +64,8 @@ _REQUIRED_FIELDS = {
     'rewritten_bullets': list,
     'overall_assessment': str,
 }
+
+_REQUIRED_JOB_METADATA_FIELDS = {'job_title', 'company'}
 
 _REQUIRED_BREAKDOWN_FIELDS = {'keyword_match', 'format_score', 'relevance_score'}
 _REQUIRED_SECTION_FIELDS = {'summary', 'experience', 'skills', 'education', 'overall'}
@@ -87,6 +98,12 @@ def validate_ai_response(data: dict) -> None:
     for k in _REQUIRED_BREAKDOWN_FIELDS:
         if not isinstance(breakdown.get(k), (int, float)):
             raise ValueError(f'AI response "ats_score_breakdown.{k}" must be numeric')
+
+    # Validate job_metadata sub-fields
+    job_meta = data['job_metadata']
+    missing_meta = _REQUIRED_JOB_METADATA_FIELDS - set(job_meta.keys())
+    if missing_meta:
+        raise ValueError(f'AI response "job_metadata" missing fields: {missing_meta}')
 
     # Validate section_suggestions sub-fields
     sections = data['section_suggestions']

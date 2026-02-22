@@ -4,6 +4,7 @@ from .base import AIProvider
 from .claude_provider import ClaudeProvider
 from .luffy_provider import LuffyProvider
 from .openai_provider import OpenAIProvider
+from .openrouter_provider import OpenRouterProvider
 
 
 def get_ai_provider() -> AIProvider:
@@ -11,7 +12,7 @@ def get_ai_provider() -> AIProvider:
     Return the configured AI provider instance based on settings.AI_PROVIDER.
     Raises ValueError if the provider is unknown or its API key is missing.
     """
-    provider_name = getattr(settings, 'AI_PROVIDER', 'claude').lower()
+    provider_name = getattr(settings, 'AI_PROVIDER', 'openrouter').lower()
 
     if provider_name == 'luffy':
         api_url = getattr(settings, 'LUFFY_API_URL', '')
@@ -43,6 +44,14 @@ def get_ai_provider() -> AIProvider:
         model = getattr(settings, 'OPENAI_MODEL', 'gpt-4o')
         return OpenAIProvider(api_key=api_key, model=model)
 
+    if provider_name == 'openrouter':
+        api_key = getattr(settings, 'OPENROUTER_API_KEY', '')
+        if not api_key:
+            raise ValueError('OPENROUTER_API_KEY is not configured.')
+        model = getattr(settings, 'OPENROUTER_MODEL', 'anthropic/claude-3.5-haiku')
+        base_url = getattr(settings, 'OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+        return OpenRouterProvider(api_key=api_key, model=model, base_url=base_url)
+
     raise ValueError(
-        f'Unknown AI_PROVIDER "{provider_name}". Valid choices: "luffy", "claude", "openai".'
+        f'Unknown AI_PROVIDER "{provider_name}". Valid choices: "openrouter", "luffy", "claude", "openai".'
     )

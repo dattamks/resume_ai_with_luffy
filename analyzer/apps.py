@@ -32,8 +32,14 @@ class AnalyzerConfig(AppConfig):
                     'AI_PROVIDER is "openai" but OPENAI_API_KEY is not set. '
                     'Resume analysis will fail until this is configured.'
                 )
+        elif provider == 'openrouter':
+            if not getattr(settings, 'OPENROUTER_API_KEY', ''):
+                logger.warning(
+                    'AI_PROVIDER is "openrouter" but OPENROUTER_API_KEY is not set. '
+                    'Resume analysis will fail until this is configured.'
+                )
         else:
             logger.warning(
-                'Unknown AI_PROVIDER "%s". Valid values: "luffy", "claude", "openai".',
+                'Unknown AI_PROVIDER "%s". Valid values: "openrouter", "luffy", "claude", "openai".',
                 provider,
             )

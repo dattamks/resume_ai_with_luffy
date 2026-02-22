@@ -4,6 +4,14 @@ from analyzer.services.ai_providers.base import validate_ai_response
 
 
 VALID_RESPONSE = {
+    'job_metadata': {
+        'job_title': 'Backend Engineer',
+        'company': 'Acme Corp',
+        'skills': 'Python, Django, Docker',
+        'experience_years': 3,
+        'industry': 'SaaS',
+        'extra_details': 'Remote-friendly role. Team of 8 engineers. Series B startup.',
+    },
     'ats_score': 72,
     'ats_score_breakdown': {
         'keyword_match': 65,
