@@ -1,7 +1,7 @@
 export default function Spinner({ fullPage = false }) {
   const svg = (
     <svg
-      className="animate-spin h-8 w-8 text-indigo-500"
+      className="animate-spin h-8 w-8 text-indigo-500 dark:text-indigo-400"
       viewBox="0 0 24 24"
       fill="none"
     >

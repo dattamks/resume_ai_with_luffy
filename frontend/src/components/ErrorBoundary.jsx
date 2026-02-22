@@ -22,10 +22,10 @@ export default class ErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
-            <h1 className="text-2xl font-bold text-gray-800 mb-2">Something went wrong</h1>
-            <p className="text-gray-500 text-sm mb-6">
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-700 p-8 max-w-md w-full text-center">
+            <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Something went wrong</h1>
+            <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
               An unexpected error occurred. You can try going back to the home page.
             </p>
             <button

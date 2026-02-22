@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
+import toast from 'react-hot-toast'
 
 export default function LoginPage() {
   const [form, setForm] = useState({ username: '', password: '' })
-  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -14,50 +14,44 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setError('')
     setLoading(true)
     try {
       const { data } = await api.post('/auth/login/', form)
       login(data.user, data.access, data.refresh)
+      toast.success('Welcome back!')
       navigate('/')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Invalid credentials.')
+      toast.error(err.response?.data?.detail || 'Invalid credentials.')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="flex items-center justify-center min-h-[calc(100vh-56px)] bg-gray-50 px-4">
-      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200 w-full max-w-sm">
-        <h1 className="text-2xl font-bold text-gray-800 mb-1">Welcome back</h1>
-        <p className="text-sm text-gray-500 mb-6">Sign in to your account</p>
-
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
-            {error}
-          </div>
-        )}
+    <div className="flex items-center justify-center min-h-[calc(100vh-56px)] px-4">
+      <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-700 w-full max-w-sm">
+        <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-1">Welcome back</h1>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Sign in to your account</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
             <input
               type="text"
               value={form.username}
               onChange={set('username')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               required
               autoFocus
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
             <input
               type="password"
               value={form.password}
               onChange={set('password')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               required
             />
           </div>
@@ -70,9 +64,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="text-sm text-center text-gray-500 mt-5">
+        <p className="text-sm text-center text-gray-500 dark:text-gray-400 mt-5">
           No account?{' '}
-          <Link to="/register" className="text-indigo-600 hover:underline font-medium">
+          <Link to="/register" className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium">
             Create one
           </Link>
         </p>

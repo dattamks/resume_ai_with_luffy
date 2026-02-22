@@ -2,7 +2,7 @@ import logging
 import threading
 
 from rest_framework import status
-from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -179,3 +179,50 @@ class AnalysisDetailView(RetrieveAPIView):
 
     def get_queryset(self):
         return ResumeAnalysis.objects.filter(user=self.request.user)
+
+
+class AnalysisDeleteView(DestroyAPIView):
+    """
+    DELETE /api/analyses/<id>/
+    Delete a single analysis owned by the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get_queryset(self):
+        return ResumeAnalysis.objects.filter(user=self.request.user)
+
+
+class AnalysisPDFExportView(APIView):
+    """
+    GET /api/analyses/<id>/export-pdf/
+    Generate and return a PDF report for the analysis.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if analysis.status != 'done':
+            return Response(
+                {'detail': 'Analysis is not complete yet.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .services.pdf_report import render_analysis_pdf_html
+        import weasyprint
+
+        html_string = render_analysis_pdf_html(analysis)
+        pdf_bytes = weasyprint.HTML(string=html_string).write_pdf()
+
+        role_slug = (analysis.jd_role or 'analysis').replace(' ', '_')[:30]
+        filename = f'resume_ai_{role_slug}_{analysis.pk}.pdf'
+
+        from django.http import HttpResponse
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
