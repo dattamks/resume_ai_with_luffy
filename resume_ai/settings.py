@@ -20,6 +20,10 @@ if not DEBUG and SECRET_KEY == 'django-insecure-change-me-in-production':
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
 
+# Railway's health-checker sends Host: healthcheck.railway.app
+if not DEBUG:
+    ALLOWED_HOSTS += ['.railway.app']
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -96,9 +100,10 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-STATICFILES_DIRS = [
-    BASE_DIR / 'frontend' / 'dist' / 'assets',
-]
+# Only include frontend build assets if they exist (skipped when frontend
+# is deployed separately, e.g. Cloudflare Pages).
+_FRONTEND_ASSETS = BASE_DIR / 'frontend' / 'dist' / 'assets'
+STATICFILES_DIRS = [_FRONTEND_ASSETS] if _FRONTEND_ASSETS.is_dir() else []
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
