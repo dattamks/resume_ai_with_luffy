@@ -32,7 +32,7 @@
 - [x] Replace `DATABASES` block with `dj_database_url.config(default='sqlite:///db.sqlite3')`
 - [x] Falls back to SQLite in local dev (no env var needed)
 - [x] Env var: `DATABASE_URL=postgresql://user:pass@host:5432/dbname`
-- [ ] Run `migrate` on Railway via build command
+- [x] Run `migrate` on Railway via build command
 
 ## Phase 2 — Cloudflare R2 (S3-compatible file storage)  ✅
 
@@ -48,31 +48,31 @@
 - [x] Add `django-redis` to requirements.txt
 - [x] Wire `CACHES` setting to Redis for DRF throttle state + general caching
 - [x] Env var: `REDIS_URL=redis://host:6379/0`
-- [ ] Optional future: Celery for async analysis pipeline (currently uses threading)
+- [x] Celery for async analysis pipeline (replaces threading) — implemented with Redis broker, auto-retry, acks_late, reject_on_worker_lost
 
-## Phase 4 — Separate Frontend & Backend
+## Phase 4 — Separate Frontend & Backend  ✅
 
 ### Backend (Django API service)
 
-- [ ] Remove `frontend_app` from `INSTALLED_APPS`
-- [ ] Remove catch-all `re_path` from `urls.py`
-- [ ] Remove `STATICFILES_DIRS` pointing to `frontend/dist`
-- [ ] Add `whitenoise` to serve Django's own static files (admin CSS)
-- [ ] Add `STATIC_ROOT = BASE_DIR / 'staticfiles'`
-- [ ] Add `SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')` (Railway terminates SSL)
-- [ ] Set `CORS_ALLOWED_ORIGINS` to the frontend Railway URL
-- [ ] Create `Procfile`: `web: gunicorn resume_ai.wsgi --bind 0.0.0.0:$PORT --workers 3`
-- [ ] Create `runtime.txt`: `python-3.12.x`
-- [ ] Add `gunicorn` to requirements.txt
-- [ ] Add health check endpoint at `/api/health/`
+- [x] Remove `frontend_app` from `INSTALLED_APPS`
+- [x] Remove catch-all `re_path` from `urls.py`
+- [x] Remove `STATICFILES_DIRS` pointing to `frontend/dist`
+- [x] Add `whitenoise` to serve Django's own static files (admin CSS)
+- [x] Add `STATIC_ROOT = BASE_DIR / 'staticfiles'`
+- [x] Add `SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')` (Railway terminates SSL)
+- [x] Set `CORS_ALLOWED_ORIGINS` to the frontend Railway URL
+- [x] Create `Procfile`: `web: gunicorn resume_ai.wsgi --bind 0.0.0.0:$PORT --workers 3`
+- [x] Create `runtime.txt`: `python-3.12.x`
+- [x] Add `gunicorn` to requirements.txt
+- [x] Add health check endpoint at `/api/health/`
 
 ### Frontend (React SPA service)
 
-- [ ] Change `api/client.js` baseURL from `/api` to `import.meta.env.VITE_API_URL || '/api'`
-- [ ] Create `frontend/.env.production` with `VITE_API_URL=https://<backend>.up.railway.app/api`
-- [ ] Add `frontend/Dockerfile` or `nixpacks.toml` for static build + serve
-- [ ] Railway service: Nixpacks Node build → serves `dist/` as static site
-- [ ] Remove Vite proxy config for production (keep for local dev)
+- [x] Change `api/client.js` baseURL from `/api` to `import.meta.env.VITE_API_URL || '/api'`
+- [x] Create `frontend/.env.production` with `VITE_API_URL=https://<backend>.up.railway.app/api`
+- [x] Add `frontend/Dockerfile` or `nixpacks.toml` for static build + serve
+- [x] Railway service: Nixpacks Node build → serves `dist/` as static site
+- [x] Remove Vite proxy config for production (keep for local dev)
 
 ## Phase 5 — Production Hardening
 
@@ -108,3 +108,37 @@ FIRECRAWL_API_KEY=<key>
 ```
 VITE_API_URL=https://<backend>.up.railway.app/api
 ```
+
+---
+
+## Phase 6 — Performance & Security Optimizations
+
+### Critical
+
+- [x] **Pagination** — `AnalysisListView` returns ALL analyses with no pagination. Add `PageNumberPagination` + `PAGE_SIZE=20`.
+- [x] **Status cache user scoping** — `AnalysisStatusView` caches as `analysis_status:{pk}` (no user). User B can see User A's status from Redis. Key by `analysis_status:{user_id}:{pk}`.
+
+### High — Query & DB
+
+- [x] **`select_related` on detail view** — `AnalysisDetailView` fires 3 queries (analysis + scrape_result FK + llm_response FK). Add `.select_related('scrape_result', 'llm_response')`.
+- [x] **DB indexes on `ResumeAnalysis`** — No indexes → full table scans. Add `(user, -created_at)` and `(status, updated_at)`.
+- [x] **Reduce pipeline `save()` calls** — ~10 `save()` per pipeline run. Combine pre-step `pipeline_step` write with post-step data write.
+
+### High — Serializer Payload
+
+- [x] **Exclude `prompt_sent` / `raw_response`** — `LLMResponseSerializer` sends ~160KB of text the frontend doesn't need.
+- [x] **Exclude `markdown` / `json_data`** from `ScrapeResultSerializer` — raw scrape data not needed by frontend.
+
+### High — Celery & LLM
+
+- [x] **OpenRouter timeout** — No `timeout` on API call. Hung call blocks worker until 10 min hard limit.
+- [x] **Celery retry scope** — Only retries `ConnectionError`. Add `TimeoutError`, `OSError`.
+- [x] **`acks_late` + `reject_on_worker_lost`** — Worker crash = lost message. Add `reject_on_worker_lost=True`.
+- [x] **Idempotency guard** — Double-click dispatches two concurrent tasks. Use Redis lock.
+
+### Medium
+
+- [x] **Replace all `print()` with `logger.debug()`** — ~30+ print statements leak internal state to stdout.
+- [x] **Fix `LogoutView` bare `except Exception`** — Catch `TokenError` specifically instead.
+- [x] **Redundant system prompt** — "Return ONLY valid JSON" in both system message and user prompt.
+- [x] **Use Firecrawl `summary`** for LLM prompt instead of full markdown (already fetched, never used).

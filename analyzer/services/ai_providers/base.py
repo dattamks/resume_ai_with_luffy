@@ -16,7 +16,7 @@ JOB DESCRIPTION:
 {job_description}
 
 ---
-Return ONLY valid JSON — no markdown, no explanation, no extra text. Use this exact schema:
+Use this exact schema:
 
 {{
   "job_metadata": {{

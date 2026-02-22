@@ -165,6 +165,10 @@ class ResumeAnalysis(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['status', 'updated_at']),
+        ]
 
     def __str__(self):
         return f"{self.user.username} | ATS {self.ats_score} | {self.created_at:%Y-%m-%d}"

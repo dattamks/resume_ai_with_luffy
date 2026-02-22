@@ -8,7 +8,7 @@ class ScrapeResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = ScrapeResult
         fields = (
-            'id', 'source_url', 'markdown', 'json_data', 'summary',
+            'id', 'source_url', 'summary',
             'status', 'error_message', 'created_at', 'updated_at',
         )
         read_only_fields = fields
@@ -18,7 +18,7 @@ class LLMResponseSerializer(serializers.ModelSerializer):
     class Meta:
         model = LLMResponse
         fields = (
-            'id', 'prompt_sent', 'raw_response', 'parsed_response',
+            'id', 'parsed_response',
             'model_used', 'status', 'error_message', 'duration_seconds',
             'created_at',
         )

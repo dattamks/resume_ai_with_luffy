@@ -44,11 +44,12 @@ class LuffyProvider(AIProvider):
           - 'duration': seconds the API call took
         """
         import time
-        print(f'[DEBUG]   LuffyProvider: building prompt...')
+        logger.debug('LuffyProvider: building prompt...')
         prompt = self._build_prompt(resume_text, job_description)
-        print(f'[DEBUG]   LuffyProvider: prompt length: {len(prompt)} chars')
-        print(f'[DEBUG]   LuffyProvider: stream={self.stream}, think={self.think}')
-        print(f'[DEBUG]   LuffyProvider: system_roles ({len(self.system_roles)}): {[r[:60]+"..." if len(r)>60 else r for r in self.system_roles]}')
+        logger.debug('LuffyProvider: prompt length: %d chars', len(prompt))
+        logger.debug('LuffyProvider: stream=%s, think=%s', self.stream, self.think)
+        logger.debug('LuffyProvider: system_roles (%d): %s', len(self.system_roles),
+                      [r[:60] + '...' if len(r) > 60 else r for r in self.system_roles])
 
         # Build messages array: system role(s) + user prompt
         messages = []
@@ -58,7 +59,8 @@ class LuffyProvider(AIProvider):
 
         # Use the chat endpoint with messages array
         chat_url = self.api_url.replace('/api/generate', '/api/chat')
-        print(f'[DEBUG]   LuffyProvider: sending request to {chat_url} (model={self.model}, timeout={self.timeout}s)...')
+        logger.debug('LuffyProvider: sending request to %s (model=%s, timeout=%ds)',
+                      chat_url, self.model, self.timeout)
 
         req_start = time.time()
         try:
@@ -79,17 +81,16 @@ class LuffyProvider(AIProvider):
             response.raise_for_status()
         except requests.RequestException as exc:
             elapsed = time.time() - req_start
-            print(f'[DEBUG]   LuffyProvider: ❌ API request failed after {elapsed:.2f}s: {exc}')
-            logger.error('Luffy API request failed: %s', exc)
+            logger.error('Luffy API request failed after %.2fs: %s', elapsed, exc)
             raise ValueError(f'Luffy API request failed: {exc}') from exc
 
         elapsed = time.time() - req_start
-        print(f'[DEBUG]   LuffyProvider: ✅ got response (HTTP {response.status_code}, {len(response.text)} bytes, {elapsed:.2f}s)')
+        logger.debug('LuffyProvider: got response (HTTP %d, %d bytes, %.2fs)',
+                      response.status_code, len(response.text), elapsed)
 
         try:
             api_result = response.json()
         except (ValueError, KeyError) as exc:
-            print(f'[DEBUG]   LuffyProvider: ❌ invalid JSON wrapper')
             logger.error('Luffy returned invalid JSON wrapper: %s', response.text[:500])
             raise ValueError(f'Luffy returned invalid response: {exc}') from exc
 
@@ -101,50 +102,46 @@ class LuffyProvider(AIProvider):
             raw = api_result['response']
 
         if not raw:
-            print(f'[DEBUG]   LuffyProvider: ❌ empty response field')
             logger.error('Luffy returned empty response: %s', api_result)
             raise ValueError('Luffy returned an empty response.')
 
-        print(f'[DEBUG]   LuffyProvider: raw response length: {len(raw)} chars')
-        print(f'[DEBUG]   LuffyProvider: raw response preview: {raw[:200]}...')
+        logger.debug('LuffyProvider: raw response length: %d chars', len(raw))
+        logger.debug('LuffyProvider: raw response preview: %s...', raw[:200])
 
         # Strip markdown code fences if the model wraps the JSON in ```json ... ```
         cleaned = raw.strip()
         if cleaned.startswith('```'):
-            print(f'[DEBUG]   LuffyProvider: stripping markdown code fences')
+            logger.debug('LuffyProvider: stripping markdown code fences')
             first_newline = cleaned.index('\n')
             cleaned = cleaned[first_newline + 1:]
         if cleaned.endswith('```'):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-        print(f'[DEBUG]   LuffyProvider: parsing JSON ({len(cleaned)} chars)...')
+        logger.debug('LuffyProvider: parsing JSON (%d chars)...', len(cleaned))
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            print(f'[DEBUG]   LuffyProvider: ⚠️ JSON parse failed: {exc}')
-            print(f'[DEBUG]   LuffyProvider: attempting JSON repair...')
+            logger.warning('LuffyProvider: JSON parse failed: %s — attempting repair', exc)
             try:
                 repaired = repair_json(cleaned)
                 data = json.loads(repaired)
-                print(f'[DEBUG]   LuffyProvider: ✅ JSON repair succeeded')
+                logger.debug('LuffyProvider: JSON repair succeeded')
             except json.JSONDecodeError as exc2:
-                print(f'[DEBUG]   LuffyProvider: ❌ JSON repair also failed: {exc2}')
-                print(f'[DEBUG]   LuffyProvider: cleaned content: {cleaned[:300]}...')
-                logger.error('Luffy returned non-JSON response: %s', raw[:500])
+                logger.error('Luffy returned non-JSON response and repair failed: %s | raw=%s',
+                             exc2, raw[:500])
                 raise ValueError(f'Luffy returned non-JSON response: {exc}') from exc2
 
-        print(f'[DEBUG]   LuffyProvider: ✅ JSON parsed — keys: {list(data.keys())}')
+        logger.debug('LuffyProvider: JSON parsed — keys: %s', list(data.keys()))
 
-        print(f'[DEBUG]   LuffyProvider: validating schema...')
+        logger.debug('LuffyProvider: validating schema...')
         try:
             validate_ai_response(data)
         except ValueError as exc:
-            print(f'[DEBUG]   LuffyProvider: ❌ schema validation failed: {exc}')
             logger.error('Luffy response failed schema validation: %s | raw=%s', exc, raw[:500])
             raise
 
-        print(f'[DEBUG]   LuffyProvider: ✅ schema validation passed')
+        logger.debug('LuffyProvider: schema validation passed')
         return {
             'parsed': data,
             'raw': raw,

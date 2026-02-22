@@ -1,9 +1,12 @@
+import logging
 import time
 
 from ..models import ResumeAnalysis, LLMResponse
 from .pdf_extractor import PDFExtractor
 from .jd_fetcher import JDFetcher
 from .ai_providers.factory import get_ai_provider
+
+logger = logging.getLogger('analyzer')
 
 
 class ResumeAnalyzer:
@@ -33,7 +36,7 @@ class ResumeAnalyzer:
         self.pdf_extractor = PDFExtractor()
         self.jd_fetcher = JDFetcher()
         self.ai_provider = get_ai_provider()
-        print(f'[DEBUG] ResumeAnalyzer initialized — provider: {type(self.ai_provider).__name__}')
+        logger.debug('ResumeAnalyzer initialized — provider: %s', type(self.ai_provider).__name__)
 
     def run(self, analysis: ResumeAnalysis) -> ResumeAnalysis:
         """
@@ -46,7 +49,7 @@ class ResumeAnalyzer:
         # Determine which steps to skip (already completed)
         step_order = [s[0] for s in self._STEPS]
         if current_step in self._COMPLETED_STEPS:
-            print(f'[DEBUG] Analysis {analysis.id} is already done — nothing to do')
+            logger.debug('Analysis %s is already done — nothing to do', analysis.id)
             return analysis
 
         # Find where to resume from
@@ -55,7 +58,7 @@ class ResumeAnalyzer:
             try:
                 # Resume FROM the failed/interrupted step (re-run it)
                 start_idx = step_order.index(current_step)
-                print(f'[DEBUG] Resuming analysis {analysis.id} from step: {current_step}')
+                logger.debug('Resuming analysis %s from step: %s', analysis.id, current_step)
             except ValueError:
                 start_idx = 0
 
@@ -64,73 +67,80 @@ class ResumeAnalyzer:
         analysis.save(update_fields=['status', 'error_message'])
 
         for step_name, method_name in self._STEPS[start_idx:]:
-            print(f'[DEBUG] ── Step: {step_name} ──')
+            logger.debug('── Step: %s ──', step_name)
             step_start = time.time()
 
-            # Update pipeline_step BEFORE running (so if it crashes, we know where)
-            analysis.pipeline_step = step_name
-            analysis.save(update_fields=['pipeline_step'])
-
             method = getattr(self, method_name)
-            method(analysis)
+            # Each step saves pipeline_step + its own data in a single write
+            method(analysis, step_name)
 
-            print(f'[DEBUG] ✅ {step_name} done ({time.time() - step_start:.2f}s)')
+            logger.debug('✅ %s done (%.2fs)', step_name, time.time() - step_start)
 
         # Mark as complete
         analysis.pipeline_step = ResumeAnalysis.STEP_DONE
         analysis.status = ResumeAnalysis.STATUS_DONE
         analysis.save(update_fields=['pipeline_step', 'status'])
 
-        print(f'[DEBUG] ✅ PIPELINE COMPLETE — total time: {time.time() - pipeline_start:.2f}s')
+        logger.info('✅ PIPELINE COMPLETE — analysis=%s total=%.2fs', analysis.id, time.time() - pipeline_start)
         return analysis
 
     # ── Step 1: PDF extraction ─────────────────────────────────────────────
 
-    def _step_pdf_extract(self, analysis: ResumeAnalysis):
+    def _step_pdf_extract(self, analysis: ResumeAnalysis, step_name: str):
         if analysis.resume_text:
-            print(f'[DEBUG]   Skipping PDF extract — already have {len(analysis.resume_text)} chars')
+            logger.debug('Skipping PDF extract — already have %d chars', len(analysis.resume_text))
+            # Still record pipeline_step for crash recovery
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['pipeline_step'])
             return
 
-        print(f'[DEBUG]   Extracting text from PDF: {analysis.resume_file.name}')
+        logger.debug('Extracting text from PDF: %s', analysis.resume_file.name)
         resume_text = self.pdf_extractor.extract(analysis.resume_file)
         analysis.resume_text = resume_text
-        analysis.save(update_fields=['resume_text'])
-        print(f'[DEBUG]   Extracted {len(resume_text)} chars')
+        analysis.pipeline_step = step_name
+        analysis.save(update_fields=['resume_text', 'pipeline_step'])
+        logger.debug('Extracted %d chars', len(resume_text))
 
     # ── Step 2: JD resolution ──────────────────────────────────────────────
 
-    def _step_jd_scrape(self, analysis: ResumeAnalysis):
+    def _step_jd_scrape(self, analysis: ResumeAnalysis, step_name: str):
         if analysis.resolved_jd:
-            print(f'[DEBUG]   Skipping JD resolve — already have {len(analysis.resolved_jd)} chars')
+            logger.debug('Skipping JD resolve — already have %d chars', len(analysis.resolved_jd))
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['pipeline_step'])
             return
 
-        print(f'[DEBUG]   Resolving JD (type={analysis.jd_input_type})')
+        logger.debug('Resolving JD (type=%s)', analysis.jd_input_type)
         resolved_jd, scrape_result = self._resolve_jd(analysis)
         analysis.resolved_jd = resolved_jd
+        analysis.pipeline_step = step_name
         if scrape_result:
             analysis.scrape_result = scrape_result
-        analysis.save(update_fields=['resolved_jd', 'scrape_result'])
-        print(f'[DEBUG]   Resolved JD: {len(resolved_jd)} chars')
+        analysis.save(update_fields=['resolved_jd', 'scrape_result', 'pipeline_step'])
+        logger.debug('Resolved JD: %d chars', len(resolved_jd))
 
     # ── Step 3: LLM call ───────────────────────────────────────────────────
 
-    def _step_llm_call(self, analysis: ResumeAnalysis):
+    def _step_llm_call(self, analysis: ResumeAnalysis, step_name: str):
         # If we already have a successful LLM response, skip
         if analysis.llm_response and analysis.llm_response.status == LLMResponse.STATUS_DONE:
-            print(f'[DEBUG]   Skipping LLM call — already have response (id={analysis.llm_response.id})')
+            logger.debug('Skipping LLM call — already have response (id=%s)', analysis.llm_response.id)
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['pipeline_step'])
             return
 
-        print(f'[DEBUG]   Sending to AI provider ({type(self.ai_provider).__name__})...')
-        print(f'[DEBUG]   Resume text: {len(analysis.resume_text)} chars | JD text: {len(analysis.resolved_jd)} chars')
+        logger.debug('Sending to AI provider (%s)...', type(self.ai_provider).__name__)
+        logger.debug('Resume text: %d chars | JD text: %d chars', len(analysis.resume_text), len(analysis.resolved_jd))
 
-        # Create pending LLMResponse
+        # Create pending LLMResponse and link to analysis in one write
         llm_resp = LLMResponse.objects.create(
             user=analysis.user,
             model_used=type(self.ai_provider).__name__,
             status=LLMResponse.STATUS_PENDING,
         )
         analysis.llm_response = llm_resp
-        analysis.save(update_fields=['llm_response'])
+        analysis.pipeline_step = step_name
+        analysis.save(update_fields=['llm_response', 'pipeline_step'])
 
         try:
             result = self.ai_provider.analyze(analysis.resume_text, analysis.resolved_jd)
@@ -151,17 +161,17 @@ class ResumeAnalyzer:
             'prompt_sent', 'raw_response', 'parsed_response',
             'model_used', 'duration_seconds', 'status',
         ])
-        print(f'[DEBUG]   LLMResponse saved (id={llm_resp.id})')
+        logger.debug('LLMResponse saved (id=%s)', llm_resp.id)
 
     # ── Step 4: Parse & persist results ────────────────────────────────────
 
-    def _step_parse_result(self, analysis: ResumeAnalysis):
+    def _step_parse_result(self, analysis: ResumeAnalysis, step_name: str):
         llm_resp = analysis.llm_response
         if not llm_resp or not llm_resp.parsed_response:
             raise ValueError('No parsed LLM response available to extract results from.')
 
         data = llm_resp.parsed_response
-        print(f'[DEBUG]   Writing analysis results — ATS={data.get("ats_score")}')
+        logger.debug('Writing analysis results — ATS=%s', data.get('ats_score'))
 
         analysis.ats_score = data.get('ats_score')
         analysis.ats_score_breakdown = data.get('ats_score_breakdown')
@@ -203,8 +213,11 @@ class ResumeAnalyzer:
             analysis.jd_extra_details = job_meta['extra_details']
             update_fields.append('jd_extra_details')
 
+        analysis.pipeline_step = step_name
+        update_fields.append('pipeline_step')
+
         analysis.save(update_fields=update_fields)
-        print(f'[DEBUG]   ✅ Results saved (ATS={analysis.ats_score}, role={analysis.jd_role}, company={analysis.jd_company})')
+        logger.debug('✅ Results saved (ATS=%s, role=%s, company=%s)', analysis.ats_score, analysis.jd_role, analysis.jd_company)
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -214,7 +227,13 @@ class ResumeAnalyzer:
             return analysis.jd_text, None
 
         if analysis.jd_input_type == ResumeAnalysis.JD_INPUT_URL:
-            return self.jd_fetcher.fetch(analysis.jd_url, user=analysis.user)
+            cleaned_text, scrape_result = self.jd_fetcher.fetch(analysis.jd_url, user=analysis.user)
+            # Prefer Firecrawl's concise summary over full markdown to reduce token usage
+            if scrape_result and scrape_result.summary:
+                logger.debug('Using Firecrawl summary (%d chars) instead of full markdown (%d chars)',
+                             len(scrape_result.summary), len(cleaned_text))
+                return scrape_result.summary, scrape_result
+            return cleaned_text, scrape_result
 
         if analysis.jd_input_type == ResumeAnalysis.JD_INPUT_FORM:
             text = self.jd_fetcher.build_from_form(

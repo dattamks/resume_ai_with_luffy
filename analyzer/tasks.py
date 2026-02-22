@@ -20,15 +20,16 @@ logger = logging.getLogger('analyzer')
 
 
 def _set_analysis_cache(analysis):
-    """Push lightweight status into Redis for ultra-fast polling."""
+    """Push lightweight status into Redis for ultra-fast polling (scoped by user)."""
+    data = {
+        'status': analysis.status,
+        'pipeline_step': analysis.pipeline_step,
+        'ats_score': analysis.ats_score,
+        'error_message': analysis.error_message,
+    }
     cache.set(
-        f'analysis_status:{analysis.id}',
-        {
-            'status': analysis.status,
-            'pipeline_step': analysis.pipeline_step,
-            'ats_score': analysis.ats_score,
-            'error_message': analysis.error_message,
-        },
+        f'analysis_status:{analysis.user_id}:{analysis.id}',
+        data,
         timeout=3600,  # 1 hour TTL
     )
 
@@ -37,8 +38,9 @@ def _set_analysis_cache(analysis):
     bind=True,
     max_retries=2,
     default_retry_delay=30,
-    autoretry_for=(ConnectionError,),
+    autoretry_for=(ConnectionError, OSError, TimeoutError),
     acks_late=True,
+    reject_on_worker_lost=True,
 )
 def run_analysis_task(self, analysis_id, user_id):
     """

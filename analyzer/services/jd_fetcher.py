@@ -46,7 +46,7 @@ class JDFetcher:
         if user:
             cached = ScrapeResult.find_cached(url)
             if cached:
-                print(f'[DEBUG]   JDFetcher: ♻️ reusing cached scrape (id={cached.id}, age={cached.created_at})')
+                logger.debug('JDFetcher: reusing cached scrape (id=%s, age=%s)', cached.id, cached.created_at)
                 cleaned = self._clean_markdown(cached.markdown)
                 return cleaned, cached
 
@@ -57,11 +57,10 @@ class JDFetcher:
             status=ScrapeResult.STATUS_PENDING,
         ) if user else None
 
-        print(f'[DEBUG]   JDFetcher: scraping {url} via Firecrawl...')
+        logger.debug('JDFetcher: scraping %s via Firecrawl...', url)
         try:
             result = self.app.scrape(url, formats=['markdown', 'json', 'summary'])
         except Exception as exc:
-            print(f'[DEBUG]   JDFetcher: ❌ Firecrawl scrape failed: {exc}')
             logger.error('Firecrawl scrape failed for %s: %s', url, exc)
             if scrape:
                 scrape.status = ScrapeResult.STATUS_FAILED
@@ -92,7 +91,7 @@ class JDFetcher:
             summary = result.get('summary', '') or ''
 
         if not markdown:
-            print(f'[DEBUG]   JDFetcher: ❌ no markdown content extracted')
+            logger.warning('JDFetcher: no markdown content extracted from %s', url)
             if scrape:
                 scrape.status = ScrapeResult.STATUS_FAILED
                 scrape.error_message = 'No readable content found at the provided URL.'
@@ -108,10 +107,10 @@ class JDFetcher:
             scrape.save(update_fields=[
                 'markdown', 'json_data', 'summary', 'status', 'updated_at',
             ])
-            print(f'[DEBUG]   JDFetcher: ✅ ScrapeResult saved (id={scrape.id})')
+            logger.debug('JDFetcher: ScrapeResult saved (id=%s)', scrape.id)
 
         cleaned = self._clean_markdown(markdown)
-        print(f'[DEBUG]   JDFetcher: ✅ extracted {len(cleaned)} chars')
+        logger.debug('JDFetcher: extracted %d chars', len(cleaned))
         return cleaned, scrape
 
     @staticmethod

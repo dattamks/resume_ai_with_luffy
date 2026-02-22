@@ -43,7 +43,7 @@ class OpenRouterProvider(AIProvider):
             {'role': 'user', 'content': prompt},
         ]
 
-        print(f'[DEBUG]   OpenRouter: sending request — model={self.model}')
+        logger.info('OpenRouter: sending request — model=%s', self.model)
         req_start = time.time()
 
         response = self.client.chat.completions.create(
@@ -51,10 +51,11 @@ class OpenRouterProvider(AIProvider):
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.3,
+            timeout=120,  # 2 min hard timeout to prevent hung workers
         )
 
         elapsed = time.time() - req_start
-        print(f'[DEBUG]   OpenRouter: response received in {elapsed:.2f}s')
+        logger.info('OpenRouter: response received in %.2fs', elapsed)
 
         raw = response.choices[0].message.content.strip()
 

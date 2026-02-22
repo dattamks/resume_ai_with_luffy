@@ -34,22 +34,38 @@ class AnalyzeResumeView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     throttle_classes = [AnalyzeThrottle]
 
+    # Redis lock TTL — prevents duplicate submissions for the same user
+    IDEMPOTENCY_LOCK_TTL = 30  # seconds
+
     def post(self, request):
         serializer = ResumeAnalysisCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        analysis = serializer.save(user=request.user, status=ResumeAnalysis.STATUS_PROCESSING)
-        logger.info('Analysis record created (id=%s, status=processing)', analysis.id)
+        # Idempotency guard: prevent double-click / duplicate submissions
+        lock_key = f'analyze_lock:{request.user.id}'
+        if not cache.add(lock_key, 1, self.IDEMPOTENCY_LOCK_TTL):
+            return Response(
+                {'detail': 'An analysis is already being submitted. Please wait.'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
-        # Dispatch to Celery worker — returns immediately
-        run_analysis_task.delay(analysis.id, request.user.id)
+        try:
+            analysis = serializer.save(user=request.user, status=ResumeAnalysis.STATUS_PROCESSING)
+            logger.info('Analysis record created (id=%s, status=processing)', analysis.id)
 
-        logger.info('Celery task dispatched for analysis id=%s', analysis.id)
-        return Response(
-            {'id': analysis.id, 'status': analysis.status},
-            status=status.HTTP_202_ACCEPTED,
-        )
+            # Dispatch to Celery worker — returns immediately
+            run_analysis_task.delay(analysis.id, request.user.id)
+
+            logger.info('Celery task dispatched for analysis id=%s', analysis.id)
+            return Response(
+                {'id': analysis.id, 'status': analysis.status},
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except Exception:
+            # Release lock on unexpected errors so user can retry
+            cache.delete(lock_key)
+            raise
 
 
 class RetryAnalysisView(APIView):
@@ -100,7 +116,7 @@ class RetryAnalysisView(APIView):
 class AnalysisListView(ListAPIView):
     """
     GET /api/analyses/
-    List all analyses for the authenticated user.
+    List all analyses for the authenticated user (paginated).
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = []  # read-only, no throttle
@@ -120,7 +136,11 @@ class AnalysisDetailView(RetrieveAPIView):
     serializer_class = ResumeAnalysisDetailSerializer
 
     def get_queryset(self):
-        return ResumeAnalysis.objects.filter(user=self.request.user)
+        return (
+            ResumeAnalysis.objects
+            .filter(user=self.request.user)
+            .select_related('scrape_result', 'llm_response')
+        )
 
 
 class AnalysisDeleteView(DestroyAPIView):
@@ -186,8 +206,9 @@ class AnalysisStatusView(APIView):
     throttle_classes = []
 
     def get(self, request, pk):
-        # Try Redis cache first (set by Celery task)
-        cached = cache.get(f'analysis_status:{pk}')
+        # Try Redis cache first (set by Celery task) — scoped by user to prevent data leakage
+        cache_key = f'analysis_status:{request.user.id}:{pk}'
+        cached = cache.get(cache_key)
         if cached:
             return Response(cached)
 
@@ -206,5 +227,5 @@ class AnalysisStatusView(APIView):
             'error_message': analysis.error_message,
         }
         # Populate cache for next poll
-        cache.set(f'analysis_status:{pk}', data, timeout=3600)
+        cache.set(cache_key, data, timeout=3600)
         return Response(data)

@@ -212,6 +212,8 @@ REST_FRAMEWORK = {
         'user': config('USER_THROTTLE_RATE', default='30/hour'),
         'analyze': config('ANALYZE_THROTTLE_RATE', default='10/hour'),
     },
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
 }
 
 # JWT
