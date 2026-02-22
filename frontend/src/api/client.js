@@ -1,7 +1,10 @@
 import axios from 'axios'
 
+// In production, VITE_API_URL points to the Railway backend
+// (e.g. https://your-backend.up.railway.app/api).
+// In local dev it falls back to '/api' which Vite proxies to Django.
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
 })
 
 // Attach access token to every request
@@ -60,7 +63,8 @@ api.interceptors.response.use(
     isRefreshing = true
 
     try {
-      const { data } = await axios.post('/api/auth/token/refresh/', { refresh })
+      const baseURL = import.meta.env.VITE_API_URL || '/api'
+      const { data } = await axios.post(`${baseURL}/auth/token/refresh/`, { refresh })
       const newToken = data.access
       localStorage.setItem('access_token', newToken)
       api.defaults.headers.common.Authorization = `Bearer ${newToken}`

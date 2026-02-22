@@ -3,10 +3,12 @@ from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 
+from analyzer.views_health import health_check
 from frontend_app.views import FrontendAppView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/health/', health_check, name='health-check'),
     path('api/auth/', include('accounts.urls')),
     path('api/', include('analyzer.urls')),
     # Catch-all: serve React for every non-api, non-admin, non-media route.

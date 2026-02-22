@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -93,6 +94,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 STATICFILES_DIRS = [
     BASE_DIR / 'frontend' / 'dist' / 'assets',
@@ -111,7 +113,7 @@ if _R2_BUCKET:
             'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
         },
         'staticfiles': {
-            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
         },
     }
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID')
@@ -128,6 +130,13 @@ if _R2_BUCKET:
     }
     # Media URL will be served via signed S3 URLs
     MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{_R2_BUCKET}/'
+else:
+    # No R2 — use WhiteNoise for static files, local filesystem for media
+    STORAGES = {
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
 
 # ── Redis cache ──────────────────────────────────────────────────────────────
 # When REDIS_URL is set, use Redis for caching (DRF throttle state, sessions).
@@ -218,6 +227,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 # HTTPS / security headers (only enforced when not in DEBUG mode)
 if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')  # Railway terminates SSL at the proxy
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
@@ -265,6 +275,26 @@ MAX_RESUME_SIZE_MB = config('MAX_RESUME_SIZE_MB', default=5, cast=int)
 JD_FETCH_TIMEOUT = config('JD_FETCH_TIMEOUT', default=10, cast=int)
 
 # Logging
+# In production (Railway), use only the console handler — Railway captures
+# stdout/stderr automatically. The file handler is kept for local dev only.
+_LOG_HANDLERS = ['console']
+_LOG_CONFIG_HANDLERS = {
+    'console': {
+        'class': 'logging.StreamHandler',
+        'formatter': 'simple',
+    },
+}
+
+if DEBUG:
+    _LOG_CONFIG_HANDLERS['file'] = {
+        'class': 'logging.handlers.RotatingFileHandler',
+        'filename': BASE_DIR / 'logs' / 'django.log',
+        'maxBytes': 10 * 1024 * 1024,  # 10MB
+        'backupCount': 5,
+        'formatter': 'verbose',
+    }
+    _LOG_HANDLERS = ['console', 'file']
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -278,19 +308,7 @@ LOGGING = {
             'style': '{',
         },
     },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
-        'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'django.log',
-            'maxBytes': 10 * 1024 * 1024,  # 10MB
-            'backupCount': 5,
-            'formatter': 'verbose',
-        },
-    },
+    'handlers': _LOG_CONFIG_HANDLERS,
     'root': {
         'handlers': ['console'],
         'level': 'WARNING',
@@ -302,7 +320,7 @@ LOGGING = {
             'propagate': False,
         },
         'analyzer': {
-            'handlers': ['console', 'file'],
+            'handlers': _LOG_HANDLERS,
             'level': config('APP_LOG_LEVEL', default='INFO'),
             'propagate': False,
         },
