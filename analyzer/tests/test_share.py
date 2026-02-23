@@ -41,22 +41,33 @@ class ShareTokenTests(TestCase):
             jd_company='Acme Corp',
             status=ResumeAnalysis.STATUS_DONE,
             pipeline_step=ResumeAnalysis.STEP_DONE,
+            overall_grade='B',
             ats_score=82,
-            ats_score_breakdown={'keyword_match': 80, 'format_score': 85, 'relevance_score': 81},
-            keyword_gaps=['Kubernetes', 'Docker'],
-            section_suggestions={
-                'summary': 'Good',
-                'experience': 'Add metrics',
-                'skills': 'Add Docker',
-                'education': 'Fine',
-                'overall': 'Strong',
+            scores={'generic_ats': 82, 'workday_ats': 70, 'greenhouse_ats': 75, 'keyword_match_percent': 60},
+            ats_disclaimers={'workday': 'Simulated.', 'greenhouse': 'Simulated.'},
+            keyword_analysis={
+                'matched_keywords': ['Python'],
+                'missing_keywords': ['Kubernetes', 'Docker'],
+                'recommended_to_add': ['Add Docker to skills'],
             },
-            rewritten_bullets=[{
+            section_feedback=[{
+                'section_name': 'Work Experience',
+                'score': 65,
+                'feedback': ['Add metrics'],
+                'ats_flags': [],
+            }],
+            sentence_suggestions=[{
                 'original': 'Worked on backend',
-                'rewritten': 'Built 5 microservices',
+                'suggested': 'Built 5 microservices',
                 'reason': 'Added specifics',
             }],
-            overall_assessment='Strong backend profile.',
+            formatting_flags=[],
+            quick_wins=[
+                {'priority': 1, 'action': 'Add Docker'},
+                {'priority': 2, 'action': 'Quantify bullets'},
+                {'priority': 3, 'action': 'Fix formatting'},
+            ],
+            summary='Strong backend profile.',
             ai_provider_used='OpenRouterProvider',
         )
 
@@ -161,15 +172,20 @@ class SharedAnalysisViewTests(TestCase):
             jd_company='Acme Corp',
             status=ResumeAnalysis.STATUS_DONE,
             pipeline_step=ResumeAnalysis.STEP_DONE,
+            overall_grade='B',
             ats_score=82,
-            ats_score_breakdown={'keyword_match': 80, 'format_score': 85, 'relevance_score': 81},
-            keyword_gaps=['Kubernetes'],
-            section_suggestions={
-                'summary': 'Good', 'experience': 'Good',
-                'skills': 'Good', 'education': 'Good', 'overall': 'Good',
+            scores={'generic_ats': 82, 'workday_ats': 70, 'greenhouse_ats': 75, 'keyword_match_percent': 60},
+            ats_disclaimers={'workday': 'Simulated.', 'greenhouse': 'Simulated.'},
+            keyword_analysis={
+                'matched_keywords': ['Python'],
+                'missing_keywords': ['Kubernetes'],
+                'recommended_to_add': [],
             },
-            rewritten_bullets=[],
-            overall_assessment='Strong.',
+            section_feedback=[],
+            sentence_suggestions=[],
+            formatting_flags=[],
+            quick_wins=[],
+            summary='Strong.',
             ai_provider_used='OpenRouterProvider',
             share_token=uuid.uuid4(),
         )
@@ -187,10 +203,10 @@ class SharedAnalysisViewTests(TestCase):
         self.assertEqual(data['jd_role'], 'Backend Engineer')
         self.assertEqual(data['jd_company'], 'Acme Corp')
         self.assertEqual(data['ats_score'], 82)
-        self.assertIn('keyword_gaps', data)
-        self.assertIn('section_suggestions', data)
-        self.assertIn('rewritten_bullets', data)
-        self.assertIn('overall_assessment', data)
+        self.assertIn('keyword_analysis', data)
+        self.assertIn('section_feedback', data)
+        self.assertIn('sentence_suggestions', data)
+        self.assertIn('summary', data)
 
     def test_shared_excludes_sensitive_fields(self):
         """Shared view must NOT expose resume file, user data, or celery IDs."""

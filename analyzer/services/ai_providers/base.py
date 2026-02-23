@@ -3,20 +3,35 @@ from abc import ABC, abstractmethod
 
 logger = logging.getLogger('analyzer')
 
-ANALYSIS_PROMPT_TEMPLATE = """You are an expert resume reviewer and ATS (Applicant Tracking System) optimization specialist.
+# ── System prompt (LLM role) ──────────────────────────────────────────────
 
-Analyze the resume below against the provided job description and return a structured evaluation.
+SYSTEM_PROMPT = (
+    'You are an expert resume analyst and career coach with deep knowledge of '
+    'Applicant Tracking Systems (ATS), specifically Workday and Greenhouse parsing behaviors. '
+    'You analyze resumes against job descriptions and return detailed, actionable feedback.\n\n'
+    'You understand:\n'
+    '- How ATS systems parse and rank resumes\n'
+    '- How Workday penalizes multi-column layouts, tables, images, headers/footers, '
+    'non-standard section titles, and missing keywords in the top third\n'
+    '- How Greenhouse scores keyword density, skills matching, and clean formatting\n'
+    '- How to identify weak bullet points and rewrite them with stronger action verbs '
+    'and quantified impact\n'
+    '- How to grade resumes fairly based on relevance, structure, and ATS compatibility\n\n'
+    'You must return ONLY valid JSON with no markdown, no code fences, no explanation '
+    'outside the JSON. Follow the schema exactly as specified.'
+)
 
----
-RESUME:
+# ── User prompt template ──────────────────────────────────────────────────
+
+ANALYSIS_PROMPT_TEMPLATE = """Analyze the resume below against the provided job description and return a detailed analysis report.
+
+RESUME TEXT:
 {resume_text}
 
----
 JOB DESCRIPTION:
 {job_description}
 
----
-Use this exact schema:
+Return ONLY valid JSON following this exact schema:
 
 {{
   "job_metadata": {{
@@ -27,48 +42,74 @@ Use this exact schema:
     "industry": "<industry or domain the role belongs to, e.g. 'FinTech', 'Healthcare', or empty string if unclear>",
     "extra_details": "<2-4 sentence summary of other important JD details: location, benefits, team size, work model, etc.>"
   }},
-  "ats_score": <integer 0-100>,
-  "ats_score_breakdown": {{
-    "keyword_match": <integer 0-100, how many JD keywords appear in resume>,
-    "format_score": <integer 0-100, resume structure and readability>,
-    "relevance_score": <integer 0-100, overall alignment with the role>
+  "overall_grade": "<letter grade A, B, C, D, or F based on overall resume quality and JD match>",
+  "scores": {{
+    "generic_ats": <integer 0-100, general ATS compatibility score>,
+    "workday_ats": <integer 0-100, simulated Workday ATS score based on Workday parsing behavior>,
+    "greenhouse_ats": <integer 0-100, simulated Greenhouse ATS score based on Greenhouse parsing behavior>,
+    "keyword_match_percent": <integer 0-100, percentage of JD keywords found in resume>
   }},
-  "keyword_gaps": [
-    "<keyword or skill from JD missing in resume>",
-    ...
-  ],
-  "section_suggestions": {{
-    "summary": "<specific suggestion for the summary/objective section, or 'Not present — consider adding one'>",
-    "experience": "<actionable feedback on work experience bullets and descriptions>",
-    "skills": "<feedback on skills section — missing skills, formatting, etc.>",
-    "education": "<feedback on education section>",
-    "overall": "<high-level structural and content feedback>"
+  "ats_disclaimers": {{
+    "workday": "Simulated score based on known Workday parsing behavior. Not affiliated with or endorsed by Workday Inc.",
+    "greenhouse": "Simulated score based on known Greenhouse parsing behavior. Not affiliated with or endorsed by Greenhouse Software."
   }},
-  "rewritten_bullets": [
+  "keyword_analysis": {{
+    "matched_keywords": ["list of JD keywords found in resume"],
+    "missing_keywords": ["list of important JD keywords NOT found in resume"],
+    "recommended_to_add": ["list of keywords user should add with context of where to add them, as plain strings like 'Add SQL to skills section'"]
+  }},
+  "section_feedback": [
     {{
-      "original": "<original bullet point from resume>",
-      "rewritten": "<improved, action-verb-led, metrics-driven version>",
-      "reason": "<brief explanation of what was improved>"
+      "section_name": "section name e.g. Work Experience",
+      "score": <integer 0-100>,
+      "feedback": ["list of 2-3 specific actionable feedback points as strings"],
+      "ats_flags": ["list of any ATS red flags in this section, empty array if none"]
     }}
   ],
-  "overall_assessment": "<2-3 sentence summary: strengths, biggest gaps, priority actions>"
+  "sentence_suggestions": [
+    {{
+      "original": "exact original sentence from resume",
+      "suggested": "improved version of the sentence",
+      "reason": "short explanation e.g. Restructured to quantify impact and added action verb"
+    }}
+  ],
+  "formatting_flags": ["list of formatting issues that hurt ATS parsing e.g. multi-column layout detected, table used in skills section"],
+  "quick_wins": [
+    {{
+      "priority": <integer 1, 2, or 3 where 1 is highest priority>,
+      "action": "specific action to take as a plain string"
+    }}
+  ],
+  "summary": "<2-3 sentence overall summary of the resume quality and fit for the role>"
 }}
+
+Rules:
+- sentence_suggestions: flag ALL weak sentences, maximum 10
+- section_feedback: cover every section present in the resume
+- quick_wins: always return exactly 3
+- All scores are integers, not strings
+- Return ONLY the JSON object, nothing else
 """
+
+# ── Validation ─────────────────────────────────────────────────────────────
 
 _REQUIRED_FIELDS = {
     'job_metadata': dict,
-    'ats_score': int,
-    'ats_score_breakdown': dict,
-    'keyword_gaps': list,
-    'section_suggestions': dict,
-    'rewritten_bullets': list,
-    'overall_assessment': str,
+    'overall_grade': str,
+    'scores': dict,
+    'ats_disclaimers': dict,
+    'keyword_analysis': dict,
+    'section_feedback': list,
+    'sentence_suggestions': list,
+    'formatting_flags': list,
+    'quick_wins': list,
+    'summary': str,
 }
 
 _REQUIRED_JOB_METADATA_FIELDS = {'job_title', 'company'}
-
-_REQUIRED_BREAKDOWN_FIELDS = {'keyword_match', 'format_score', 'relevance_score'}
-_REQUIRED_SECTION_FIELDS = {'summary', 'experience', 'skills', 'education', 'overall'}
+_REQUIRED_SCORES_FIELDS = {'generic_ats', 'workday_ats', 'greenhouse_ats', 'keyword_match_percent'}
+_REQUIRED_KEYWORD_ANALYSIS_FIELDS = {'matched_keywords', 'missing_keywords', 'recommended_to_add'}
+_VALID_GRADES = {'A', 'B', 'C', 'D', 'F'}
 
 
 def validate_ai_response(data: dict) -> None:
@@ -85,19 +126,22 @@ def validate_ai_response(data: dict) -> None:
                 f'got {type(data[field]).__name__}'
             )
 
-    # Validate ats_score range
-    score = data['ats_score']
-    if not (0 <= score <= 100):
-        raise ValueError(f'AI response "ats_score" out of range [0, 100]: {score}')
+    # Validate overall_grade
+    grade = data['overall_grade'].upper().strip()
+    if grade not in _VALID_GRADES:
+        raise ValueError(f'AI response "overall_grade" must be one of {_VALID_GRADES}, got "{grade}"')
 
-    # Validate breakdown sub-fields
-    breakdown = data['ats_score_breakdown']
-    missing = _REQUIRED_BREAKDOWN_FIELDS - set(breakdown.keys())
-    if missing:
-        raise ValueError(f'AI response "ats_score_breakdown" missing fields: {missing}')
-    for k in _REQUIRED_BREAKDOWN_FIELDS:
-        if not isinstance(breakdown.get(k), (int, float)):
-            raise ValueError(f'AI response "ats_score_breakdown.{k}" must be numeric')
+    # Validate scores sub-fields (all must be integers 0-100)
+    scores = data['scores']
+    missing_scores = _REQUIRED_SCORES_FIELDS - set(scores.keys())
+    if missing_scores:
+        raise ValueError(f'AI response "scores" missing fields: {missing_scores}')
+    for k in _REQUIRED_SCORES_FIELDS:
+        v = scores.get(k)
+        if not isinstance(v, (int, float)):
+            raise ValueError(f'AI response "scores.{k}" must be numeric, got {type(v).__name__}')
+        if not (0 <= v <= 100):
+            raise ValueError(f'AI response "scores.{k}" out of range [0, 100]: {v}')
 
     # Validate job_metadata sub-fields
     job_meta = data['job_metadata']
@@ -105,11 +149,27 @@ def validate_ai_response(data: dict) -> None:
     if missing_meta:
         raise ValueError(f'AI response "job_metadata" missing fields: {missing_meta}')
 
-    # Validate section_suggestions sub-fields
-    sections = data['section_suggestions']
-    missing_sections = _REQUIRED_SECTION_FIELDS - set(sections.keys())
-    if missing_sections:
-        raise ValueError(f'AI response "section_suggestions" missing fields: {missing_sections}')
+    # Validate keyword_analysis sub-fields
+    kw = data['keyword_analysis']
+    missing_kw = _REQUIRED_KEYWORD_ANALYSIS_FIELDS - set(kw.keys())
+    if missing_kw:
+        raise ValueError(f'AI response "keyword_analysis" missing fields: {missing_kw}')
+
+    # Validate section_feedback entries have required keys
+    for i, entry in enumerate(data['section_feedback']):
+        if not isinstance(entry, dict):
+            raise ValueError(f'AI response "section_feedback[{i}]" must be a dict')
+        for k in ('section_name', 'score', 'feedback', 'ats_flags'):
+            if k not in entry:
+                raise ValueError(f'AI response "section_feedback[{i}]" missing key: "{k}"')
+
+    # Validate quick_wins entries
+    for i, qw in enumerate(data['quick_wins']):
+        if not isinstance(qw, dict):
+            raise ValueError(f'AI response "quick_wins[{i}]" must be a dict')
+        for k in ('priority', 'action'):
+            if k not in qw:
+                raise ValueError(f'AI response "quick_wins[{i}]" missing key: "{k}"')
 
 
 class AIProvider(ABC):

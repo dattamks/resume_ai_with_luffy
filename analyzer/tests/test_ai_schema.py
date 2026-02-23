@@ -12,28 +12,44 @@ VALID_RESPONSE = {
         'industry': 'SaaS',
         'extra_details': 'Remote-friendly role. Team of 8 engineers. Series B startup.',
     },
-    'ats_score': 72,
-    'ats_score_breakdown': {
-        'keyword_match': 65,
-        'format_score': 80,
-        'relevance_score': 71,
+    'overall_grade': 'B',
+    'scores': {
+        'generic_ats': 72,
+        'workday_ats': 61,
+        'greenhouse_ats': 68,
+        'keyword_match_percent': 58,
     },
-    'keyword_gaps': ['Docker', 'Kubernetes'],
-    'section_suggestions': {
-        'summary': 'Add a concise summary.',
-        'experience': 'Use action verbs.',
-        'skills': 'List more cloud skills.',
-        'education': 'Looks good.',
-        'overall': 'Strong background but missing cloud keywords.',
+    'ats_disclaimers': {
+        'workday': 'Simulated score based on known Workday parsing behavior.',
+        'greenhouse': 'Simulated score based on known Greenhouse parsing behavior.',
     },
-    'rewritten_bullets': [
+    'keyword_analysis': {
+        'matched_keywords': ['Python', 'Django'],
+        'missing_keywords': ['Docker', 'Kubernetes'],
+        'recommended_to_add': ['Add Docker to skills section'],
+    },
+    'section_feedback': [
+        {
+            'section_name': 'Work Experience',
+            'score': 65,
+            'feedback': ['Add quantified impact', 'Use stronger action verbs'],
+            'ats_flags': [],
+        },
+    ],
+    'sentence_suggestions': [
         {
             'original': 'Worked on backend',
-            'rewritten': 'Engineered RESTful APIs serving 1M+ requests/day',
+            'suggested': 'Engineered RESTful APIs serving 1M+ requests/day',
             'reason': 'Added metrics and action verb.',
-        }
+        },
     ],
-    'overall_assessment': 'Good candidate. Add cloud skills.',
+    'formatting_flags': ['Multi-column layout detected'],
+    'quick_wins': [
+        {'priority': 1, 'action': 'Add missing keywords Docker and Kubernetes'},
+        {'priority': 2, 'action': 'Remove multi-column layout'},
+        {'priority': 3, 'action': 'Quantify bullet points'},
+    ],
+    'summary': 'Good candidate. Add cloud skills and quantify achievements.',
 }
 
 
@@ -42,40 +58,68 @@ class AISchemaValidationTests(TestCase):
         # Should not raise
         validate_ai_response(VALID_RESPONSE)
 
-    def test_missing_ats_score(self):
+    def test_missing_scores(self):
         bad = {**VALID_RESPONSE}
-        del bad['ats_score']
-        with self.assertRaises(ValueError, msg='Missing ats_score should raise'):
+        del bad['scores']
+        with self.assertRaises(ValueError, msg='Missing scores should raise'):
             validate_ai_response(bad)
 
-    def test_ats_score_out_of_range(self):
-        bad = {**VALID_RESPONSE, 'ats_score': 150}
+    def test_score_out_of_range(self):
+        bad = {**VALID_RESPONSE, 'scores': {
+            'generic_ats': 150, 'workday_ats': 61,
+            'greenhouse_ats': 68, 'keyword_match_percent': 58,
+        }}
         with self.assertRaises(ValueError):
             validate_ai_response(bad)
 
-    def test_ats_score_wrong_type(self):
-        bad = {**VALID_RESPONSE, 'ats_score': '72'}
+    def test_scores_wrong_type(self):
+        bad = {**VALID_RESPONSE, 'scores': 'not a dict'}
         with self.assertRaises(ValueError):
             validate_ai_response(bad)
 
-    def test_missing_breakdown_field(self):
-        bad = {**VALID_RESPONSE, 'ats_score_breakdown': {'keyword_match': 65}}
+    def test_missing_scores_sub_field(self):
+        bad = {**VALID_RESPONSE, 'scores': {'generic_ats': 72}}
         with self.assertRaises(ValueError):
             validate_ai_response(bad)
 
-    def test_missing_section_suggestion_field(self):
-        incomplete_sections = {k: v for k, v in VALID_RESPONSE['section_suggestions'].items() if k != 'overall'}
-        bad = {**VALID_RESPONSE, 'section_suggestions': incomplete_sections}
+    def test_invalid_overall_grade(self):
+        bad = {**VALID_RESPONSE, 'overall_grade': 'X'}
         with self.assertRaises(ValueError):
             validate_ai_response(bad)
 
-    def test_keyword_gaps_must_be_list(self):
-        bad = {**VALID_RESPONSE, 'keyword_gaps': 'Docker, Kubernetes'}
+    def test_missing_keyword_analysis_sub_field(self):
+        bad = {**VALID_RESPONSE, 'keyword_analysis': {'matched_keywords': []}}
         with self.assertRaises(ValueError):
             validate_ai_response(bad)
 
-    def test_missing_overall_assessment(self):
+    def test_section_feedback_must_be_list(self):
+        bad = {**VALID_RESPONSE, 'section_feedback': 'not a list'}
+        with self.assertRaises(ValueError):
+            validate_ai_response(bad)
+
+    def test_section_feedback_entry_missing_key(self):
+        bad = {**VALID_RESPONSE, 'section_feedback': [{'section_name': 'Skills'}]}
+        with self.assertRaises(ValueError):
+            validate_ai_response(bad)
+
+    def test_quick_wins_entry_missing_key(self):
+        bad = {**VALID_RESPONSE, 'quick_wins': [{'priority': 1}]}
+        with self.assertRaises(ValueError):
+            validate_ai_response(bad)
+
+    def test_missing_summary(self):
         bad = {**VALID_RESPONSE}
-        del bad['overall_assessment']
+        del bad['summary']
+        with self.assertRaises(ValueError):
+            validate_ai_response(bad)
+
+    def test_missing_job_metadata(self):
+        bad = {**VALID_RESPONSE}
+        del bad['job_metadata']
+        with self.assertRaises(ValueError):
+            validate_ai_response(bad)
+
+    def test_missing_job_metadata_sub_field(self):
+        bad = {**VALID_RESPONSE, 'job_metadata': {'job_title': 'Dev'}}
         with self.assertRaises(ValueError):
             validate_ai_response(bad)

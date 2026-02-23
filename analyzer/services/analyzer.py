@@ -171,22 +171,29 @@ class ResumeAnalyzer:
             raise ValueError('No parsed LLM response available to extract results from.')
 
         data = llm_resp.parsed_response
-        logger.debug('Writing analysis results — ATS=%s', data.get('ats_score'))
+        scores = data.get('scores', {})
+        logger.debug('Writing analysis results — grade=%s generic_ats=%s',
+                     data.get('overall_grade'), scores.get('generic_ats'))
 
-        analysis.ats_score = data.get('ats_score')
-        analysis.ats_score_breakdown = data.get('ats_score_breakdown')
-        analysis.keyword_gaps = data.get('keyword_gaps')
-        analysis.section_suggestions = data.get('section_suggestions')
-        analysis.rewritten_bullets = data.get('rewritten_bullets')
-        analysis.overall_assessment = data.get('overall_assessment', '')
+        analysis.overall_grade = data.get('overall_grade', '')
+        analysis.scores = scores
+        analysis.ats_disclaimers = data.get('ats_disclaimers')
+        analysis.keyword_analysis = data.get('keyword_analysis')
+        analysis.section_feedback = data.get('section_feedback')
+        analysis.sentence_suggestions = data.get('sentence_suggestions')
+        analysis.formatting_flags = data.get('formatting_flags')
+        analysis.quick_wins = data.get('quick_wins')
+        analysis.summary = data.get('summary', '')
+        # Keep ats_score as generic_ats for dashboard stats and backward compat
+        analysis.ats_score = scores.get('generic_ats')
         analysis.ai_provider_used = llm_resp.model_used
 
         # Populate JD metadata from LLM when not already provided by user (text/url inputs)
         job_meta = data.get('job_metadata', {})
         update_fields = [
-            'ats_score', 'ats_score_breakdown', 'keyword_gaps',
-            'section_suggestions', 'rewritten_bullets', 'overall_assessment',
-            'ai_provider_used',
+            'overall_grade', 'scores', 'ats_disclaimers', 'keyword_analysis',
+            'section_feedback', 'sentence_suggestions', 'formatting_flags',
+            'quick_wins', 'summary', 'ats_score', 'ai_provider_used',
         ]
 
         if not analysis.jd_role and job_meta.get('job_title'):
@@ -217,7 +224,8 @@ class ResumeAnalyzer:
         update_fields.append('pipeline_step')
 
         analysis.save(update_fields=update_fields)
-        logger.debug('✅ Results saved (ATS=%s, role=%s, company=%s)', analysis.ats_score, analysis.jd_role, analysis.jd_company)
+        logger.debug('✅ Results saved (grade=%s, ats=%s, role=%s, company=%s)',
+                     analysis.overall_grade, analysis.ats_score, analysis.jd_role, analysis.jd_company)
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

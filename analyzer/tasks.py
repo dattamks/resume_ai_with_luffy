@@ -24,6 +24,7 @@ def _set_analysis_cache(analysis):
     data = {
         'status': analysis.status,
         'pipeline_step': analysis.pipeline_step,
+        'overall_grade': analysis.overall_grade,
         'ats_score': analysis.ats_score,
         'error_message': analysis.error_message,
     }

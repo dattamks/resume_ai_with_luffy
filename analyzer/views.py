@@ -239,7 +239,7 @@ class AnalysisStatusView(APIView):
         # Fallback to DB
         try:
             analysis = ResumeAnalysis.objects.only(
-                'id', 'status', 'pipeline_step', 'ats_score', 'error_message',
+                'id', 'status', 'pipeline_step', 'overall_grade', 'ats_score', 'error_message',
             ).get(pk=pk, user=request.user)
         except ResumeAnalysis.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -247,6 +247,7 @@ class AnalysisStatusView(APIView):
         data = {
             'status': analysis.status,
             'pipeline_step': analysis.pipeline_step,
+            'overall_grade': analysis.overall_grade,
             'ats_score': analysis.ats_score,
             'error_message': analysis.error_message,
         }

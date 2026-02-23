@@ -15,33 +15,8 @@ class AnalyzerConfig(AppConfig):
 
         from django.conf import settings
 
-        provider = getattr(settings, 'AI_PROVIDER', '').lower()
-        if provider == 'luffy':
-            if not getattr(settings, 'LUFFY_API_URL', '') or not getattr(settings, 'LUFFY_API_KEY', ''):
-                logger.warning(
-                    'AI_PROVIDER is "luffy" but LUFFY_API_URL / LUFFY_API_KEY is not set. '
-                    'Resume analysis will fail until this is configured.'
-                )
-        elif provider == 'claude':
-            if not getattr(settings, 'ANTHROPIC_API_KEY', ''):
-                logger.warning(
-                    'AI_PROVIDER is "claude" but ANTHROPIC_API_KEY is not set. '
-                    'Resume analysis will fail until this is configured.'
-                )
-        elif provider == 'openai':
-            if not getattr(settings, 'OPENAI_API_KEY', ''):
-                logger.warning(
-                    'AI_PROVIDER is "openai" but OPENAI_API_KEY is not set. '
-                    'Resume analysis will fail until this is configured.'
-                )
-        elif provider == 'openrouter':
-            if not getattr(settings, 'OPENROUTER_API_KEY', ''):
-                logger.warning(
-                    'AI_PROVIDER is "openrouter" but OPENROUTER_API_KEY is not set. '
-                    'Resume analysis will fail until this is configured.'
-                )
-        else:
+        if not getattr(settings, 'OPENROUTER_API_KEY', ''):
             logger.warning(
-                'Unknown AI_PROVIDER "%s". Valid values: "openrouter", "luffy", "claude", "openai".',
-                provider,
+                'OPENROUTER_API_KEY is not set. '
+                'Resume analysis will fail until this is configured.'
             )

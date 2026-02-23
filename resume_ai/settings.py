@@ -84,7 +84,7 @@ _DATABASE_URL = config('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db.sqlit
 DATABASES = {
     'default': dj_database_url.parse(
         _DATABASE_URL,
-        conn_max_age=600,
+        conn_max_age=0 if TESTING else 600,
         conn_health_checks=True,
     )
 }
@@ -263,32 +263,7 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
 
-# AI Provider config
-AI_PROVIDER = config('AI_PROVIDER', default='openrouter')  # 'openrouter', 'luffy', 'claude', or 'openai'
-
-
-# Luffy / Self-deployed LLM
-LUFFY_API_URL = config('LUFFY_API_URL', default='')
-LUFFY_API_KEY = config('LUFFY_API_KEY', default='')
-LUFFY_MODEL = config('LUFFY_MODEL', default='luffy')
-LUFFY_TIMEOUT = config('LUFFY_TIMEOUT', default=300, cast=int)
-LUFFY_STREAM = config('LUFFY_STREAM', default=False, cast=bool)
-LUFFY_THINK = config('LUFFY_THINK', default=False, cast=bool)
-# Pipe-delimited system role(s) sent as system messages to the LLM
-LUFFY_SYSTEM_ROLE = config(
-    'LUFFY_SYSTEM_ROLE',
-    default='You are an expert resume reviewer and ATS optimization specialist. Return ONLY valid JSON — no markdown, no explanation, no extra text.',
-)
-
-# Anthropic
-ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
-CLAUDE_MODEL = config('CLAUDE_MODEL', default='claude-sonnet-4-6')
-
-# OpenAI
-OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
-OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o')
-
-# OpenRouter
+# AI Provider config (OpenRouter only)
 OPENROUTER_API_KEY = config('OPENROUTER_API_KEY', default='')
 OPENROUTER_MODEL = config('OPENROUTER_MODEL', default='anthropic/claude-3.5-haiku')
 OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')

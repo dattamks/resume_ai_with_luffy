@@ -6,7 +6,7 @@ import time
 from openai import OpenAI
 from django.conf import settings
 
-from .base import AIProvider, validate_ai_response
+from .base import AIProvider, SYSTEM_PROMPT, validate_ai_response
 from .json_repair import repair_json
 
 logger = logging.getLogger('analyzer')
@@ -33,13 +33,7 @@ class OpenRouterProvider(AIProvider):
         max_tokens = getattr(settings, 'AI_MAX_TOKENS', 4096)
 
         messages = [
-            {
-                'role': 'system',
-                'content': (
-                    'You are an expert resume reviewer and ATS optimization specialist. '
-                    'Return ONLY valid JSON — no markdown, no explanation, no extra text.'
-                ),
-            },
+            {'role': 'system', 'content': SYSTEM_PROMPT},
             {'role': 'user', 'content': prompt},
         ]
 

@@ -232,12 +232,20 @@ class ResumeAnalysis(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     pipeline_step = models.CharField(max_length=20, choices=STEP_CHOICES, default=STEP_PENDING)
     error_message = models.TextField(blank=True)
+
+    # New schema fields
+    overall_grade = models.CharField(max_length=2, blank=True, help_text='Letter grade A-F')
+    scores = models.JSONField(null=True, blank=True, help_text='generic_ats, workday_ats, greenhouse_ats, keyword_match_percent')
+    ats_disclaimers = models.JSONField(null=True, blank=True)
+    keyword_analysis = models.JSONField(null=True, blank=True, help_text='matched_keywords, missing_keywords, recommended_to_add')
+    section_feedback = models.JSONField(null=True, blank=True, help_text='Array of per-section feedback objects')
+    sentence_suggestions = models.JSONField(null=True, blank=True, help_text='Array of original/suggested/reason objects')
+    formatting_flags = models.JSONField(null=True, blank=True, help_text='Array of formatting issues')
+    quick_wins = models.JSONField(null=True, blank=True, help_text='Array of priority/action objects')
+    summary = models.TextField(blank=True, help_text='2-3 sentence overall summary')
+
+    # Kept for backward compat in dashboard stats (generic_ats score is copied here)
     ats_score = models.PositiveSmallIntegerField(null=True, blank=True)
-    ats_score_breakdown = models.JSONField(null=True, blank=True)
-    keyword_gaps = models.JSONField(null=True, blank=True)
-    section_suggestions = models.JSONField(null=True, blank=True)
-    rewritten_bullets = models.JSONField(null=True, blank=True)
-    overall_assessment = models.TextField(blank=True)
 
     ai_provider_used = models.CharField(max_length=50, blank=True)
     celery_task_id = models.CharField(max_length=255, blank=True, help_text='Celery task ID for tracking')
@@ -264,7 +272,7 @@ class ResumeAnalysis(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.user.username} | ATS {self.ats_score} | {self.created_at:%Y-%m-%d}"
+        return f"{self.user.username} | {self.overall_grade or '?'} ({self.ats_score or '?'}) | {self.created_at:%Y-%m-%d}"
 
     def soft_delete(self):
         """
