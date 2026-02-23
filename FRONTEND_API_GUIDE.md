@@ -1,24 +1,28 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-23
-> Technical reference for frontend developers integrating with the Resume AI backend.
+> **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.7.0
+> Comprehensive technical reference for frontend developers integrating with the Resume AI backend.
 
 ---
 
 ## Table of Contents
 
 1. [Base URL & Authentication](#1-base-url--authentication)
-2. [Auth Endpoints](#2-auth-endpoints)
-3. [Analysis Endpoints](#3-analysis-endpoints)
-4. [Response Schemas](#4-response-schemas)
-5. [Pagination](#5-pagination)
-6. [Rate Limiting](#6-rate-limiting)
-7. [Polling for Analysis Status](#7-polling-for-analysis-status)
-8. [LLM Analysis Output Schema](#8-llm-analysis-output-schema)
-9. [Resume Endpoints](#9-resume-endpoints)
-10. [Dashboard Endpoints](#10-dashboard-endpoints)
-11. [Recent Backend Changes (Breaking)](#11-recent-backend-changes-breaking)
-12. [Error Handling Reference](#12-error-handling-reference)
+2. [API Client Setup](#2-api-client-setup)
+3. [Auth Endpoints](#3-auth-endpoints)
+4. [Analysis Endpoints](#4-analysis-endpoints)
+5. [Resume Endpoints](#5-resume-endpoints)
+6. [Dashboard Endpoints](#6-dashboard-endpoints)
+7. [Health Check](#7-health-check)
+8. [Response Schemas](#8-response-schemas)
+9. [LLM Analysis Output Schema](#9-llm-analysis-output-schema)
+10. [Pagination](#10-pagination)
+11. [Rate Limiting](#11-rate-limiting)
+12. [Polling for Analysis Status](#12-polling-for-analysis-status)
+13. [Error Handling Reference](#13-error-handling-reference)
+14. [TypeScript Type Definitions](#14-typescript-type-definitions)
+15. [Frontend Integration Recipes](#15-frontend-integration-recipes)
+16. [Quick Reference — All Endpoints](#16-quick-reference--all-endpoints)
 
 ---
 
@@ -31,40 +35,155 @@ Development:  http://localhost:8000/api
 Production:   https://<backend>.up.railway.app/api
 ```
 
-Set via environment variable: `VITE_API_URL`
+Configure via environment variable:
+
+```env
+# .env (Vite)
+VITE_API_URL=http://localhost:8000/api
+
+# .env (React Native / Expo)
+EXPO_PUBLIC_API_URL=http://localhost:8000/api
+```
 
 ### Authentication — JWT (Bearer Token)
 
-All endpoints except `/api/auth/register/`, `/api/auth/login/`, and `/api/health/` require a JWT access token.
+All endpoints except `/api/auth/register/`, `/api/auth/login/`, `/api/auth/token/refresh/`, and `/api/health/` require a JWT access token.
 
 ```
 Authorization: Bearer <access_token>
 ```
 
 **Token lifetimes:**
-| Token    | Lifetime   |
-|----------|------------|
-| Access   | 1 hour     |
-| Refresh  | 7 days     |
 
-Refresh tokens are **rotated on use** — each refresh call returns a new refresh token and blacklists the old one.
+| Token   | Lifetime | Notes                                   |
+|---------|----------|-----------------------------------------|
+| Access  | 1 hour   | Short-lived; attach to every API request |
+| Refresh | 7 days   | Rotated on use; store securely           |
+
+Refresh tokens are **rotated on use** — each refresh call returns a new refresh token and blacklists the old one. If the old refresh token is reused after rotation, authentication will fail (token replay protection).
 
 **Refresh flow:**
-```
+```http
 POST /api/auth/token/refresh/
-Body: { "refresh": "<refresh_token>" }
-→ { "access": "<new_access>", "refresh": "<new_refresh>" }
+Content-Type: application/json
+
+{ "refresh": "<refresh_token>" }
 ```
+
+```json
+{
+  "access": "<new_access_token>",
+  "refresh": "<new_refresh_token>"
+}
+```
+
+### Storage Recommendations
+
+| Platform | Access Token | Refresh Token |
+|----------|-------------|---------------|
+| Web (SPA) | In-memory (React state/context) | `httpOnly` cookie or `localStorage` |
+| React Native | `SecureStore` / `Keychain` | `SecureStore` / `Keychain` |
+
+> **Security note:** Never store tokens in `sessionStorage` for SPAs. Prefer in-memory for access tokens with automatic refresh on 401.
 
 ---
 
-## 2. Auth Endpoints
+## 2. API Client Setup
+
+### Axios Setup (Web)
+
+```js
+// src/api/client.js
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+
+const api = axios.create({
+  baseURL: API_URL,
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+// ── Request interceptor: attach access token ────────────────────────────
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token'); // or from context
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// ── Response interceptor: auto-refresh on 401 ──────────────────────────
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(({ resolve, reject }) => {
+    error ? reject(error) : resolve(token);
+  });
+  failedQueue = [];
+};
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        }).then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return api(originalRequest);
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const refresh = localStorage.getItem('refresh_token');
+        const { data } = await axios.post(`${API_URL}/auth/token/refresh/`, { refresh });
+
+        localStorage.setItem('access_token', data.access);
+        localStorage.setItem('refresh_token', data.refresh);
+
+        processQueue(null, data.access);
+        originalRequest.headers.Authorization = `Bearer ${data.access}`;
+        return api(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        // Redirect to login
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+```
+
+> **Note:** The above shows `localStorage` for simplicity. In production, prefer storing the access token in React context/state (memory) and only the refresh token in `localStorage`.
+
+---
+
+## 3. Auth Endpoints
 
 All prefixed with `/api/auth/`.
 
-### POST `/api/auth/register/`
+### POST `/api/auth/register/` — Create Account
 
-Create a new user account. Returns tokens immediately (auto-login).
+🔓 Public — no auth required.
+
+Creates a new user account and returns tokens immediately (auto-login).
 
 **Request:**
 ```json
@@ -90,11 +209,20 @@ Create a new user account. Returns tokens immediately (auto-login).
 }
 ```
 
-**Errors (400):** Password too weak, passwords don't match, duplicate username.
+**Errors (400):**
+```json
+{
+  "username": ["A user with that username already exists."],
+  "password": ["This password is too common."],
+  "password2": ["Passwords do not match."]
+}
+```
 
 ---
 
-### POST `/api/auth/login/`
+### POST `/api/auth/login/` — Sign In
+
+🔓 Public — no auth required.
 
 **Request:**
 ```json
@@ -118,11 +246,16 @@ Create a new user account. Returns tokens immediately (auto-login).
 }
 ```
 
+**Errors (401):**
+```json
+{ "detail": "No active account found with the given credentials" }
+```
+
 ---
 
-### POST `/api/auth/logout/`
+### POST `/api/auth/logout/` — Sign Out
 
-🔒 Requires auth. Blacklists the refresh token.
+🔒 Requires auth. Blacklists the refresh token server-side.
 
 **Request:**
 ```json
@@ -132,13 +265,16 @@ Create a new user account. Returns tokens immediately (auto-login).
 ```
 
 **Response (200):** `{ "detail": "Successfully logged out." }`
-**Error (400):** `{ "detail": "Invalid token." }`
+
+**Error (400):** `{ "detail": "Invalid token." }` (already blacklisted or malformed)
+
+**Frontend action:** After calling logout, clear both tokens from storage and redirect to login.
 
 ---
 
-### GET `/api/auth/me/`
+### GET `/api/auth/me/` — Current User Profile
 
-🔒 Requires auth. Returns the current user profile.
+🔒 Requires auth. Returns the currently authenticated user's profile.
 
 **Response (200):**
 ```json
@@ -150,9 +286,13 @@ Create a new user account. Returns tokens immediately (auto-login).
 }
 ```
 
+Use this on app load to verify the stored token is still valid and hydrate user state.
+
 ---
 
-### POST `/api/auth/token/refresh/`
+### POST `/api/auth/token/refresh/` — Refresh JWT
+
+🔓 Public — no auth header required (the refresh token is in the body).
 
 Exchange a valid refresh token for new access + refresh tokens.
 
@@ -169,9 +309,16 @@ Exchange a valid refresh token for new access + refresh tokens.
 }
 ```
 
+**Error (401):**
+```json
+{ "detail": "Token is blacklisted", "code": "token_not_valid" }
+```
+
+> **Important:** The old refresh token is blacklisted after this call. Always store the **new** refresh token returned.
+
 ---
 
-## 3. Analysis Endpoints
+## 4. Analysis Endpoints
 
 All prefixed with `/api/`.
 
@@ -179,24 +326,26 @@ All prefixed with `/api/`.
 
 🔒 Requires auth. **Throttled:** 10/hour per user. **Content-Type: `multipart/form-data`**.
 
-Submits a resume PDF + job description for async analysis. Returns immediately with a tracking ID.
+Submits a resume PDF + job description for async analysis. Returns immediately with a tracking ID. The analysis runs asynchronously via Celery background workers.
 
-**⚠️ Idempotency guard:** A second submit within 30 seconds returns **409 Conflict**. The frontend should disable the submit button after the first click.
+**Idempotency guard:** A second submit within 30 seconds returns **409 Conflict**. The frontend should **disable the submit button** after the first click and show a loading state.
 
 **Form fields:**
 
-| Field               | Type     | Required | Description |
-|---------------------|----------|----------|-------------|
-| `resume_file`       | File     | ✅       | PDF file, max 5 MB, must have `.pdf` extension and `%PDF` magic bytes |
-| `jd_input_type`     | String   | ✅       | One of: `"text"`, `"url"`, `"form"` |
-| `jd_text`           | String   | If type=`text` | Raw job description text |
-| `jd_url`            | String   | If type=`url`  | URL to a job posting (scraped via Firecrawl) |
-| `jd_role`           | String   | If type=`form` | Job title / role name |
-| `jd_company`        | String   | No       | Company name (form mode) |
-| `jd_skills`         | String   | No       | Comma-separated skills (form mode) |
-| `jd_experience_years` | Integer | No     | Required years of experience (form mode) |
-| `jd_industry`       | String   | No       | Industry/domain (form mode) |
-| `jd_extra_details`  | String   | No       | Free-text additional details (form mode) |
+| Field                 | Type    | Required        | Description                                              |
+|-----------------------|---------|-----------------|----------------------------------------------------------|
+| `resume_file`         | File    | ✅              | PDF file, max 5 MB, must have `.pdf` extension and `%PDF` magic bytes |
+| `jd_input_type`       | String  | ✅              | One of: `"text"`, `"url"`, `"form"`                      |
+| `jd_text`             | String  | If type=`text`  | Raw job description text                                 |
+| `jd_url`              | String  | If type=`url`   | URL to a job posting (scraped via Firecrawl)             |
+| `jd_role`             | String  | If type=`form`  | Job title / role name                                    |
+| `jd_company`          | String  | No              | Company name (form mode)                                 |
+| `jd_skills`           | String  | No              | Comma-separated skills (form mode)                       |
+| `jd_experience_years` | Integer | No              | Required years of experience (form mode)                 |
+| `jd_industry`         | String  | No              | Industry/domain (form mode)                              |
+| `jd_extra_details`    | String  | No              | Free-text additional details (form mode)                 |
+
+**Resume deduplication:** When submitting, the backend computes a SHA-256 hash of the uploaded PDF. If the same file was uploaded before by this user, the existing stored file is reused (no duplicate storage). This is transparent to the frontend.
 
 **Response (202 Accepted):**
 ```json
@@ -206,29 +355,54 @@ Submits a resume PDF + job description for async analysis. Returns immediately w
 }
 ```
 
+After receiving the `id`, begin [polling for status](#12-polling-for-analysis-status).
+
 **Errors:**
-- `400` — Validation error (bad PDF, missing required fields)
-- `409` — Duplicate submission (idempotency lock active)
-- `429` — Rate limit exceeded
+
+| Code | Condition | Example Response |
+|------|-----------|-----------------|
+| 400  | Validation error | `{ "resume_file": ["Only PDF files are accepted."] }` |
+| 400  | Bad PDF content | `{ "resume_file": ["File content does not appear to be a valid PDF."] }` |
+| 400  | File too large | `{ "resume_file": ["Resume file must be under 5MB."] }` |
+| 400  | Missing JD fields | `{ "jd_text": ["Job description text is required when input type is \"text\"."] }` |
+| 409  | Duplicate submit | `{ "detail": "An analysis is already being submitted. Please wait." }` |
+| 429  | Rate limited | `{ "detail": "Request was throttled. Expected available in 120 seconds." }` |
+
+**Example (JavaScript):**
+```js
+const formData = new FormData();
+formData.append('resume_file', fileInput.files[0]);
+formData.append('jd_input_type', 'text');
+formData.append('jd_text', 'We need a senior Python developer...');
+
+const { data } = await api.post('/analyze/', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' },
+});
+
+// data = { id: 42, status: "processing" }
+// Start polling...
+```
 
 ---
 
-### GET `/api/analyses/` — List Analyses
+### GET `/api/analyses/` — List Analyses (Paginated)
 
-🔒 Requires auth. Returns **paginated** list of the user's own analyses (newest first).
+🔒 Requires auth. Not throttled. Returns **paginated** list of the user's own analyses, newest first.
+
+Only returns **active** (non-soft-deleted) analyses.
 
 **Query parameters:**
 
 | Param  | Default | Description |
 |--------|---------|-------------|
-| `page` | 1       | Page number |
+| `page` | 1       | Page number (20 items per page) |
 
 **Response (200):**
 ```json
 {
   "count": 47,
-  "next": "https://api.example.com/api/analyses/?page=3",
-  "previous": "https://api.example.com/api/analyses/?page=1",
+  "next": "http://localhost:8000/api/analyses/?page=3",
+  "previous": "http://localhost:8000/api/analyses/?page=1",
   "results": [
     {
       "id": 42,
@@ -245,21 +419,35 @@ Submits a resume PDF + job description for async analysis. Returns immediately w
 }
 ```
 
-**⚠️ BREAKING CHANGE:** Previously returned a flat array. Now returns a paginated envelope with `count`, `next`, `previous`, `results`. Page size: **20 items**.
+**List item fields:**
+
+| Field              | Type           | Description                                  |
+|--------------------|----------------|----------------------------------------------|
+| `id`               | int            | Analysis ID                                  |
+| `jd_role`          | string         | Job title (may be empty if analysis pending) |
+| `jd_company`       | string         | Company name                                 |
+| `status`           | string         | `"pending"` / `"processing"` / `"done"` / `"failed"` |
+| `pipeline_step`    | string         | Current step in the pipeline                  |
+| `ats_score`        | int \| null    | ATS score (null if not complete)             |
+| `ai_provider_used` | string         | AI model that performed the analysis         |
+| `report_pdf_url`   | string \| null | URL to pre-generated PDF report              |
+| `created_at`       | datetime       | When the analysis was submitted              |
 
 ---
 
 ### GET `/api/analyses/<id>/` — Analysis Detail
 
-🔒 Requires auth. Returns the full analysis with nested scrape result and LLM response.
+🔒 Requires auth. Not throttled. Returns the full analysis with all results, nested scrape result, and LLM response.
 
-**Response (200):** See [Detail Response Schema](#detail-response-schema) below.
+Returns 404 if the analysis is soft-deleted or belongs to another user.
+
+**Response (200):** See [Detail Response Schema](#detail-response-schema) in section 8.
 
 ---
 
 ### GET `/api/analyses/<id>/status/` — Poll Status (Lightweight)
 
-🔒 Requires auth. Ultra-fast polling endpoint — reads from Redis cache first.
+🔒 Requires auth. Not throttled. Ultra-fast polling endpoint — reads from Redis cache first, falls back to DB.
 
 **Response (200):**
 ```json
@@ -271,33 +459,19 @@ Submits a resume PDF + job description for async analysis. Returns immediately w
 }
 ```
 
-**Status values:** `"pending"` → `"processing"` → `"done"` | `"failed"`
-
-**Pipeline step values (in order):**
-1. `"pending"` — Not started
-2. `"pdf_extract"` — Extracting text from resume PDF
-3. `"jd_scrape"` — Resolving/scraping job description
-4. `"llm_call"` — Calling AI model for analysis
-5. `"parse_result"` — Parsing and saving results
-6. `"done"` — Complete
-7. `"failed"` — An error occurred
-
-**Recommended polling strategy:**
-- Poll every **2 seconds** while `status === "processing"`
-- Stop polling when `status === "done"` or `status === "failed"`
-- Show `pipeline_step` as a progress indicator to the user
+See [Polling for Analysis Status](#12-polling-for-analysis-status) for the full polling implementation guide.
 
 ---
 
 ### POST `/api/analyses/<id>/retry/` — Retry Failed Analysis
 
-🔒 Requires auth. **Throttled:** 10/hour (shares analyze throttle).
+🔒 Requires auth. **Throttled:** 10/hour (shares the `analyze` throttle scope).
 
-Retries a failed analysis from its last incomplete pipeline step.
+Retries a failed analysis from its last incomplete pipeline step. Does not require re-uploading the resume.
 
-**Request:** Empty body.
+**Request:** Empty body (no payload needed).
 
-**Response (202):**
+**Response (202 Accepted):**
 ```json
 {
   "id": 42,
@@ -306,55 +480,94 @@ Retries a failed analysis from its last incomplete pipeline step.
 }
 ```
 
+After receiving 202, begin [polling for status](#12-polling-for-analysis-status) again.
+
 **Errors:**
-- `400` — Analysis is already complete
-- `404` — Not found / not owned by user
-- `409` — Analysis is already processing
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Already complete | `{ "detail": "This analysis is already complete." }` |
+| 404  | Not found / not owner | `{ "detail": "Analysis not found." }` |
+| 409  | Already processing | `{ "detail": "This analysis is already being processed." }` |
 
 ---
 
 ### DELETE `/api/analyses/<id>/delete/` — Soft-Delete Analysis
 
-🔒 Requires auth.
+🔒 Requires auth. Not throttled.
 
-**⚠️ BREAKING CHANGE (Phase 7):** This endpoint now performs a **soft-delete** instead of a hard delete. The analysis row is preserved in the database with lightweight metadata for analytics, but:
-- Heavy fields (`resume_text`, `resolved_jd`, `jd_text`) are cleared
-- The `report_pdf` is deleted from R2 storage
-- Orphaned `ScrapeResult` and `LLMResponse` rows are cleaned up
-- The analysis no longer appears in `GET /api/analyses/` list or detail views
+Performs a **soft-delete** — the analysis row is preserved in the database with lightweight metadata for analytics, but is removed from all list/detail views.
 
-Soft-deleted analyses are still counted in `GET /api/dashboard/stats/` for audit trail and analytics.
+**What happens on soft-delete:**
+- `deleted_at` timestamp is set
+- Heavy text fields cleared (`resume_text`, `resolved_jd`, `jd_text`)
+- Report PDF deleted from R2 storage
+- Orphaned `ScrapeResult` and `LLMResponse` rows cleaned up
+- Lightweight metadata preserved: `ats_score`, `jd_role`, `jd_company`, `status`, `created_at`
+- The analysis **no longer appears** in `GET /api/analyses/` list or `GET /api/analyses/<id>/` detail
+- Soft-deleted analyses **are counted** in `GET /api/dashboard/stats/` for audit trail
 
 **Response (204):** No content.
-**Error (404):** Not found / not owned by user.
+
+**Error (404):** `{ "detail": "Not found." }` — Analysis doesn't exist, already soft-deleted, or belongs to another user.
+
+**Frontend action:** Remove the analysis from local state/cache after a successful 204. No need to check `deleted_at` fields — the backend handles filtering automatically.
 
 ---
 
 ### GET `/api/analyses/<id>/export-pdf/` — Download PDF Report
 
-🔒 Requires auth.
+🔒 Requires auth. Not throttled.
 
-If a pre-generated PDF exists (stored in Cloudflare R2), redirects to the signed URL (302). Otherwise generates on-the-fly and returns the PDF bytes directly.
+If a pre-generated PDF exists (stored in Cloudflare R2), returns a **302 redirect** to the signed URL. Otherwise generates on-the-fly and returns the PDF bytes directly.
 
-**Response:** PDF file download (`Content-Type: application/pdf`)
+**Response:**
+- **302 Redirect** → R2 signed URL (when pre-generated PDF exists)
+- **200** with `Content-Type: application/pdf` (on-the-fly fallback)
+- **Content-Disposition:** `attachment; filename="resume_ai_<role>_<id>.pdf"`
 
 **Errors:**
-- `400` — Analysis not complete yet
-- `404` — Not found
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Analysis not complete | `{ "detail": "Analysis is not complete yet." }` |
+| 404  | Not found | `{ "detail": "Not found." }` |
+
+**Frontend tip:** Use `window.open()` or an `<a>` tag with the URL to trigger the browser's native download behavior. If using Axios, set `responseType: 'blob'`.
+
+```js
+// Option 1: Browser native download
+window.open(`${API_URL}/analyses/${id}/export-pdf/`, '_blank');
+
+// Option 2: Axios blob download
+const response = await api.get(`/analyses/${id}/export-pdf/`, {
+  responseType: 'blob',
+});
+const url = URL.createObjectURL(response.data);
+const a = document.createElement('a');
+a.href = url;
+a.download = `resume_analysis_${id}.pdf`;
+a.click();
+URL.revokeObjectURL(url);
+```
 
 ---
 
----
-
-## 9. Resume Endpoints
+## 5. Resume Endpoints
 
 All prefixed with `/api/`.
 
-### GET `/api/resumes/` — List Resumes
+Resume files are **deduplicated by SHA-256 hash per user** — uploading the same PDF for multiple analyses stores the file only once. Each unique file gets a `Resume` row with a UUID primary key.
 
-🔒 Requires auth. Returns **paginated** list of the user's deduplicated resume files (newest first).
+### GET `/api/resumes/` — List Resumes (Paginated)
 
-Resume files are deduplicated by SHA-256 hash per user — uploading the same PDF multiple times creates only one stored file.
+🔒 Requires auth. Not throttled. Returns **paginated** list of the user's deduplicated resume files, newest first.
+
+**Query parameters:**
+
+| Param  | Default | Description |
+|--------|---------|-------------|
+| `page` | 1       | Page number (20 items per page) |
 
 **Response (200):**
 ```json
@@ -364,49 +577,78 @@ Resume files are deduplicated by SHA-256 hash per user — uploading the same PD
   "previous": null,
   "results": [
     {
-      "id": "a1b2c3d4-...",
-      "original_filename": "my_resume.pdf",
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "original_filename": "my_resume_2026.pdf",
       "file_size_bytes": 245760,
       "uploaded_at": "2026-02-23T10:00:00Z",
       "active_analysis_count": 3
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "original_filename": "resume_v2.pdf",
+      "file_size_bytes": 198432,
+      "uploaded_at": "2026-02-20T08:15:00Z",
+      "active_analysis_count": 1
     }
   ]
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | UUID | Resume identifier |
-| `original_filename` | string | Original uploaded filename |
-| `file_size_bytes` | int | File size in bytes |
-| `uploaded_at` | datetime | When first uploaded |
-| `active_analysis_count` | int | Number of active (non-deleted) analyses using this resume |
+**Response fields:**
+
+| Field                  | Type     | Description                                                |
+|------------------------|----------|------------------------------------------------------------|
+| `id`                   | UUID     | Resume unique identifier                                   |
+| `original_filename`    | string   | Original uploaded filename (e.g., `"my_resume.pdf"`)       |
+| `file_size_bytes`      | int      | File size in bytes (use for display: `245760` → `"240 KB"`) |
+| `uploaded_at`          | datetime | When first uploaded (ISO 8601)                             |
+| `active_analysis_count`| int      | Number of active (non-soft-deleted) analyses using this resume |
+
+**Frontend usage:** Use `active_analysis_count` to show how many analyses reference each resume, and to determine whether the delete button should show a warning.
 
 ---
 
 ### DELETE `/api/resumes/<uuid:id>/` — Delete Resume
 
-🔒 Requires auth. Permanently deletes the resume file from R2 storage.
+🔒 Requires auth. Not throttled. Permanently deletes the resume file from R2 storage.
 
-**Only allowed if no active (non-soft-deleted) analyses reference this resume.** If active analyses exist, returns 409.
+**Blocked if active analyses exist.** Only allowed when `active_analysis_count === 0` (no active, non-soft-deleted analyses reference this resume). If active analyses exist, returns **409 Conflict**.
 
-**Response (204):** No content.
+**Response (204):** No content — resume and file permanently deleted.
 
 **Errors:**
-- `404` — Not found / not owned by user
-- `409` — Cannot delete: active analyses still reference this resume
 
-```json
-{ "detail": "Cannot delete: 2 active analysis(es) still reference this resume." }
+| Code | Condition | Response |
+|------|-----------|----------|
+| 404  | Not found / not owner | `{ "detail": "Not found." }` |
+| 409  | Active analyses exist | `{ "detail": "Cannot delete: 2 active analysis(es) still reference this resume." }` |
+
+**Frontend recommendation:**
+```jsx
+// Before calling delete, check active_analysis_count from the list
+if (resume.active_analysis_count > 0) {
+  alert(`This resume is used by ${resume.active_analysis_count} active analyses. ` +
+        `Delete those analyses first.`);
+  return;
+}
+
+try {
+  await api.delete(`/resumes/${resume.id}/`);
+  // Remove from local state
+} catch (err) {
+  if (err.response?.status === 409) {
+    alert(err.response.data.detail);
+  }
+}
 ```
 
 ---
 
-## 10. Dashboard Endpoints
+## 6. Dashboard Endpoints
 
 ### GET `/api/dashboard/stats/` — User Dashboard Analytics
 
-🔒 Requires auth. Returns aggregated analytics from **all** analyses (including soft-deleted) for audit trail purposes.
+🔒 Requires auth. Not throttled. Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail.
 
 **Response (200):**
 ```json
@@ -416,46 +658,104 @@ Resume files are deduplicated by SHA-256 hash per user — uploading the same PD
   "deleted_analyses": 5,
   "average_ats_score": 76.3,
   "score_trend": [
-    { "ats_score": 85, "jd_role": "Senior Dev", "created_at": "2026-02-23T14:00:00Z" },
-    { "ats_score": 72, "jd_role": "Backend Engineer", "created_at": "2026-02-22T10:00:00Z" }
+    {
+      "ats_score": 85,
+      "jd_role": "Senior Developer",
+      "created_at": "2026-02-23T14:00:00Z"
+    },
+    {
+      "ats_score": 72,
+      "jd_role": "Backend Engineer",
+      "created_at": "2026-02-22T10:00:00Z"
+    }
   ],
   "top_roles": [
     { "jd_role": "Backend Engineer", "count": 12 },
-    { "jd_role": "Full Stack Developer", "count": 8 }
+    { "jd_role": "Full Stack Developer", "count": 8 },
+    { "jd_role": "DevOps Engineer", "count": 5 },
+    { "jd_role": "ML Engineer", "count": 3 },
+    { "jd_role": "Frontend Developer", "count": 2 }
   ],
   "analyses_per_month": [
+    { "month": "2025-09-01T00:00:00Z", "count": 3 },
+    { "month": "2025-10-01T00:00:00Z", "count": 7 },
+    { "month": "2025-11-01T00:00:00Z", "count": 10 },
+    { "month": "2025-12-01T00:00:00Z", "count": 5 },
     { "month": "2026-01-01T00:00:00Z", "count": 15 },
-    { "month": "2026-02-01T00:00:00Z", "count": 22 }
+    { "month": "2026-02-01T00:00:00Z", "count": 7 }
   ]
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `total_analyses` | int | All analyses ever (including soft-deleted) |
-| `active_analyses` | int | Non-deleted analyses |
-| `deleted_analyses` | int | Soft-deleted analyses |
-| `average_ats_score` | float \| null | Average ATS score across all completed analyses |
-| `score_trend` | array | Last 10 completed analyses with score, role, and date |
-| `top_roles` | array | Top 5 most-analyzed job roles |
-| `analyses_per_month` | array | Monthly count for last 6 months |
+**Response fields:**
+
+| Field                | Type           | Description                                                 |
+|----------------------|----------------|-------------------------------------------------------------|
+| `total_analyses`     | int            | All analyses ever created (including soft-deleted)           |
+| `active_analyses`    | int            | Non-deleted analyses                                        |
+| `deleted_analyses`   | int            | Soft-deleted analyses                                       |
+| `average_ats_score`  | float \| null  | Average ATS score across all **completed** analyses; `null` if no completed analyses |
+| `score_trend`        | array          | Last **10** completed analyses with score, role, and date (newest first) |
+| `top_roles`          | array          | Top **5** most-analyzed job roles with count                 |
+| `analyses_per_month` | array          | Monthly analysis count for the last **6 months** (oldest first) |
+
+**`score_trend` item:**
+
+| Field        | Type     | Description                      |
+|--------------|----------|----------------------------------|
+| `ats_score`  | int      | ATS score (0-100)                |
+| `jd_role`    | string   | Job role analyzed                |
+| `created_at` | datetime | When analysis was submitted      |
+
+**`top_roles` item:**
+
+| Field    | Type   | Description          |
+|----------|--------|----------------------|
+| `jd_role`| string | Job role name        |
+| `count`  | int    | Number of analyses   |
+
+**`analyses_per_month` item:**
+
+| Field   | Type     | Description                                    |
+|---------|----------|------------------------------------------------|
+| `month` | datetime | First day of the month (ISO 8601)              |
+| `count` | int      | Total analyses submitted in that month          |
+
+**Frontend usage suggestions:**
+
+| Data Field          | UI Component          | Library Suggestion     |
+|--------------------|-----------------------|------------------------|
+| `total/active/deleted` | Summary stat cards | Simple `<div>` cards   |
+| `average_ats_score`    | Large gauge/number | `ScoreGauge` component |
+| `score_trend`          | Line chart          | Chart.js, Recharts     |
+| `top_roles`            | Horizontal bar chart | Chart.js, Recharts     |
+| `analyses_per_month`   | Bar/area chart       | Chart.js, Recharts     |
 
 ---
+
+## 7. Health Check
 
 ### GET `/api/health/` — Health Check
 
-🔓 Public (no auth required).
+🔓 Public (no auth required). Use this to verify backend connectivity before showing the login screen.
 
-**Response (200):** `{ "status": "ok" }`
-**Response (503):** `{ "status": "error", "detail": "..." }`
+**Response (200):**
+```json
+{ "status": "ok" }
+```
+
+**Response (503 Service Unavailable):**
+```json
+{ "status": "error", "detail": "Database is not reachable" }
+```
 
 ---
 
-## 4. Response Schemas
+## 8. Response Schemas
 
 ### Detail Response Schema
 
-Returned by `GET /api/analyses/<id>/`:
+Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with all results.
 
 ```json
 {
@@ -474,8 +774,8 @@ Returned by `GET /api/analyses/<id>/`:
   "resolved_jd": "We need a senior Python developer...",
   "scrape_result": null,
   "llm_response": {
-    "id": "a1b2c3d4-...",
-    "parsed_response": { "...see LLM schema below..." },
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "parsed_response": { "...see LLM schema in section 9..." },
     "model_used": "anthropic/claude-haiku-4.5",
     "status": "done",
     "error_message": "",
@@ -515,13 +815,59 @@ Returned by `GET /api/analyses/<id>/`:
 }
 ```
 
+**Detail field reference:**
+
+| Field                  | Type            | Description                                              |
+|------------------------|-----------------|----------------------------------------------------------|
+| `id`                   | int             | Analysis ID                                              |
+| `resume_file`          | string          | Relative storage path to the uploaded resume             |
+| `resume_file_url`      | string \| null  | Full URL to download the resume PDF from R2              |
+| `jd_input_type`        | string          | `"text"` / `"url"` / `"form"`                           |
+| `jd_text`              | string          | Raw JD text (empty if type is url/form)                  |
+| `jd_url`               | string          | JD source URL (empty if type is text/form)               |
+| `jd_role`              | string          | Job title — always populated on completed analyses       |
+| `jd_company`           | string          | Company name (may be empty)                              |
+| `jd_skills`            | string          | Comma-separated skills from the JD                       |
+| `jd_experience_years`  | int \| null     | Required experience years                                |
+| `jd_industry`          | string          | Industry/domain                                          |
+| `jd_extra_details`     | string          | Additional JD context extracted by LLM                   |
+| `resolved_jd`          | string          | Final resolved JD text sent to the LLM                   |
+| `scrape_result`        | object \| null  | Nested scrape result (only for `jd_input_type: "url"`)   |
+| `llm_response`         | object \| null  | Nested LLM response (null until LLM step completes)      |
+| `status`               | string          | `"pending"` / `"processing"` / `"done"` / `"failed"`    |
+| `pipeline_step`        | string          | Current pipeline step (see polling section)              |
+| `error_message`        | string          | Error details (empty on success)                         |
+| `ats_score`            | int \| null     | Overall ATS score 0-100                                  |
+| `ats_score_breakdown`  | object \| null  | `{ keyword_match, format_score, relevance_score }`       |
+| `keyword_gaps`         | string[] \| null| Keywords from JD missing in resume                       |
+| `section_suggestions`  | object \| null  | `{ summary, experience, skills, education, overall }`    |
+| `rewritten_bullets`    | array \| null   | `[{ original, rewritten, reason }]`                      |
+| `overall_assessment`   | string          | 2-3 sentence summary of analysis                         |
+| `ai_provider_used`     | string          | AI model identifier (e.g., `"OpenRouterProvider"`)       |
+| `celery_task_id`       | string          | Background task ID (for debugging)                       |
+| `report_pdf_url`       | string \| null  | URL to pre-generated PDF report in R2                    |
+| `created_at`           | datetime        | When analysis was submitted                              |
+| `updated_at`           | datetime        | Last modified timestamp                                  |
+
+**How `jd_role`, `jd_company`, etc. are populated:**
+
+| Input Type | Behavior |
+|------------|----------|
+| `form`     | User provides these fields directly → stored as-is |
+| `text`     | LLM extracts `job_metadata` from the text and auto-populates any empty fields |
+| `url`      | URL is scraped → LLM extracts metadata → auto-populates any empty fields |
+
+This means the frontend can **always rely on `jd_role` being populated** on a completed analysis, regardless of input type.
+
+---
+
 ### Scrape Result (nested, when `jd_input_type === "url"`)
 
 ```json
 {
-  "id": "uuid-...",
+  "id": "uuid-string",
   "source_url": "https://jobs.example.com/posting/12345",
-  "summary": "Senior Python Developer at TechCorp...",
+  "summary": "Senior Python Developer at TechCorp. 5+ years experience required. Skills: Python, Django, AWS...",
   "status": "done",
   "error_message": "",
   "created_at": "2026-02-22T14:30:02Z",
@@ -529,14 +875,26 @@ Returned by `GET /api/analyses/<id>/`:
 }
 ```
 
-> **Note:** `markdown` and `json_data` fields are **no longer exposed** in the API to reduce payload size. Only the `summary` field is returned.
+| Field           | Type     | Description                                    |
+|-----------------|----------|------------------------------------------------|
+| `id`            | UUID     | Scrape result identifier                        |
+| `source_url`    | string   | The URL that was scraped                        |
+| `summary`       | string   | Concise text summary extracted by Firecrawl     |
+| `status`        | string   | `"pending"` / `"done"` / `"failed"`            |
+| `error_message` | string   | Error details if scraping failed                |
+| `created_at`    | datetime | When scraping started                           |
+| `updated_at`    | datetime | When scraping completed                         |
+
+> **Note:** `markdown` and `json_data` fields are **not exposed** in the API to reduce payload size. Only the `summary` field is returned.
+
+---
 
 ### LLM Response (nested)
 
 ```json
 {
-  "id": "uuid-...",
-  "parsed_response": { "...full LLM output..." },
+  "id": "uuid-string",
+  "parsed_response": { "...full LLM analysis output..." },
   "model_used": "anthropic/claude-haiku-4.5",
   "status": "done",
   "error_message": "",
@@ -545,116 +903,23 @@ Returned by `GET /api/analyses/<id>/`:
 }
 ```
 
-> **Note:** `prompt_sent` and `raw_response` fields are **no longer exposed** in the API to reduce payload size (~160KB saved per response).
+| Field              | Type           | Description                                   |
+|--------------------|----------------|-----------------------------------------------|
+| `id`               | UUID           | LLM response identifier                       |
+| `parsed_response`  | object \| null | Validated JSON result (see section 9)          |
+| `model_used`       | string         | Model name (e.g., `"anthropic/claude-haiku-4.5"`) |
+| `status`           | string         | `"pending"` / `"done"` / `"failed"`           |
+| `error_message`    | string         | Error details if LLM call failed               |
+| `duration_seconds` | float \| null  | How long the LLM call took                     |
+| `created_at`       | datetime       | When the LLM was called                        |
+
+> **Note:** `prompt_sent` and `raw_response` fields are **not exposed** in the API to reduce payload size (~160KB saved per response).
 
 ---
 
-## 5. Pagination
+## 9. LLM Analysis Output Schema
 
-**⚠️ BREAKING CHANGE** — The list endpoint now returns paginated responses.
-
-| Setting   | Value |
-|-----------|-------|
-| Page size | 20    |
-| Style     | `PageNumberPagination` |
-| Query param | `?page=N` |
-
-**Envelope format:**
-```json
-{
-  "count": 47,
-  "next": "http://api.example.com/api/analyses/?page=3",
-  "previous": "http://api.example.com/api/analyses/?page=1",
-  "results": [ ... ]
-}
-```
-
-**Frontend migration:**
-```js
-// BEFORE
-const analyses = response.data;
-
-// AFTER
-const { count, next, previous, results } = response.data;
-const analyses = results;
-```
-
----
-
-## 6. Rate Limiting
-
-| Scope     | Default Limit | Env Var Override        |
-|-----------|---------------|------------------------|
-| General API (per user) | 30 / hour | `USER_THROTTLE_RATE` |
-| Analyze endpoint | 10 / hour | `ANALYZE_THROTTLE_RATE` |
-
-When rate-limited, the API returns:
-
-```
-HTTP 429 Too Many Requests
-{
-  "detail": "Request was throttled. Expected available in 120 seconds."
-}
-```
-
-The `Retry-After` header is also set.
-
-**Exempt endpoints (no throttle):**
-- `GET /api/analyses/` (list)
-- `GET /api/analyses/<id>/` (detail)
-- `GET /api/analyses/<id>/status/` (polling)
-- `DELETE /api/analyses/<id>/delete/`
-- `GET /api/analyses/<id>/export-pdf/`
-
----
-
-## 7. Polling for Analysis Status
-
-After submitting an analysis (`POST /api/analyze/`), poll the lightweight status endpoint:
-
-```
-GET /api/analyses/<id>/status/
-```
-
-### Recommended implementation:
-
-```js
-async function pollAnalysisStatus(analysisId, onUpdate) {
-  const POLL_INTERVAL = 2000; // 2 seconds
-  const MAX_POLLS = 150;      // 5 minutes max
-
-  for (let i = 0; i < MAX_POLLS; i++) {
-    const { data } = await api.get(`/analyses/${analysisId}/status/`);
-    onUpdate(data);
-
-    if (data.status === 'done' || data.status === 'failed') {
-      return data;
-    }
-
-    await new Promise(r => setTimeout(r, POLL_INTERVAL));
-  }
-
-  throw new Error('Polling timeout');
-}
-```
-
-### Pipeline step → UI label mapping:
-
-| `pipeline_step` | Suggested UI Text |
-|-----------------|-------------------|
-| `pending`       | "Queued..." |
-| `pdf_extract`   | "Reading your resume..." |
-| `jd_scrape`     | "Fetching job description..." |
-| `llm_call`      | "AI is analyzing..." |
-| `parse_result`  | "Finalizing results..." |
-| `done`          | "Complete!" |
-| `failed`        | "Analysis failed" |
-
----
-
-## 8. LLM Analysis Output Schema
-
-The AI returns the following JSON schema. These fields are stored in `llm_response.parsed_response` and also flattened onto the top-level analysis object.
+The AI returns the following JSON structure. These fields are stored in `llm_response.parsed_response` **and also flattened** onto the top-level analysis object (so you can access them directly without nesting through `llm_response`).
 
 ```json
 {
@@ -695,15 +960,15 @@ The AI returns the following JSON schema. These fields are stored in `llm_respon
 }
 ```
 
-### Field reference:
+### Field reference
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `job_metadata.job_title` | string | Job title extracted from JD by LLM |
-| `job_metadata.company` | string | Company name (empty string if not found) |
+| `job_metadata.company` | string | Company name (`""` if not found) |
 | `job_metadata.skills` | string | Comma-separated key skills from JD |
 | `job_metadata.experience_years` | int \| null | Required years of experience |
-| `job_metadata.industry` | string | Industry/domain (empty string if unclear) |
+| `job_metadata.industry` | string | Industry/domain (`""` if unclear) |
 | `job_metadata.extra_details` | string | 2-4 sentence summary of other JD details |
 | `ats_score` | int (0-100) | Overall ATS compatibility score |
 | `ats_score_breakdown.keyword_match` | int (0-100) | How many JD keywords appear in resume |
@@ -720,176 +985,782 @@ The AI returns the following JSON schema. These fields are stored in `llm_respon
 | `rewritten_bullets[].reason` | string | Explanation of what was improved |
 | `overall_assessment` | string | 2-3 sentence summary of strengths, gaps, priorities |
 
-### How `jd_role`, `jd_company`, etc. are populated:
+### Mapping LLM output → UI components
 
-- **`form` input type:** User provides these fields directly → stored as-is.
-- **`text` / `url` input type:** The LLM extracts `job_metadata` from the JD and populates `jd_role`, `jd_company`, `jd_skills`, `jd_experience_years`, `jd_industry`, `jd_extra_details` **only** if the user didn't supply them.
-
-This means the frontend can always rely on these fields being populated on a completed analysis, regardless of input type.
+| LLM Field | Suggested UI | Notes |
+|-----------|-------------|-------|
+| `ats_score` | Large circular gauge (0-100) | Color: red < 50, yellow < 75, green >= 75 |
+| `ats_score_breakdown.*` | Three horizontal bars or radial chart | Label each sub-score |
+| `keyword_gaps` | Tag/chip list (red/orange) | Show as "Missing Keywords" section |
+| `section_suggestions.*` | Accordion panels per section | Expandable cards for each resume section |
+| `rewritten_bullets` | Before/after card list | Show original → rewritten with reason |
+| `overall_assessment` | Summary paragraph at top | Use as the "AI Summary" hero text |
+| `job_metadata.*` | Header/metadata card | Show role, company, industry as breadcrumb |
 
 ---
 
-## 11. Recent Backend Changes (Breaking)
+## 10. Pagination
 
-### 11.1 Pagination on list endpoint
+All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`) return paginated responses.
 
-**Affected:** `GET /api/analyses/`
+| Setting     | Value                    |
+|-------------|--------------------------|
+| Page size   | 20 items per page        |
+| Style       | `PageNumberPagination`   |
+| Query param | `?page=N`               |
 
-Previously returned a flat JSON array. Now returns a paginated envelope:
+**Envelope format:**
+```json
+{
+  "count": 47,
+  "next": "http://localhost:8000/api/analyses/?page=3",
+  "previous": "http://localhost:8000/api/analyses/?page=1",
+  "results": [ ... ]
+}
+```
+
+| Field      | Type           | Description                          |
+|------------|----------------|--------------------------------------|
+| `count`    | int            | Total number of items across all pages |
+| `next`     | string \| null | Full URL of the next page (null if last page) |
+| `previous` | string \| null | Full URL of the previous page (null if first page) |
+| `results`  | array          | Array of items for the current page   |
+
+**Frontend pagination helper:**
+```js
+// Generic paginated fetch
+async function fetchPage(endpoint, page = 1) {
+  const { data } = await api.get(`${endpoint}?page=${page}`);
+  return {
+    items: data.results,
+    totalCount: data.count,
+    hasNext: data.next !== null,
+    hasPrevious: data.previous !== null,
+    totalPages: Math.ceil(data.count / 20),
+    currentPage: page,
+  };
+}
+
+// Usage
+const { items, totalPages, hasNext } = await fetchPage('/analyses/', 1);
+```
+
+---
+
+## 11. Rate Limiting
+
+| Scope                     | Default Limit | Env Var Override         |
+|---------------------------|---------------|--------------------------|
+| General API (per user)    | 30 / hour     | `USER_THROTTLE_RATE`     |
+| Analyze + Retry endpoints | 10 / hour     | `ANALYZE_THROTTLE_RATE`  |
+
+When rate-limited, the API returns:
+
+```http
+HTTP 429 Too Many Requests
+Retry-After: 120
+
+{
+  "detail": "Request was throttled. Expected available in 120 seconds."
+}
+```
+
+**Exempt endpoints (no throttle applied):**
+- `GET /api/analyses/` — list analyses
+- `GET /api/analyses/<id>/` — analysis detail
+- `GET /api/analyses/<id>/status/` — polling
+- `DELETE /api/analyses/<id>/delete/` — soft-delete
+- `GET /api/analyses/<id>/export-pdf/` — PDF export
+- `GET /api/resumes/` — list resumes
+- `DELETE /api/resumes/<uuid:id>/` — delete resume
+- `GET /api/dashboard/stats/` — dashboard analytics
+- `GET /api/health/` — health check
+
+**Frontend handling:**
+```js
+api.interceptors.response.use(null, (error) => {
+  if (error.response?.status === 429) {
+    const retryAfter = error.response.headers['retry-after'] || 60;
+    // Show toast: "Too many requests. Try again in X seconds."
+    showToast(`Rate limited. Try again in ${retryAfter}s.`, 'warning');
+  }
+  return Promise.reject(error);
+});
+```
+
+---
+
+## 12. Polling for Analysis Status
+
+After submitting an analysis (`POST /api/analyze/` → `{ id, status }`), poll the lightweight status endpoint until complete.
+
+### Status flow
+
+```
+pending → processing → done
+                    ↘ failed
+```
+
+### Pipeline step progression
+
+| `pipeline_step` | Description | Suggested UI Text |
+|-----------------|-------------|-------------------|
+| `pending`       | Queued, waiting for Celery worker | "Queued..." |
+| `pdf_extract`   | Extracting text from resume PDF | "Reading your resume..." |
+| `jd_scrape`     | Resolving/scraping job description | "Fetching job description..." |
+| `llm_call`      | Calling AI model for analysis | "AI is analyzing..." |
+| `parse_result`  | Parsing and saving results | "Finalizing results..." |
+| `done`          | Analysis complete | "Complete!" |
+| `failed`        | An error occurred | "Analysis failed" |
+
+### Recommended polling implementation
 
 ```js
-// Old: response.data = [...]
-// New: response.data = { count, next, previous, results: [...] }
+/**
+ * Poll analysis status until done/failed.
+ * @param {number} analysisId - The analysis ID from POST /api/analyze/
+ * @param {function} onUpdate - Callback called with each status response
+ * @returns {Promise<object>} Final status object
+ */
+async function pollAnalysisStatus(analysisId, onUpdate) {
+  const POLL_INTERVAL = 2000; // 2 seconds
+  const MAX_POLLS = 150;      // 5 minutes max (150 × 2s)
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    const { data } = await api.get(`/analyses/${analysisId}/status/`);
+    onUpdate(data);
+
+    if (data.status === 'done') {
+      return data; // Fetch full detail now
+    }
+
+    if (data.status === 'failed') {
+      throw new Error(data.error_message || 'Analysis failed');
+    }
+
+    await new Promise(r => setTimeout(r, POLL_INTERVAL));
+  }
+
+  throw new Error('Polling timeout — analysis took too long');
+}
+
+// Usage in a React component
+const handleSubmit = async (formData) => {
+  setSubmitting(true);
+  try {
+    const { data } = await api.post('/analyze/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+
+    await pollAnalysisStatus(data.id, (status) => {
+      setPipelineStep(status.pipeline_step);  // Update progress UI
+    });
+
+    // Analysis complete — navigate to results
+    navigate(`/results/${data.id}`);
+  } catch (err) {
+    if (err.response?.status === 409) {
+      setError('Analysis already in progress. Please wait.');
+    } else {
+      setError(err.message);
+    }
+  } finally {
+    setSubmitting(false);
+  }
+};
 ```
 
-**Action required:** Update all list consumers to read `response.data.results`.
+### Progress bar mapping
 
----
+Map `pipeline_step` to a numeric percentage for a progress bar:
 
-### 11.2 Idempotency guard on analyze
+```js
+const STEP_PROGRESS = {
+  pending: 0,
+  pdf_extract: 15,
+  jd_scrape: 35,
+  llm_call: 55,
+  parse_result: 85,
+  done: 100,
+  failed: 0,
+};
 
-**Affected:** `POST /api/analyze/`
-
-A second submission within 30 seconds now returns **409 Conflict**:
-
-```json
-{ "detail": "An analysis is already being submitted. Please wait." }
+// Usage: <ProgressBar value={STEP_PROGRESS[step]} />
 ```
 
-**Action required:** Handle 409 responses. Disable the submit button after first click. Show a "please wait" message.
-
 ---
 
-### 11.3 Serializer field changes
-
-**Removed from `scrape_result` nested object:**
-- `markdown` (large raw scrape text)
-- `json_data` (raw scrape JSON)
-
-**Removed from `llm_response` nested object:**
-- `prompt_sent` (the full prompt sent to the LLM)
-- `raw_response` (raw LLM text output)
-
-These fields were large (~160KB+) and not used by the frontend. If you were displaying any of these, they are no longer available.
-
-**Added to `scrape_result` nested object:**
-- `summary` — Concise text summary from Firecrawl
-
----
-
-### 11.4 New fields on analysis detail
-
-These fields are now populated for all JD input types (not just `form`):
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `jd_role` | string | Job title |
-| `jd_company` | string | Company name |
-| `jd_skills` | string | Comma-separated skills |
-| `jd_experience_years` | int \| null | Required experience |
-| `jd_industry` | string | Industry/domain |
-| `jd_extra_details` | string | Additional JD summary |
-
-For `text` and `url` inputs, these are extracted by the LLM from the job description. The frontend can display them universally.
-
----
-
-### 11.5 AI provider change
-
----
-
-### 11.6 Soft-delete on analysis delete (Phase 7)
-
-**Affected:** `DELETE /api/analyses/<id>/delete/`
-
-Previously performed a hard delete (row removed from DB). Now performs a **soft-delete**:
-- Row preserved with `deleted_at` timestamp
-- Heavy text fields cleared (`resume_text`, `resolved_jd`, `jd_text`)
-- Report PDF deleted from R2
-- Orphaned ScrapeResult/LLMResponse cleaned up
-- Lightweight metadata retained for analytics (`ats_score`, `jd_role`, `jd_company`, `status`)
-
-**No frontend action required** — the endpoint still returns 204 on success. Soft-deleted analyses are automatically excluded from list/detail views.
-
----
-
-### 11.7 New endpoints (Phase 7)
-
-| Method | URL | Description |
-|--------|-----|-------------|
-| GET | `/api/resumes/` | List deduplicated resumes (paginated) |
-| DELETE | `/api/resumes/<uuid:id>/` | Delete resume from storage |
-| GET | `/api/dashboard/stats/` | User-level analytics |
-
----
-
-### 11.8 Resume deduplication (Phase 7)
-
-Resume files are now deduplicated by SHA-256 hash per user. Uploading the same PDF for multiple analyses stores the file only once. The `resume` field is a nullable FK on each analysis pointing to the shared `Resume` row.
-
-**No frontend action required** — deduplication is transparent. The `resume_file` and `resume_file_url` fields on analysis detail still work as before
-
-The backend now uses **OpenRouter** (model: `anthropic/claude-haiku-4.5`) instead of the Luffy self-hosted LLM. The `ai_provider_used` field on analyses will show `"OpenRouterProvider"` or the model name.
-
-No frontend action required — this is transparent to the frontend.
-
----
-
-## 12. Error Handling Reference
+## 13. Error Handling Reference
 
 ### HTTP Status Codes
 
-| Code | Meaning | When |
-|------|---------|------|
-| 200  | OK | Successful GET/POST |
-| 201  | Created | Successful registration |
-| 202  | Accepted | Analysis submitted (async processing) |
-| 204  | No Content | Successful DELETE |
-| 302  | Redirect | PDF export → R2 signed URL |
-| 400  | Bad Request | Validation error, invalid data |
-| 401  | Unauthorized | Missing/expired JWT token |
-| 404  | Not Found | Resource doesn't exist or not owned by user |
-| 409  | Conflict | Duplicate submission / already processing |
-| 429  | Too Many Requests | Rate limit exceeded |
-| 500  | Server Error | Unexpected backend error |
-| 503  | Service Unavailable | Database unreachable (health check) |
+| Code | Meaning              | When                                                    |
+|------|----------------------|---------------------------------------------------------|
+| 200  | OK                   | Successful GET/POST                                     |
+| 201  | Created              | Successful registration                                 |
+| 202  | Accepted             | Analysis submitted / retry started (async processing)   |
+| 204  | No Content           | Successful DELETE (analysis or resume)                  |
+| 302  | Redirect             | PDF export → R2 signed URL                              |
+| 400  | Bad Request          | Validation error, invalid data, analysis already done   |
+| 401  | Unauthorized         | Missing/expired/invalid JWT token                       |
+| 404  | Not Found            | Resource doesn't exist, already soft-deleted, or not owned by user |
+| 409  | Conflict             | Duplicate submission / analysis already processing / resume in use |
+| 429  | Too Many Requests    | Rate limit exceeded                                     |
+| 500  | Server Error         | Unexpected backend error                                |
+| 503  | Service Unavailable  | Database unreachable (health check)                     |
 
-### Error response format:
+### Error response formats
 
+**Single error (most endpoints):**
 ```json
 {
   "detail": "Human-readable error message."
 }
 ```
 
-Or for validation errors (400):
-
+**Validation errors (400 on create/submit):**
 ```json
 {
-  "field_name": ["Error message for this field."],
-  "other_field": ["Another error."]
+  "resume_file": ["Only PDF files are accepted."],
+  "jd_text": ["Job description text is required when input type is \"text\"."]
+}
+```
+
+**JWT errors (401):**
+```json
+{
+  "detail": "Given token not valid for any token type",
+  "code": "token_not_valid",
+  "messages": [
+    {
+      "token_class": "AccessToken",
+      "token_type": "access",
+      "message": "Token is invalid or expired"
+    }
+  ]
+}
+```
+
+### Comprehensive error handler
+
+```js
+function handleApiError(error) {
+  if (!error.response) {
+    // Network error (no response from server)
+    return { type: 'network', message: 'Cannot reach the server. Check your connection.' };
+  }
+
+  const { status, data } = error.response;
+
+  switch (status) {
+    case 400:
+      // Validation errors — may be field-level or detail
+      if (data.detail) return { type: 'validation', message: data.detail };
+      // Field-level errors: { field: [errors] }
+      const fieldErrors = Object.entries(data)
+        .map(([field, msgs]) => `${field}: ${msgs.join(', ')}`)
+        .join('\n');
+      return { type: 'validation', message: fieldErrors };
+
+    case 401:
+      return { type: 'auth', message: 'Session expired. Please log in again.' };
+
+    case 404:
+      return { type: 'not_found', message: 'Resource not found.' };
+
+    case 409:
+      return { type: 'conflict', message: data.detail || 'Request conflicts with current state.' };
+
+    case 429:
+      const retryAfter = error.response.headers['retry-after'] || '60';
+      return { type: 'rate_limit', message: `Too many requests. Try again in ${retryAfter}s.` };
+
+    case 503:
+      return { type: 'service', message: 'Service temporarily unavailable. Try again later.' };
+
+    default:
+      return { type: 'unknown', message: data.detail || 'An unexpected error occurred.' };
+  }
 }
 ```
 
 ---
 
-## Quick Reference — All Endpoints
+## 14. TypeScript Type Definitions
+
+Use these types for type-safe API integration (copy into your project as `src/types/api.ts`):
+
+```typescript
+// ── Auth ─────────────────────────────────────────────────────────────────
+
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  date_joined: string; // ISO 8601
+}
+
+interface AuthTokens {
+  access: string;
+  refresh: string;
+}
+
+interface LoginResponse extends AuthTokens {
+  user: User;
+}
+
+interface RegisterResponse {
+  user: User;
+  access: string;
+  refresh: string;
+}
+
+// ── Pagination ───────────────────────────────────────────────────────────
+
+interface PaginatedResponse<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+}
+
+// ── Resume ───────────────────────────────────────────────────────────────
+
+interface Resume {
+  id: string;                 // UUID
+  original_filename: string;
+  file_size_bytes: number;
+  uploaded_at: string;        // ISO 8601
+  active_analysis_count: number;
+}
+
+// ── Analysis ─────────────────────────────────────────────────────────────
+
+type JdInputType = 'text' | 'url' | 'form';
+type AnalysisStatus = 'pending' | 'processing' | 'done' | 'failed';
+type PipelineStep = 'pending' | 'pdf_extract' | 'jd_scrape' | 'llm_call'
+                  | 'parse_result' | 'done' | 'failed';
+
+interface AnalysisListItem {
+  id: number;
+  jd_role: string;
+  jd_company: string;
+  status: AnalysisStatus;
+  pipeline_step: PipelineStep;
+  ats_score: number | null;
+  ai_provider_used: string;
+  report_pdf_url: string | null;
+  created_at: string;         // ISO 8601
+}
+
+interface ATSScoreBreakdown {
+  keyword_match: number;      // 0-100
+  format_score: number;       // 0-100
+  relevance_score: number;    // 0-100
+}
+
+interface SectionSuggestions {
+  summary: string;
+  experience: string;
+  skills: string;
+  education: string;
+  overall: string;
+}
+
+interface RewrittenBullet {
+  original: string;
+  rewritten: string;
+  reason: string;
+}
+
+interface ScrapeResult {
+  id: string;                 // UUID
+  source_url: string;
+  summary: string;
+  status: 'pending' | 'done' | 'failed';
+  error_message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LLMResponse {
+  id: string;                 // UUID
+  parsed_response: LLMParsedResponse | null;
+  model_used: string;
+  status: 'pending' | 'done' | 'failed';
+  error_message: string;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
+interface LLMParsedResponse {
+  job_metadata: {
+    job_title: string;
+    company: string;
+    skills: string;
+    experience_years: number | null;
+    industry: string;
+    extra_details: string;
+  };
+  ats_score: number;
+  ats_score_breakdown: ATSScoreBreakdown;
+  keyword_gaps: string[];
+  section_suggestions: SectionSuggestions;
+  rewritten_bullets: RewrittenBullet[];
+  overall_assessment: string;
+}
+
+interface AnalysisDetail {
+  id: number;
+  resume_file: string;
+  resume_file_url: string | null;
+  jd_input_type: JdInputType;
+  jd_text: string;
+  jd_url: string;
+  jd_role: string;
+  jd_company: string;
+  jd_skills: string;
+  jd_experience_years: number | null;
+  jd_industry: string;
+  jd_extra_details: string;
+  resolved_jd: string;
+  scrape_result: ScrapeResult | null;
+  llm_response: LLMResponse | null;
+  status: AnalysisStatus;
+  pipeline_step: PipelineStep;
+  error_message: string;
+  ats_score: number | null;
+  ats_score_breakdown: ATSScoreBreakdown | null;
+  keyword_gaps: string[] | null;
+  section_suggestions: SectionSuggestions | null;
+  rewritten_bullets: RewrittenBullet[] | null;
+  overall_assessment: string;
+  ai_provider_used: string;
+  celery_task_id: string;
+  report_pdf_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AnalysisStatusResponse {
+  status: AnalysisStatus;
+  pipeline_step: PipelineStep;
+  ats_score: number | null;
+  error_message: string;
+}
+
+interface AnalysisSubmitResponse {
+  id: number;
+  status: 'processing';
+}
+
+interface RetryResponse {
+  id: number;
+  status: 'processing';
+  pipeline_step: PipelineStep;
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────
+
+interface ScoreTrendItem {
+  ats_score: number;
+  jd_role: string;
+  created_at: string;
+}
+
+interface TopRoleItem {
+  jd_role: string;
+  count: number;
+}
+
+interface MonthlyCountItem {
+  month: string;              // ISO 8601 (first day of month)
+  count: number;
+}
+
+interface DashboardStats {
+  total_analyses: number;
+  active_analyses: number;
+  deleted_analyses: number;
+  average_ats_score: number | null;
+  score_trend: ScoreTrendItem[];
+  top_roles: TopRoleItem[];
+  analyses_per_month: MonthlyCountItem[];
+}
+```
+
+---
+
+## 15. Frontend Integration Recipes
+
+### Recipe 1: Analysis Submit Flow (React)
+
+```jsx
+import { useState } from 'react';
+import api from '../api/client';
+
+function AnalyzePage() {
+  const [step, setStep] = useState(null);     // pipeline_step
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+
+    const formData = new FormData(e.target);
+
+    try {
+      // 1. Submit analysis
+      const { data } = await api.post('/analyze/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      // 2. Poll for status
+      const POLL_INTERVAL = 2000;
+      while (true) {
+        const { data: status } = await api.get(`/analyses/${data.id}/status/`);
+        setStep(status.pipeline_step);
+
+        if (status.status === 'done') {
+          window.location.href = `/results/${data.id}`;
+          return;
+        }
+        if (status.status === 'failed') {
+          throw new Error(status.error_message || 'Analysis failed');
+        }
+
+        await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      }
+    } catch (err) {
+      if (err.response?.status === 409) {
+        setError('Already submitting. Please wait.');
+      } else if (err.response?.status === 429) {
+        setError('Rate limit reached. Try again later.');
+      } else {
+        setError(err.message || 'Something went wrong');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input type="file" name="resume_file" accept=".pdf" required />
+      <select name="jd_input_type">
+        <option value="text">Paste Text</option>
+        <option value="url">Job URL</option>
+        <option value="form">Fill Form</option>
+      </select>
+      <textarea name="jd_text" placeholder="Paste job description..." />
+      <button type="submit" disabled={submitting}>
+        {submitting ? `Analyzing (${step || 'starting'})...` : 'Analyze Resume'}
+      </button>
+      {error && <p className="text-red-500">{error}</p>}
+    </form>
+  );
+}
+```
+
+### Recipe 2: Dashboard Stats (React + Recharts)
+
+```jsx
+import { useEffect, useState } from 'react';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
+import api from '../api/client';
+
+function DashboardPage() {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    api.get('/dashboard/stats/').then(({ data }) => setStats(data));
+  }, []);
+
+  if (!stats) return <Spinner />;
+
+  return (
+    <div>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <StatCard label="Total Analyses" value={stats.total_analyses} />
+        <StatCard label="Active" value={stats.active_analyses} />
+        <StatCard label="Avg ATS Score" value={stats.average_ats_score ?? '—'} />
+      </div>
+
+      {/* Score Trend Chart */}
+      <LineChart width={600} height={300} data={[...stats.score_trend].reverse()}>
+        <XAxis dataKey="jd_role" />
+        <YAxis domain={[0, 100]} />
+        <Tooltip />
+        <Line type="monotone" dataKey="ats_score" stroke="#3b82f6" />
+      </LineChart>
+
+      {/* Monthly Activity Chart */}
+      <BarChart width={600} height={300} data={stats.analyses_per_month}>
+        <XAxis
+          dataKey="month"
+          tickFormatter={(m) => new Date(m).toLocaleDateString('en', { month: 'short' })}
+        />
+        <YAxis />
+        <Tooltip />
+        <Bar dataKey="count" fill="#10b981" />
+      </BarChart>
+    </div>
+  );
+}
+```
+
+### Recipe 3: Paginated Analysis History
+
+```jsx
+import { useEffect, useState } from 'react';
+import api from '../api/client';
+
+function HistoryPage() {
+  const [analyses, setAnalyses] = useState([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+
+  useEffect(() => {
+    api.get(`/analyses/?page=${page}`).then(({ data }) => {
+      setAnalyses(data.results);
+      setTotalPages(Math.ceil(data.count / 20));
+    });
+  }, [page]);
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this analysis?')) return;
+    await api.delete(`/analyses/${id}/delete/`);
+    setAnalyses((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  return (
+    <div>
+      {analyses.map((a) => (
+        <div key={a.id} className="flex justify-between p-4 border-b">
+          <div>
+            <strong>{a.jd_role || 'Untitled'}</strong> — {a.jd_company}
+            <span className="ml-2 text-sm text-gray-500">{a.status}</span>
+          </div>
+          <div>
+            {a.ats_score && <span className="font-bold">{a.ats_score}/100</span>}
+            <button onClick={() => handleDelete(a.id)} className="ml-4 text-red-500">
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {/* Pagination */}
+      <div className="flex gap-2 mt-4">
+        <button disabled={page === 1} onClick={() => setPage(p => p - 1)}>
+          ← Prev
+        </button>
+        <span>Page {page} of {totalPages}</span>
+        <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>
+          Next →
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+### Recipe 4: Resume Management
+
+```jsx
+import { useEffect, useState } from 'react';
+import api from '../api/client';
+
+function ResumesPage() {
+  const [resumes, setResumes] = useState([]);
+
+  useEffect(() => {
+    api.get('/resumes/').then(({ data }) => setResumes(data.results));
+  }, []);
+
+  const handleDelete = async (resume) => {
+    if (resume.active_analysis_count > 0) {
+      alert(
+        `Cannot delete: ${resume.active_analysis_count} active analyses use this resume. ` +
+        `Delete those analyses first.`
+      );
+      return;
+    }
+    if (!confirm(`Delete "${resume.original_filename}"? This cannot be undone.`)) return;
+
+    try {
+      await api.delete(`/resumes/${resume.id}/`);
+      setResumes((prev) => prev.filter((r) => r.id !== resume.id));
+    } catch (err) {
+      if (err.response?.status === 409) {
+        alert(err.response.data.detail);
+      }
+    }
+  };
+
+  const formatSize = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div>
+      <h2>My Resumes</h2>
+      {resumes.map((r) => (
+        <div key={r.id} className="flex justify-between p-3 border-b">
+          <div>
+            <strong>{r.original_filename}</strong>
+            <span className="ml-2 text-sm text-gray-500">
+              {formatSize(r.file_size_bytes)}
+            </span>
+            <span className="ml-2 text-sm">
+              {r.active_analysis_count} analysis(es)
+            </span>
+          </div>
+          <button
+            onClick={() => handleDelete(r)}
+            disabled={r.active_analysis_count > 0}
+            className={
+              r.active_analysis_count > 0 ? 'text-gray-400 cursor-not-allowed' : 'text-red-500'
+            }
+          >
+            Delete
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+---
+
+## 16. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
-| POST | `/api/auth/register/` | ❌ | User | Create account |
-| POST | `/api/auth/login/` | ❌ | User | Get JWT tokens |
-| POST | `/api/auth/logout/` | ✅ | User | Blacklist refresh token |
-| POST | `/api/auth/token/refresh/` | ❌ | User | Refresh JWT |
-| GET | `/api/auth/me/` | ✅ | User | Current user profile |
-| POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit analysis |
+| **Auth** |||||
+| POST | `/api/auth/register/` | ❌ | User (30/hr) | Create account + auto-login |
+| POST | `/api/auth/login/` | ❌ | User (30/hr) | Get JWT tokens |
+| POST | `/api/auth/logout/` | ✅ | User (30/hr) | Blacklist refresh token |
+| POST | `/api/auth/token/refresh/` | ❌ | User (30/hr) | Refresh JWT tokens |
+| GET | `/api/auth/me/` | ✅ | User (30/hr) | Current user profile |
+| **Analysis** |||||
+| POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis |
 | GET | `/api/analyses/` | ✅ | None | List analyses (paginated) |
 | GET | `/api/analyses/<id>/` | ✅ | None | Full analysis detail |
 | GET | `/api/analyses/<id>/status/` | ✅ | None | Poll status (lightweight) |
 | POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
 | DELETE | `/api/analyses/<id>/delete/` | ✅ | None | Soft-delete analysis |
 | GET | `/api/analyses/<id>/export-pdf/` | ✅ | None | Download PDF report |
-| GET | `/api/resumes/` | ✅ | None | List resumes (paginated) |
-| DELETE | `/api/resumes/<uuid:id>/` | ✅ | None | Delete resume file |
-| GET | `/api/dashboard/stats/` | ✅ | None | User analytics |
+| **Resume** |||||
+| GET | `/api/resumes/` | ✅ | None | List resumes (paginated, UUID IDs) |
+| DELETE | `/api/resumes/<uuid:id>/` | ✅ | None | Delete resume file (blocked if in use) |
+| **Dashboard** |||||
+| GET | `/api/dashboard/stats/` | ✅ | None | User analytics & trends |
+| **System** |||||
 | GET | `/api/health/` | ❌ | None | Health check |
