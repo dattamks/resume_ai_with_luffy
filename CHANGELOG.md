@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.0] — 2026-02-23
+
+### Phase 8: SSRF Protection & Shareable Analysis Links
+
+### Added
+- **Shareable results link** — owners of a completed analysis can generate a public, read-only URL. No authentication required to view a shared analysis.
+  - `POST /api/analyses/<id>/share/` — generate a UUID share token (idempotent; returns existing token if already shared).
+  - `DELETE /api/analyses/<id>/share/` — revoke the share token (link stops working immediately).
+  - `GET /api/shared/<token>/` — public read-only view returning ATS score, breakdown, keyword gaps, section suggestions, rewritten bullets, and assessment. Excludes all sensitive data (resume file, user info, celery task ID, raw JD text).
+- `share_token` (UUID, nullable, unique) field on `ResumeAnalysis` model. Migration `0007_add_share_token`.
+- `SharedAnalysisSerializer` — public read-only serializer with curated safe fields only.
+- `share_token` and `share_url` exposed in `ResumeAnalysisDetailSerializer` and `ResumeAnalysisListSerializer`.
+- **18 new tests** in `test_share.py`: token generation, idempotency, auth enforcement, user isolation, revocation, public access, sensitive field exclusion, soft-deleted analysis handling.
+
+### Fixed
+- **SSRF protection** in `JDFetcher._validate_url()` — now resolves hostnames via `socket.getaddrinfo` and rejects private/reserved/loopback/link-local IP addresses (`127.0.0.1`, `10.x`, `172.16-31.x`, `192.168.x`, `169.254.x`, `::1`, etc.). Previously only checked URL scheme. All 5 pre-existing SSRF test failures now pass (10/10 `test_jd_fetcher` tests green).
+
+### Changed
+- Total test count: **78** (50 existing + 18 share + 10 JD fetcher all passing).
+
+---
+
 ## [0.7.0] — 2026-02-23
 
 ### Phase 7: Resume Model, Soft-Delete & Dashboard Analytics

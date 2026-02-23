@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.7.0
+> **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.8.0
 > Comprehensive technical reference for frontend developers integrating with the Resume AI backend.
 
 ---
@@ -13,16 +13,17 @@
 4. [Analysis Endpoints](#4-analysis-endpoints)
 5. [Resume Endpoints](#5-resume-endpoints)
 6. [Dashboard Endpoints](#6-dashboard-endpoints)
-7. [Health Check](#7-health-check)
-8. [Response Schemas](#8-response-schemas)
-9. [LLM Analysis Output Schema](#9-llm-analysis-output-schema)
-10. [Pagination](#10-pagination)
-11. [Rate Limiting](#11-rate-limiting)
-12. [Polling for Analysis Status](#12-polling-for-analysis-status)
-13. [Error Handling Reference](#13-error-handling-reference)
-14. [TypeScript Type Definitions](#14-typescript-type-definitions)
-15. [Frontend Integration Recipes](#15-frontend-integration-recipes)
-16. [Quick Reference — All Endpoints](#16-quick-reference--all-endpoints)
+7. [Share Endpoints](#7-share-endpoints)
+8. [Health Check](#8-health-check)
+9. [Response Schemas](#9-response-schemas)
+10. [LLM Analysis Output Schema](#10-llm-analysis-output-schema)
+11. [Pagination](#11-pagination)
+12. [Rate Limiting](#12-rate-limiting)
+13. [Polling for Analysis Status](#13-polling-for-analysis-status)
+14. [Error Handling Reference](#14-error-handling-reference)
+15. [TypeScript Type Definitions](#15-typescript-type-definitions)
+16. [Frontend Integration Recipes](#16-frontend-integration-recipes)
+17. [Quick Reference — All Endpoints](#17-quick-reference--all-endpoints)
 
 ---
 
@@ -413,6 +414,8 @@ Only returns **active** (non-soft-deleted) analyses.
       "ats_score": 78,
       "ai_provider_used": "OpenRouterProvider",
       "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
+      "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "share_url": "/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
       "created_at": "2026-02-22T14:30:00Z"
     }
   ]
@@ -431,6 +434,8 @@ Only returns **active** (non-soft-deleted) analyses.
 | `ats_score`        | int \| null    | ATS score (null if not complete)             |
 | `ai_provider_used` | string         | AI model that performed the analysis         |
 | `report_pdf_url`   | string \| null | URL to pre-generated PDF report              |
+| `share_token`      | UUID \| null   | Share token (null if not shared)             |
+| `share_url`        | string \| null | Public share URL (null if not shared)        |
 | `created_at`       | datetime       | When the analysis was submitted              |
 
 ---
@@ -441,7 +446,7 @@ Only returns **active** (non-soft-deleted) analyses.
 
 Returns 404 if the analysis is soft-deleted or belongs to another user.
 
-**Response (200):** See [Detail Response Schema](#detail-response-schema) in section 8.
+**Response (200):** See [Detail Response Schema](#detail-response-schema) in section 9.
 
 ---
 
@@ -733,7 +738,127 @@ try {
 
 ---
 
-## 7. Health Check
+## 7. Share Endpoints
+
+Allow users to generate a public, read-only link for a completed analysis. Anyone with the link can view the results — no login required.
+
+### POST `/api/analyses/<id>/share/` — Generate Share Link
+
+🔒 Requires auth. Not throttled. Only works on **completed** (`status: "done"`) analyses.
+
+**Idempotent:** If a share token already exists, returns the existing token (200). Otherwise creates a new one (201).
+
+**Request:** Empty body (no payload needed).
+
+**Response (201 Created / 200 OK):**
+```json
+{
+  "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "share_url": "/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/"
+}
+```
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Analysis not complete | `{ "detail": "Only completed analyses can be shared." }` |
+| 404  | Not found / not owner | `{ "detail": "Not found." }` |
+
+**Frontend usage:**
+```js
+const { data } = await api.post(`/analyses/${id}/share/`);
+const fullUrl = `${window.location.origin}/shared/${data.share_token}`;
+navigator.clipboard.writeText(fullUrl);
+showToast('Share link copied!');
+```
+
+---
+
+### DELETE `/api/analyses/<id>/share/` — Revoke Share Link
+
+🔒 Requires auth. Not throttled. Immediately revokes the share token — the public link stops working.
+
+**Request:** Empty body.
+
+**Response (204):** No content.
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Not currently shared | `{ "detail": "This analysis is not currently shared." }` |
+| 404  | Not found / not owner | `{ "detail": "Not found." }` |
+
+---
+
+### GET `/api/shared/<token>/` — Public Shared Analysis
+
+🔓 **Public — no auth required.** Returns a curated, read-only subset of the analysis results.
+
+**Sensitive data excluded:** No resume file, no user info, no raw JD text, no celery task ID, no analysis ID.
+
+**Response (200):**
+```json
+{
+  "jd_role": "Backend Engineer",
+  "jd_company": "Acme Corp",
+  "jd_industry": "Technology/SaaS",
+  "status": "done",
+  "ats_score": 82,
+  "ats_score_breakdown": {
+    "keyword_match": 80,
+    "format_score": 85,
+    "relevance_score": 81
+  },
+  "keyword_gaps": ["Kubernetes", "Docker"],
+  "section_suggestions": {
+    "summary": "Add targeted summary.",
+    "experience": "Quantify achievements.",
+    "skills": "Add Docker, Kubernetes.",
+    "education": "Well-structured.",
+    "overall": "Strong profile, improve DevOps keywords."
+  },
+  "rewritten_bullets": [
+    {
+      "original": "Worked on backend services",
+      "rewritten": "Built 5 microservices serving 10K+ users",
+      "reason": "Added specifics and metrics"
+    }
+  ],
+  "overall_assessment": "Strong backend profile with room for DevOps improvement.",
+  "ai_provider_used": "OpenRouterProvider",
+  "created_at": "2026-02-23T14:30:00Z"
+}
+```
+
+**Shared response fields:**
+
+| Field                | Type            | Description                          |
+|----------------------|-----------------|--------------------------------------|
+| `jd_role`            | string          | Job title                            |
+| `jd_company`         | string          | Company name                         |
+| `jd_industry`        | string          | Industry/domain                      |
+| `status`             | string          | Always `"done"` for shared analyses  |
+| `ats_score`          | int             | ATS score (0-100)                    |
+| `ats_score_breakdown`| object          | `{ keyword_match, format_score, relevance_score }` |
+| `keyword_gaps`       | string[]        | Missing keywords                     |
+| `section_suggestions`| object          | Per-section feedback                 |
+| `rewritten_bullets`  | array           | Before/after bullet improvements     |
+| `overall_assessment` | string          | AI summary                           |
+| `ai_provider_used`   | string          | AI model identifier                  |
+| `created_at`         | datetime        | When analysis was submitted          |
+
+**Error (404):**
+```json
+{ "detail": "Shared analysis not found or link has been revoked." }
+```
+
+> **Soft-deleted analyses** are not accessible via share links — the default manager automatically excludes them.
+
+---
+
+## 8. Health Check
 
 ### GET `/api/health/` — Health Check
 
@@ -751,7 +876,7 @@ try {
 
 ---
 
-## 8. Response Schemas
+## 9. Response Schemas
 
 ### Detail Response Schema
 
@@ -775,7 +900,7 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
   "scrape_result": null,
   "llm_response": {
     "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "parsed_response": { "...see LLM schema in section 9..." },
+    "parsed_response": { "...see LLM schema in section 10..." },
     "model_used": "anthropic/claude-haiku-4.5",
     "status": "done",
     "error_message": "",
@@ -810,6 +935,8 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
   "ai_provider_used": "OpenRouterProvider",
   "celery_task_id": "abc-123-def",
   "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
+  "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "share_url": "/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
   "created_at": "2026-02-22T14:30:00Z",
   "updated_at": "2026-02-22T14:30:12Z"
 }
@@ -846,6 +973,8 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
 | `ai_provider_used`     | string          | AI model identifier (e.g., `"OpenRouterProvider"`)       |
 | `celery_task_id`       | string          | Background task ID (for debugging)                       |
 | `report_pdf_url`       | string \| null  | URL to pre-generated PDF report in R2                    |
+| `share_token`          | UUID \| null    | Share token (null if not shared)                         |
+| `share_url`            | string \| null  | Public share URL (null if not shared)                    |
 | `created_at`           | datetime        | When analysis was submitted                              |
 | `updated_at`           | datetime        | Last modified timestamp                                  |
 
@@ -906,7 +1035,7 @@ This means the frontend can **always rely on `jd_role` being populated** on a co
 | Field              | Type           | Description                                   |
 |--------------------|----------------|-----------------------------------------------|
 | `id`               | UUID           | LLM response identifier                       |
-| `parsed_response`  | object \| null | Validated JSON result (see section 9)          |
+| `parsed_response`  | object \| null | Validated JSON result (see section 10)          |
 | `model_used`       | string         | Model name (e.g., `"anthropic/claude-haiku-4.5"`) |
 | `status`           | string         | `"pending"` / `"done"` / `"failed"`           |
 | `error_message`    | string         | Error details if LLM call failed               |
@@ -917,7 +1046,7 @@ This means the frontend can **always rely on `jd_role` being populated** on a co
 
 ---
 
-## 9. LLM Analysis Output Schema
+## 10. LLM Analysis Output Schema
 
 The AI returns the following JSON structure. These fields are stored in `llm_response.parsed_response` **and also flattened** onto the top-level analysis object (so you can access them directly without nesting through `llm_response`).
 
@@ -999,7 +1128,7 @@ The AI returns the following JSON structure. These fields are stored in `llm_res
 
 ---
 
-## 10. Pagination
+## 11. Pagination
 
 All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`) return paginated responses.
 
@@ -1047,7 +1176,7 @@ const { items, totalPages, hasNext } = await fetchPage('/analyses/', 1);
 
 ---
 
-## 11. Rate Limiting
+## 12. Rate Limiting
 
 | Scope                     | Default Limit | Env Var Override         |
 |---------------------------|---------------|--------------------------|
@@ -1074,6 +1203,9 @@ Retry-After: 120
 - `GET /api/resumes/` — list resumes
 - `DELETE /api/resumes/<uuid:id>/` — delete resume
 - `GET /api/dashboard/stats/` — dashboard analytics
+- `POST /api/analyses/<id>/share/` — generate share link
+- `DELETE /api/analyses/<id>/share/` — revoke share link
+- `GET /api/shared/<token>/` — public shared analysis
 - `GET /api/health/` — health check
 
 **Frontend handling:**
@@ -1090,7 +1222,7 @@ api.interceptors.response.use(null, (error) => {
 
 ---
 
-## 12. Polling for Analysis Status
+## 13. Polling for Analysis Status
 
 After submitting an analysis (`POST /api/analyze/` → `{ id, status }`), poll the lightweight status endpoint until complete.
 
@@ -1190,7 +1322,7 @@ const STEP_PROGRESS = {
 
 ---
 
-## 13. Error Handling Reference
+## 14. Error Handling Reference
 
 ### HTTP Status Codes
 
@@ -1286,7 +1418,7 @@ function handleApiError(error) {
 
 ---
 
-## 14. TypeScript Type Definitions
+## 15. TypeScript Type Definitions
 
 Use these types for type-safe API integration (copy into your project as `src/types/api.ts`):
 
@@ -1350,6 +1482,8 @@ interface AnalysisListItem {
   ats_score: number | null;
   ai_provider_used: string;
   report_pdf_url: string | null;
+  share_token: string | null;   // UUID
+  share_url: string | null;
   created_at: string;         // ISO 8601
 }
 
@@ -1438,6 +1572,8 @@ interface AnalysisDetail {
   ai_provider_used: string;
   celery_task_id: string;
   report_pdf_url: string | null;
+  share_token: string | null;   // UUID
+  share_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1458,6 +1594,26 @@ interface RetryResponse {
   id: number;
   status: 'processing';
   pipeline_step: PipelineStep;
+}
+
+interface ShareResponse {
+  share_token: string;          // UUID
+  share_url: string;            // e.g., "/api/shared/<uuid>/"
+}
+
+interface SharedAnalysis {
+  jd_role: string;
+  jd_company: string;
+  jd_industry: string;
+  status: 'done';
+  ats_score: number;
+  ats_score_breakdown: ATSScoreBreakdown;
+  keyword_gaps: string[];
+  section_suggestions: SectionSuggestions;
+  rewritten_bullets: RewrittenBullet[];
+  overall_assessment: string;
+  ai_provider_used: string;
+  created_at: string;
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────
@@ -1491,7 +1647,7 @@ interface DashboardStats {
 
 ---
 
-## 15. Frontend Integration Recipes
+## 16. Frontend Integration Recipes
 
 ### Recipe 1: Analysis Submit Flow (React)
 
@@ -1739,7 +1895,7 @@ function ResumesPage() {
 
 ---
 
-## 16. Quick Reference — All Endpoints
+## 17. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -1757,10 +1913,37 @@ function ResumesPage() {
 | POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
 | DELETE | `/api/analyses/<id>/delete/` | ✅ | None | Soft-delete analysis |
 | GET | `/api/analyses/<id>/export-pdf/` | ✅ | None | Download PDF report |
+| POST | `/api/analyses/<id>/share/` | ✅ | None | Generate public share link |
+| DELETE | `/api/analyses/<id>/share/` | ✅ | None | Revoke share link |
 | **Resume** |||||
 | GET | `/api/resumes/` | ✅ | None | List resumes (paginated, UUID IDs) |
 | DELETE | `/api/resumes/<uuid:id>/` | ✅ | None | Delete resume file (blocked if in use) |
 | **Dashboard** |||||
 | GET | `/api/dashboard/stats/` | ✅ | None | User analytics & trends |
+| **Share** |||||
+| GET | `/api/shared/<uuid:token>/` | ❌ | None | Public read-only shared analysis |
 | **System** |||||
 | GET | `/api/health/` | ❌ | None | Health check |
+
+
+
+
+-------
+Endpoints needed from backend
+Frontend Page	Endpoint Called	Method	Purpose	Recommendation
+ProfilePage	/api/auth/me/	PUT	Update username/email	Add to backend — common feature
+ProfilePage	/api/auth/change-password/	POST	Change password (sends {current_password, new_password})	Add to backend — essential security feature
+ProfilePage	/api/auth/me/	DELETE	Delete account permanently	Add to backend — GDPR/user control
+ResumesPage	/api/resumes/<uuid:id>/download/uuid:id/download/	GET	Download the original resume PDF	Add to backend — or frontend can use resume_file_url from analysis detail instead
+JobsPage	/api/jobs/	GET	List saved/tracked jobs	Not yet built — skip for now, stub the page
+NotificationsPage	/api/notifications/settings/	GET	Get notification preferences	Not yet built — skip for now, stub the page
+NotificationsPage	/api/notifications/settings/	PUT	Update notification preferences	Not yet built — skip for now, stub the page
+NotificationsPage	/api/notifications/verify-whatsapp/	POST	Verify WhatsApp number	Not yet built — skip for now, stub the page
+Summary — what to add now vs later
+Add now (3 auth endpoints):
+
+Optional (1 resume endpoint):
+
+Skip for now (Jobs + Notifications) — I'll stub those pages in the frontend.
+
+Let me know once you've confirmed which endpoints you'll add, and I'll start implementing the frontend fixes (F1 → F6) in priority order. Or if you want me to proceed now with what's fixable without backend changes, say the word.

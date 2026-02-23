@@ -1,4 +1,6 @@
+import ipaddress
 import logging
+import socket
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -19,12 +21,30 @@ class JDFetcher:
         self.app = FirecrawlApp(api_key=api_key)
 
     def _validate_url(self, url: str) -> None:
-        """Basic URL validation."""
+        """
+        Validate URL scheme and ensure hostname does not resolve to a
+        private/reserved IP address (SSRF protection).
+        """
         parsed = urlparse(url)
         if parsed.scheme not in ('http', 'https'):
             raise ValueError('Only http:// and https:// URLs are allowed.')
         if not parsed.hostname:
             raise ValueError('Invalid URL: missing hostname.')
+
+        # Resolve hostname to IP and check for private/reserved ranges
+        hostname = parsed.hostname
+        try:
+            addr_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            raise ValueError(f'Cannot resolve hostname: {hostname}')
+
+        for family, _type, _proto, _canonname, sockaddr in addr_infos:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                raise ValueError(
+                    f'URL resolves to a private/reserved IP address ({ip}). '
+                    'Only public URLs are allowed.'
+                )
 
     def fetch(self, url: str, user=None) -> tuple:
         """

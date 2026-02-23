@@ -26,7 +26,7 @@
 - [x] **14. Comparison view** — Side-by-side compare of two analyses
 - [x] **15. PWA support** — manifest.json + service worker for installability
 - [x] **16. Analytics dashboard** — Score trends, common keyword gaps over time
-- [ ] **17. Shareable results link** — Public read-only URL for an analysis *(needs backend)*
+- [x] **17. Shareable results link** — Public read-only URL for an analysis (backend: `POST /share/`, `GET /shared/<token>/`)
 - [ ] **18. i18n / localization** — react-i18next setup *(deferred)*
 - [x] **19. Accessibility audit** — aria attributes, keyboard nav, focus management
 - [x] **20. Frontend unit tests** — Vitest + React Testing Library (20 tests)

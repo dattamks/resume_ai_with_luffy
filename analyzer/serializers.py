@@ -115,6 +115,7 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
     llm_response = LLMResponseSerializer(read_only=True)
     report_pdf_url = serializers.SerializerMethodField()
     resume_file_url = serializers.SerializerMethodField()
+    share_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ResumeAnalysis
@@ -146,6 +147,8 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'ai_provider_used',
             'celery_task_id',
             'report_pdf_url',
+            'share_token',
+            'share_url',
             'created_at',
             'updated_at',
         )
@@ -161,10 +164,16 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             return obj.resume_file.url
         return None
 
+    def get_share_url(self, obj):
+        if obj.share_token:
+            return f'/api/shared/{obj.share_token}/'
+        return None
+
 
 class ResumeAnalysisListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for list views."""
     report_pdf_url = serializers.SerializerMethodField()
+    share_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ResumeAnalysis
@@ -177,6 +186,8 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
             'ats_score',
             'ai_provider_used',
             'report_pdf_url',
+            'share_token',
+            'share_url',
             'created_at',
         )
         read_only_fields = fields
@@ -185,3 +196,33 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
         if obj.report_pdf:
             return obj.report_pdf.url
         return None
+
+    def get_share_url(self, obj):
+        if obj.share_token:
+            return f'/api/shared/{obj.share_token}/'
+        return None
+
+
+class SharedAnalysisSerializer(serializers.ModelSerializer):
+    """
+    Public read-only serializer for shared analyses.
+    Excludes sensitive fields: resume_file, resume_text, resolved_jd, celery_task_id.
+    """
+
+    class Meta:
+        model = ResumeAnalysis
+        fields = (
+            'jd_role',
+            'jd_company',
+            'jd_industry',
+            'status',
+            'ats_score',
+            'ats_score_breakdown',
+            'keyword_gaps',
+            'section_suggestions',
+            'rewritten_bullets',
+            'overall_assessment',
+            'ai_provider_used',
+            'created_at',
+        )
+        read_only_fields = fields

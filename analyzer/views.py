@@ -1,4 +1,5 @@
 import logging
+import uuid
 
 from django.core.cache import cache
 from django.db.models import Avg, Count, F, Q
@@ -7,7 +8,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
@@ -18,6 +19,7 @@ from .serializers import (
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
     ResumeSerializer,
+    SharedAnalysisSerializer,
 )
 from .tasks import run_analysis_task
 
@@ -362,3 +364,84 @@ class DashboardStatsView(APIView):
             'top_roles': top_roles,
             'analyses_per_month': monthly,
         })
+
+
+# ── Share endpoints ───────────────────────────────────────────────────────
+
+class AnalysisShareView(APIView):
+    """
+    POST /api/analyses/<id>/share/   — Generate a public share token.
+    DELETE /api/analyses/<id>/share/  — Revoke the share token.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def post(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if analysis.status != ResumeAnalysis.STATUS_DONE:
+            return Response(
+                {'detail': 'Only completed analyses can be shared.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # If already shared, return existing token (idempotent)
+        if analysis.share_token:
+            return Response({
+                'share_token': str(analysis.share_token),
+                'share_url': f'/api/shared/{analysis.share_token}/',
+            })
+
+        analysis.share_token = uuid.uuid4()
+        analysis.save(update_fields=['share_token'])
+        logger.info('Share token created for analysis id=%s user=%s', pk, request.user.id)
+
+        return Response({
+            'share_token': str(analysis.share_token),
+            'share_url': f'/api/shared/{analysis.share_token}/',
+        }, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not analysis.share_token:
+            return Response(
+                {'detail': 'This analysis is not currently shared.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        analysis.share_token = None
+        analysis.save(update_fields=['share_token'])
+        logger.info('Share token revoked for analysis id=%s user=%s', pk, request.user.id)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SharedAnalysisView(APIView):
+    """
+    GET /api/shared/<token>/
+    Public read-only view of a shared analysis. No auth required.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+    authentication_classes = []  # Skip JWT auth entirely for public access
+
+    def get(self, request, token):
+        try:
+            analysis = ResumeAnalysis.objects.select_related(
+                'scrape_result', 'llm_response',
+            ).get(share_token=token)
+        except ResumeAnalysis.DoesNotExist:
+            return Response(
+                {'detail': 'Shared analysis not found or link has been revoked.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = SharedAnalysisSerializer(analysis)
+        return Response(serializer.data)

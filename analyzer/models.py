@@ -242,6 +242,10 @@ class ResumeAnalysis(models.Model):
     ai_provider_used = models.CharField(max_length=50, blank=True)
     celery_task_id = models.CharField(max_length=255, blank=True, help_text='Celery task ID for tracking')
     report_pdf = models.FileField(upload_to='reports/', blank=True, help_text='Pre-generated PDF report (stored in R2)')
+    share_token = models.UUIDField(
+        null=True, blank=True, unique=True,
+        help_text='Public share token — when set, analysis is viewable at /api/shared/<token>/',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -76,10 +76,10 @@
 
 ## Phase 5 — Production Hardening
 
-- [ ] Enforce `SECURE_SSL_REDIRECT`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` when `DEBUG=False`
-- [ ] Set `ALLOWED_HOSTS` to Railway domain
-- [ ] Ensure `collectstatic` runs in Railway build command
-- [ ] Configure logging to stdout (Railway captures logs automatically)
+- [x] Enforce `SECURE_SSL_REDIRECT`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` when `DEBUG=False`
+- [x] Set `ALLOWED_HOSTS` to Railway domain
+- [x] Ensure `collectstatic` runs in Railway build command
+- [x] Configure logging to stdout (Railway captures logs automatically)
 - [ ] Verify rate limiting works with Redis-backed cache
 
 ---
