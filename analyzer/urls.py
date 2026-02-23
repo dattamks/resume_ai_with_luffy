@@ -5,6 +5,7 @@ from .views import (
     RetryAnalysisView, AnalysisDeleteView, AnalysisPDFExportView,
     AnalysisStatusView, ResumeListView, ResumeDeleteView,
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
+    JobListCreateView, JobDetailView, JobRelevanceView,
 )
 
 urlpatterns = [
@@ -20,4 +21,11 @@ urlpatterns = [
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
+    # Jobs
+    path('jobs/', JobListCreateView.as_view(), name='job-list-create'),
+    path('jobs/<uuid:pk>/', JobDetailView.as_view(), name='job-detail'),
+    path('jobs/<uuid:pk>/relevant/', JobRelevanceView.as_view(), name='job-relevant',
+         kwargs={'relevance': 'relevant'}),
+    path('jobs/<uuid:pk>/irrelevant/', JobRelevanceView.as_view(), name='job-irrelevant',
+         kwargs={'relevance': 'irrelevant'}),
 ]

@@ -13,13 +13,15 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
-from .models import ResumeAnalysis, Resume
+from .models import ResumeAnalysis, Resume, Job
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
     ResumeSerializer,
     SharedAnalysisSerializer,
+    JobSerializer,
+    JobCreateSerializer,
 )
 from .tasks import run_analysis_task
 
@@ -448,3 +450,87 @@ class SharedAnalysisView(APIView):
 
         serializer = SharedAnalysisSerializer(analysis)
         return Response(serializer.data)
+
+
+# ── Job endpoints ─────────────────────────────────────────────────────────
+
+class JobListCreateView(APIView):
+    """
+    GET  /api/jobs/             — List user's tracked jobs (filterable by relevance).
+    POST /api/jobs/             — Create a new tracked job.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get(self, request):
+        qs = Job.objects.filter(user=request.user).select_related('resume')
+
+        # Optional filtering by relevance
+        relevance = request.query_params.get('relevance')
+        if relevance in dict(Job.RELEVANCE_CHOICES):
+            qs = qs.filter(relevance=relevance)
+
+        serializer = JobSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = JobCreateSerializer(
+            data=request.data, context={'request': request},
+        )
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        job = serializer.save()
+        return Response(JobSerializer(job).data, status=status.HTTP_201_CREATED)
+
+
+class JobDetailView(APIView):
+    """
+    GET    /api/jobs/<uuid:id>/  — Retrieve a single job.
+    DELETE /api/jobs/<uuid:id>/  — Delete a tracked job.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def _get_job(self, request, pk):
+        try:
+            return Job.objects.select_related('resume').get(pk=pk, user=request.user)
+        except Job.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        job = self._get_job(request, pk)
+        if not job:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(JobSerializer(job).data)
+
+    def delete(self, request, pk):
+        job = self._get_job(request, pk)
+        if not job:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        job.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class JobRelevanceView(APIView):
+    """
+    POST /api/jobs/<uuid:id>/relevant/    — Mark job as relevant.
+    POST /api/jobs/<uuid:id>/irrelevant/  — Mark job as irrelevant.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def post(self, request, pk, relevance):
+        if relevance not in ('relevant', 'irrelevant'):
+            return Response(
+                {'detail': 'Invalid relevance value.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            job = Job.objects.get(pk=pk, user=request.user)
+        except Job.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        job.relevance = relevance
+        job.save(update_fields=['relevance', 'updated_at'])
+        return Response(JobSerializer(job).data)

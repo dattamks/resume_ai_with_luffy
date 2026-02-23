@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.8.0
+> **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.9.0
 > Comprehensive technical reference for frontend developers integrating with the Resume AI backend.
 
 ---
@@ -14,16 +14,17 @@
 5. [Resume Endpoints](#5-resume-endpoints)
 6. [Dashboard Endpoints](#6-dashboard-endpoints)
 7. [Share Endpoints](#7-share-endpoints)
-8. [Health Check](#8-health-check)
-9. [Response Schemas](#9-response-schemas)
-10. [LLM Analysis Output Schema](#10-llm-analysis-output-schema)
-11. [Pagination](#11-pagination)
-12. [Rate Limiting](#12-rate-limiting)
-13. [Polling for Analysis Status](#13-polling-for-analysis-status)
-14. [Error Handling Reference](#14-error-handling-reference)
-15. [TypeScript Type Definitions](#15-typescript-type-definitions)
-16. [Frontend Integration Recipes](#16-frontend-integration-recipes)
-17. [Quick Reference — All Endpoints](#17-quick-reference--all-endpoints)
+8. [Job Endpoints](#8-job-endpoints)
+9. [Health Check](#9-health-check)
+10. [Response Schemas](#10-response-schemas)
+11. [LLM Analysis Output Schema](#11-llm-analysis-output-schema)
+12. [Pagination](#12-pagination)
+13. [Rate Limiting](#13-rate-limiting)
+14. [Polling for Analysis Status](#14-polling-for-analysis-status)
+15. [Error Handling Reference](#15-error-handling-reference)
+16. [TypeScript Type Definitions](#16-typescript-type-definitions)
+17. [Frontend Integration Recipes](#17-frontend-integration-recipes)
+18. [Quick Reference — All Endpoints](#18-quick-reference--all-endpoints)
 
 ---
 
@@ -291,6 +292,82 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ---
 
+### PUT `/api/auth/me/` — Update Profile
+
+🔒 Requires auth. Update the current user's username and/or email. Partial updates are supported (send only the fields you want to change).
+
+**Request (JSON):**
+```json
+{ "username": "new_name", "email": "new@example.com" }
+```
+
+**Response (200):**
+```json
+{
+  "id": 1,
+  "username": "new_name",
+  "email": "new@example.com",
+  "date_joined": "2026-02-22T10:00:00Z"
+}
+```
+
+**Errors:**
+
+| Code | Condition | Example Response |
+|------|-----------|-----------------|
+| 400  | Duplicate username | `{ "username": ["This username is already taken."] }` |
+| 400  | Duplicate email | `{ "email": ["This email is already in use."] }` |
+| 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
+
+---
+
+### DELETE `/api/auth/me/` — Delete Account
+
+🔒 Requires auth. **Permanently** deletes the authenticated user's account and all associated data.
+
+**What happens on delete:**
+1. All outstanding JWT tokens are blacklisted.
+2. All active analyses are soft-deleted (heavy data cleared, metadata kept).
+3. User row is hard-deleted (cascades to Resume, ScrapeResult, LLMResponse, Job rows).
+
+**Response (204 No Content):**
+```json
+{ "detail": "Account permanently deleted." }
+```
+
+> ⚠️ **This action is irreversible.** Show a confirmation dialog before calling.
+
+---
+
+### POST `/api/auth/change-password/` — Change Password
+
+🔒 Requires auth. Changes the authenticated user's password.
+
+**Request (JSON):**
+```json
+{
+  "current_password": "OldPass123!",
+  "new_password": "NewStrong456!"
+}
+```
+
+**Response (200):**
+```json
+{ "detail": "Password updated successfully." }
+```
+
+**Errors:**
+
+| Code | Condition | Example Response |
+|------|-----------|-----------------|
+| 400  | Wrong current password | `{ "current_password": ["Current password is incorrect."] }` |
+| 400  | Weak new password | `{ "new_password": ["This password is too common."] }` |
+| 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
+
+> **Note:** After changing password, existing tokens remain valid until they expire. The frontend may want to re-login the user.
+
+---
+
 ### POST `/api/auth/token/refresh/` — Refresh JWT
 
 🔓 Public — no auth header required (the refresh token is in the body).
@@ -364,7 +441,7 @@ Submits a resume + job description for async analysis. Returns immediately with 
 }
 ```
 
-After receiving the `id`, begin [polling for status](#12-polling-for-analysis-status).
+After receiving the `id`, begin [polling for status](#14-polling-for-analysis-status).
 
 **Errors:**
 
@@ -483,7 +560,7 @@ Returns 404 if the analysis is soft-deleted or belongs to another user.
 }
 ```
 
-See [Polling for Analysis Status](#12-polling-for-analysis-status) for the full polling implementation guide.
+See [Polling for Analysis Status](#14-polling-for-analysis-status) for the full polling implementation guide.
 
 ---
 
@@ -504,7 +581,7 @@ Retries a failed analysis from its last incomplete pipeline step. Does not requi
 }
 ```
 
-After receiving 202, begin [polling for status](#12-polling-for-analysis-status) again.
+After receiving 202, begin [polling for status](#14-polling-for-analysis-status) again.
 
 **Errors:**
 
@@ -605,14 +682,16 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
       "original_filename": "my_resume_2026.pdf",
       "file_size_bytes": 245760,
       "uploaded_at": "2026-02-23T10:00:00Z",
-      "active_analysis_count": 3
+      "active_analysis_count": 3,
+      "file_url": "https://r2.example.com/resumes/my_resume_2026.pdf"
     },
     {
       "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
       "original_filename": "resume_v2.pdf",
       "file_size_bytes": 198432,
       "uploaded_at": "2026-02-20T08:15:00Z",
-      "active_analysis_count": 1
+      "active_analysis_count": 1,
+      "file_url": "https://r2.example.com/resumes/resume_v2.pdf"
     }
   ]
 }
@@ -627,6 +706,7 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 | `file_size_bytes`      | int      | File size in bytes (use for display: `245760` → `"240 KB"`) |
 | `uploaded_at`          | datetime | When first uploaded (ISO 8601)                             |
 | `active_analysis_count`| int      | Number of active (non-soft-deleted) analyses using this resume |
+| `file_url`             | string ǀ null | Full URL to download the resume PDF (from R2/storage)  |
 
 **Frontend usage:** Use `active_analysis_count` to show how many analyses reference each resume, and to determine whether the delete button should show a warning.
 
@@ -877,7 +957,119 @@ showToast('Share link copied!');
 
 ---
 
-## 8. Health Check
+## 8. Job Endpoints
+
+Track job postings found on the internet. Jobs are linked to a user and optionally to a resume. The `relevance` field captures user feedback (used to train future recommendations).
+
+### GET `/api/jobs/` — List Tracked Jobs
+
+🔒 Requires auth. Not throttled. Returns all tracked jobs for the user, newest first.
+
+**Query parameters:**
+
+| Param       | Default | Description |
+|-------------|---------|-------------|
+| `relevance` | —       | Filter by relevance: `pending`, `relevant`, or `irrelevant` |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "job_url": "https://linkedin.com/jobs/view/123456",
+    "title": "Senior Python Developer",
+    "company": "Acme Corp",
+    "description": "Build cool stuff with Python...",
+    "relevance": "pending",
+    "source": "linkedin",
+    "resume": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "resume_filename": "my_resume.pdf",
+    "created_at": "2026-02-23T10:00:00Z",
+    "updated_at": "2026-02-23T10:00:00Z"
+  }
+]
+```
+
+**Response fields:**
+
+| Field             | Type          | Description                                     |
+|-------------------|---------------|-------------------------------------------------|
+| `id`              | UUID          | Job unique identifier                           |
+| `job_url`         | string        | URL to the job posting                          |
+| `title`           | string        | Job title (may be empty if not yet scraped)     |
+| `company`         | string        | Company name (may be empty)                     |
+| `description`     | string        | Job description snippet                         |
+| `relevance`       | string        | `"pending"`, `"relevant"`, or `"irrelevant"`    |
+| `source`          | string        | Where the job was found (e.g., `"linkedin"`)    |
+| `resume`          | UUID ǀ null   | Linked resume ID                                |
+| `resume_filename` | string ǀ null | Linked resume's original filename               |
+| `created_at`      | datetime      | When the job was tracked                        |
+| `updated_at`      | datetime      | Last update time                                |
+
+---
+
+### POST `/api/jobs/` — Create Tracked Job
+
+🔒 Requires auth. Create a new tracked job posting.
+
+**Request (JSON):**
+```json
+{
+  "job_url": "https://linkedin.com/jobs/view/123456",
+  "title": "Senior Python Developer",
+  "company": "Acme Corp",
+  "description": "Build cool stuff...",
+  "source": "linkedin",
+  "resume_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+}
+```
+
+| Field       | Type   | Required | Description |
+|-------------|--------|----------|-------------|
+| `job_url`   | string | ✅       | URL to job posting (max 2048 chars) |
+| `title`     | string | No       | Job title |
+| `company`   | string | No       | Company name |
+| `description`| string| No       | Job description snippet |
+| `source`    | string | No       | Source platform |
+| `resume_id` | UUID   | No       | Link to an existing resume |
+
+**Response (201 Created):** Full `Job` object (same schema as list response).
+
+---
+
+### GET `/api/jobs/<uuid:id>/` — Retrieve Job
+
+🔒 Requires auth. Returns a single tracked job.
+
+**Response (200):** Full `Job` object.
+
+---
+
+### DELETE `/api/jobs/<uuid:id>/` — Delete Job
+
+🔒 Requires auth. Permanently deletes a tracked job.
+
+**Response (204 No Content).**
+
+---
+
+### POST `/api/jobs/<uuid:id>/relevant/` — Mark as Relevant
+
+🔒 Requires auth. Set the job's `relevance` to `"relevant"`.
+
+**Response (200):** Updated `Job` object.
+
+---
+
+### POST `/api/jobs/<uuid:id>/irrelevant/` — Mark as Irrelevant
+
+🔒 Requires auth. Set the job's `relevance` to `"irrelevant"`.
+
+**Response (200):** Updated `Job` object.
+
+---
+
+## 9. Health Check
 
 ### GET `/api/health/` — Health Check
 
@@ -895,7 +1087,7 @@ showToast('Share link copied!');
 
 ---
 
-## 9. Response Schemas
+## 10. Response Schemas
 
 ### Detail Response Schema
 
@@ -1065,7 +1257,7 @@ This means the frontend can **always rely on `jd_role` being populated** on a co
 
 ---
 
-## 10. LLM Analysis Output Schema
+## 11. LLM Analysis Output Schema
 
 The AI returns the following JSON structure. These fields are stored in `llm_response.parsed_response` **and also flattened** onto the top-level analysis object (so you can access them directly without nesting through `llm_response`).
 
@@ -1147,7 +1339,7 @@ The AI returns the following JSON structure. These fields are stored in `llm_res
 
 ---
 
-## 11. Pagination
+## 12. Pagination
 
 All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`) return paginated responses.
 
@@ -1195,7 +1387,7 @@ const { items, totalPages, hasNext } = await fetchPage('/analyses/', 1);
 
 ---
 
-## 12. Rate Limiting
+## 13. Rate Limiting
 
 | Scope                     | Default Limit | Env Var Override         |
 |---------------------------|---------------|--------------------------|
@@ -1241,7 +1433,7 @@ api.interceptors.response.use(null, (error) => {
 
 ---
 
-## 13. Polling for Analysis Status
+## 14. Polling for Analysis Status
 
 After submitting an analysis (`POST /api/analyze/` → `{ id, status }`), poll the lightweight status endpoint until complete.
 
@@ -1341,7 +1533,7 @@ const STEP_PROGRESS = {
 
 ---
 
-## 14. Error Handling Reference
+## 15. Error Handling Reference
 
 ### HTTP Status Codes
 
@@ -1437,7 +1629,7 @@ function handleApiError(error) {
 
 ---
 
-## 15. TypeScript Type Definitions
+## 16. TypeScript Type Definitions
 
 Use these types for type-safe API integration (copy into your project as `src/types/api.ts`):
 
@@ -1483,6 +1675,25 @@ interface Resume {
   file_size_bytes: number;
   uploaded_at: string;        // ISO 8601
   active_analysis_count: number;
+  file_url: string | null;    // Full URL to download the resume PDF
+}
+
+// ── Job ──────────────────────────────────────────────────────────────────
+
+type JobRelevance = 'pending' | 'relevant' | 'irrelevant';
+
+interface Job {
+  id: string;                 // UUID
+  job_url: string;
+  title: string;
+  company: string;
+  description: string;
+  relevance: JobRelevance;
+  source: string;
+  resume: string | null;      // UUID of linked resume
+  resume_filename: string | null;
+  created_at: string;         // ISO 8601
+  updated_at: string;         // ISO 8601
 }
 
 // ── Analysis ─────────────────────────────────────────────────────────────
@@ -1666,7 +1877,7 @@ interface DashboardStats {
 
 ---
 
-## 16. Frontend Integration Recipes
+## 17. Frontend Integration Recipes
 
 ### Recipe 1: Analysis Submit Flow (React)
 
@@ -1914,7 +2125,7 @@ function ResumesPage() {
 
 ---
 
-## 17. Quick Reference — All Endpoints
+## 18. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -1924,6 +2135,9 @@ function ResumesPage() {
 | POST | `/api/auth/logout/` | ✅ | User (30/hr) | Blacklist refresh token |
 | POST | `/api/auth/token/refresh/` | ❌ | User (30/hr) | Refresh JWT tokens |
 | GET | `/api/auth/me/` | ✅ | User (30/hr) | Current user profile |
+| PUT | `/api/auth/me/` | ✅ | User (30/hr) | Update username/email |
+| DELETE | `/api/auth/me/` | ✅ | User (30/hr) | Delete account permanently |
+| POST | `/api/auth/change-password/` | ✅ | User (30/hr) | Change password |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
 | GET | `/api/analyses/` | ✅ | None | List analyses (paginated) |
@@ -1935,8 +2149,15 @@ function ResumesPage() {
 | POST | `/api/analyses/<id>/share/` | ✅ | None | Generate public share link |
 | DELETE | `/api/analyses/<id>/share/` | ✅ | None | Revoke share link |
 | **Resume** |||||
-| GET | `/api/resumes/` | ✅ | None | List resumes (paginated, UUID IDs) |
+| GET | `/api/resumes/` | ✅ | None | List resumes (with `file_url` for download) |
 | DELETE | `/api/resumes/<uuid:id>/` | ✅ | None | Delete resume file (blocked if in use) |
+| **Jobs** |||||
+| GET | `/api/jobs/` | ✅ | None | List tracked jobs (filterable by `?relevance=`) |
+| POST | `/api/jobs/` | ✅ | None | Create tracked job |
+| GET | `/api/jobs/<uuid:id>/` | ✅ | None | Retrieve single job |
+| DELETE | `/api/jobs/<uuid:id>/` | ✅ | None | Delete tracked job |
+| POST | `/api/jobs/<uuid:id>/relevant/` | ✅ | None | Mark job as relevant |
+| POST | `/api/jobs/<uuid:id>/irrelevant/` | ✅ | None | Mark job as irrelevant |
 | **Dashboard** |||||
 | GET | `/api/dashboard/stats/` | ✅ | None | User analytics & trends |
 | **Share** |||||
@@ -1947,22 +2168,3 @@ function ResumesPage() {
 
 
 
--------
-Endpoints needed from backend
-Frontend Page	Endpoint Called	Method	Purpose	Recommendation
-ProfilePage	/api/auth/me/	PUT	Update username/email	Add to backend — common feature
-ProfilePage	/api/auth/change-password/	POST	Change password (sends {current_password, new_password})	Add to backend — essential security feature
-ProfilePage	/api/auth/me/	DELETE	Delete account permanently	Add to backend — GDPR/user control
-ResumesPage	/api/resumes/<uuid:id>/download/uuid:id/download/	GET	Download the original resume PDF	Add to backend — or frontend can use resume_file_url from analysis detail instead
-JobsPage	/api/jobs/	GET	List saved/tracked jobs	Not yet built — skip for now, stub the page
-NotificationsPage	/api/notifications/settings/	GET	Get notification preferences	Not yet built — skip for now, stub the page
-NotificationsPage	/api/notifications/settings/	PUT	Update notification preferences	Not yet built — skip for now, stub the page
-NotificationsPage	/api/notifications/verify-whatsapp/	POST	Verify WhatsApp number	Not yet built — skip for now, stub the page
-Summary — what to add now vs later
-Add now (3 auth endpoints):
-
-Optional (1 resume endpoint):
-
-Skip for now (Jobs + Notifications) — I'll stub those pages in the frontend.
-
-Let me know once you've confirmed which endpoints you'll add, and I'll start implementing the frontend fixes (F1 → F6) in priority order. Or if you want me to proceed now with what's fixable without backend changes, say the word.

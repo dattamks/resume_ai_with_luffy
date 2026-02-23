@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.9.0] — 2026-02-23
+
+### Phase 9: Profile Management, Jobs Model & Resume Download
+
+### Added
+- **`PUT /api/auth/me/`** — Update username and/or email (partial update supported). Validates uniqueness of both fields.
+- **`POST /api/auth/change-password/`** — Change password with `current_password` + `new_password`. Validates current password and runs Django password validators on the new one.
+- **`DELETE /api/auth/me/`** — Permanently delete account. Blacklists all tokens, soft-deletes analyses (clears heavy data), cascade-deletes user + resumes + related objects.
+- **`file_url` field on `ResumeSerializer`** — `GET /api/resumes/` now returns the download URL for each resume, so the frontend ResumesPage can link directly.
+- **`Job` model** — Tracked job postings linked to user and optionally a resume. Fields: `id` (UUID), `user`, `resume` (FK, nullable), `job_url`, `title`, `company`, `description`, `relevance` (pending/relevant/irrelevant), `source`, `created_at`, `updated_at`. Migration `0008_add_job_model`.
+- **Job endpoints:**
+  - `GET /api/jobs/` — List user's tracked jobs, filterable by `?relevance=relevant|irrelevant|pending`.
+  - `POST /api/jobs/` — Create a tracked job (optionally linking a `resume_id`).
+  - `GET /api/jobs/<uuid>/` — Retrieve a single job.
+  - `DELETE /api/jobs/<uuid>/` — Delete a tracked job.
+  - `POST /api/jobs/<uuid>/relevant/` — Mark job as relevant.
+  - `POST /api/jobs/<uuid>/irrelevant/` — Mark job as irrelevant.
+- `UpdateUserSerializer` and `ChangePasswordSerializer` in accounts app.
+- `JobSerializer` and `JobCreateSerializer` in analyzer app.
+- `Job` registered in Django admin.
+- **32 new tests**: 14 in `accounts/test_profile.py` (profile update, change password, delete account), 18 in `analyzer/tests/test_jobs.py` (CRUD, relevance, user isolation, auth).
+
+### Changed
+- `MeView` now handles GET, PUT, and DELETE (was GET-only).
+- Total test count: **131** (all passing).
+
+---
+
 ## [0.8.1] — 2026-02-23
 
 ### Resume Reuse & Test Infrastructure

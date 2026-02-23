@@ -306,3 +306,52 @@ class ResumeAnalysis(models.Model):
             'deleted_at', 'resume_text', 'resolved_jd', 'jd_text',
             'report_pdf', 'scrape_result', 'llm_response',
         ])
+
+
+class Job(models.Model):
+    """
+    Tracked job posting — linked to a user and optionally a resume.
+    Used for matching relevant jobs from the internet and sending
+    notifications to the user.
+    """
+
+    RELEVANCE_PENDING = 'pending'
+    RELEVANCE_RELEVANT = 'relevant'
+    RELEVANCE_IRRELEVANT = 'irrelevant'
+    RELEVANCE_CHOICES = [
+        (RELEVANCE_PENDING, 'Pending'),
+        (RELEVANCE_RELEVANT, 'Relevant'),
+        (RELEVANCE_IRRELEVANT, 'Irrelevant'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='jobs')
+    resume = models.ForeignKey(
+        Resume, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='jobs',
+        help_text='Resume used for matching this job',
+    )
+    job_url = models.URLField(max_length=2048, help_text='URL of the job posting')
+    title = models.CharField(max_length=500, blank=True, help_text='Job title/role')
+    company = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True, help_text='Job description snippet')
+    relevance = models.CharField(
+        max_length=15,
+        choices=RELEVANCE_CHOICES,
+        default=RELEVANCE_PENDING,
+        db_index=True,
+        help_text='User feedback on job relevance',
+    )
+    source = models.CharField(max_length=100, blank=True, help_text='Where the job was found (e.g. linkedin, indeed)')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'relevance']),
+        ]
+
+    def __str__(self):
+        return f"{self.title or self.job_url[:60]} ({self.user.username})"

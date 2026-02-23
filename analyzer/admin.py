@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse
+from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, Job
 
 
 @admin.register(Resume)
@@ -38,3 +38,11 @@ class LLMResponseAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'model_used', 'status', 'duration_seconds', 'created_at')
     list_filter = ('status', 'model_used')
     search_fields = ('model_used',)
+
+
+@admin.register(Job)
+class JobAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'title', 'company', 'relevance', 'source', 'created_at')
+    list_filter = ('relevance', 'source')
+    search_fields = ('user__username', 'title', 'company', 'job_url')
+    readonly_fields = ('id', 'created_at', 'updated_at')

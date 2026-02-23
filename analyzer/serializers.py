@@ -2,24 +2,30 @@ from rest_framework import serializers
 from django.conf import settings
 from django.db.models import Count
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job
 
 
 class ResumeSerializer(serializers.ModelSerializer):
     """Read-only serializer for the Resume model."""
     active_analysis_count = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Resume
         fields = (
             'id', 'original_filename', 'file_size_bytes',
-            'uploaded_at', 'active_analysis_count',
+            'uploaded_at', 'active_analysis_count', 'file_url',
         )
         read_only_fields = fields
 
     def get_active_analysis_count(self, obj):
         # Annotated by the view queryset for efficiency
         return getattr(obj, 'active_analysis_count', 0)
+
+    def get_file_url(self, obj):
+        if obj.file:
+            return obj.file.url
+        return None
 
 
 class ScrapeResultSerializer(serializers.ModelSerializer):
@@ -269,3 +275,50 @@ class SharedAnalysisSerializer(serializers.ModelSerializer):
             'created_at',
         )
         read_only_fields = fields
+
+
+# ── Job serializers ────────────────────────────────────────────────────────
+
+class JobSerializer(serializers.ModelSerializer):
+    """Full read serializer for Job model."""
+    resume_filename = serializers.CharField(
+        source='resume.original_filename', read_only=True, default=None,
+    )
+
+    class Meta:
+        model = Job
+        fields = (
+            'id', 'job_url', 'title', 'company', 'description',
+            'relevance', 'source', 'resume', 'resume_filename',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at', 'resume_filename')
+
+
+class JobCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating a new tracked job."""
+    resume_id = serializers.UUIDField(required=False, write_only=True)
+
+    class Meta:
+        model = Job
+        fields = (
+            'id', 'job_url', 'title', 'company', 'description',
+            'source', 'resume_id',
+        )
+        read_only_fields = ('id',)
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        resume_id = validated_data.pop('resume_id', None)
+
+        if resume_id:
+            try:
+                resume = Resume.objects.get(id=resume_id, user=user)
+            except Resume.DoesNotExist:
+                raise serializers.ValidationError(
+                    {'resume_id': 'Resume not found or does not belong to you.'}
+                )
+            validated_data['resume'] = resume
+
+        validated_data['user'] = user
+        return super().create(validated_data)
