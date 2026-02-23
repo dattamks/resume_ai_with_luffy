@@ -1,8 +1,75 @@
+import hashlib
 import uuid
 
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+
+
+class Resume(models.Model):
+    """
+    Deduplicated resume file storage.
+
+    The same physical file (by SHA-256 hash) is stored once per user.
+    Multiple ResumeAnalysis rows can reference the same Resume.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resumes')
+    file = models.FileField(upload_to='resumes/')
+    file_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        help_text='SHA-256 hex digest for deduplication',
+    )
+    original_filename = models.CharField(max_length=255)
+    file_size_bytes = models.PositiveIntegerField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'file_hash'],
+                name='unique_resume_per_user',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', '-uploaded_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.original_filename} ({self.user.username})"
+
+    @staticmethod
+    def compute_hash(file_obj) -> str:
+        """Compute SHA-256 of an uploaded file, then reset seek position."""
+        hasher = hashlib.sha256()
+        for chunk in file_obj.chunks():
+            hasher.update(chunk)
+        file_obj.seek(0)
+        return hasher.hexdigest()
+
+    @classmethod
+    def get_or_create_from_upload(cls, user, uploaded_file):
+        """
+        Deduplicate: if a file with the same SHA-256 already exists for this
+        user, return the existing Resume. Otherwise create a new one.
+        Returns (resume_instance, created_bool).
+        """
+        file_hash = cls.compute_hash(uploaded_file)
+        try:
+            existing = cls.objects.get(user=user, file_hash=file_hash)
+            return existing, False
+        except cls.DoesNotExist:
+            resume = cls(
+                user=user,
+                file=uploaded_file,
+                file_hash=file_hash,
+                original_filename=uploaded_file.name,
+                file_size_bytes=uploaded_file.size,
+            )
+            resume.save()
+            return resume, True
 
 
 class ScrapeResult(models.Model):
@@ -79,6 +146,12 @@ class LLMResponse(models.Model):
         return f"LLM {self.model_used} | {self.status} | {self.created_at:%Y-%m-%d %H:%M}"
 
 
+class ActiveAnalysisManager(models.Manager):
+    """Default manager — excludes soft-deleted analyses."""
+    def get_queryset(self):
+        return super().get_queryset().filter(deleted_at__isnull=True)
+
+
 class ResumeAnalysis(models.Model):
     JD_INPUT_TEXT = 'text'
     JD_INPUT_URL = 'url'
@@ -120,7 +193,16 @@ class ResumeAnalysis(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='analyses')
     resume_file = models.FileField(upload_to='resumes/')
+    resume = models.ForeignKey(
+        Resume, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='analyses',
+        help_text='Deduplicated resume reference',
+    )
     resume_text = models.TextField(blank=True)
+    deleted_at = models.DateTimeField(
+        null=True, blank=True, db_index=True,
+        help_text='Soft-delete timestamp; NULL = active',
+    )
 
     # Job description inputs
     jd_input_type = models.CharField(max_length=10, choices=JD_INPUT_CHOICES)
@@ -163,12 +245,60 @@ class ResumeAnalysis(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Managers — 'objects' is the default (active only); 'all_objects' includes soft-deleted
+    objects = ActiveAnalysisManager()
+    all_objects = models.Manager()
+
     class Meta:
         ordering = ['-created_at']
+        default_manager_name = 'objects'
         indexes = [
             models.Index(fields=['user', '-created_at']),
             models.Index(fields=['status', 'updated_at']),
+            models.Index(fields=['user', 'deleted_at']),
+            models.Index(fields=['user', 'status', '-created_at']),
         ]
 
     def __str__(self):
         return f"{self.user.username} | ATS {self.ats_score} | {self.created_at:%Y-%m-%d}"
+
+    def soft_delete(self):
+        """
+        Soft-delete this analysis:
+        - Set deleted_at timestamp
+        - Clear heavy text fields to reclaim space
+        - Delete report_pdf from storage
+        - Delete orphaned ScrapeResult and LLMResponse
+        """
+        self.deleted_at = timezone.now()
+
+        # Clear heavy fields — keep lightweight metadata for analytics
+        self.resume_text = ''
+        self.resolved_jd = ''
+        self.jd_text = ''
+
+        # Delete report PDF from storage (R2)
+        if self.report_pdf:
+            try:
+                self.report_pdf.delete(save=False)
+            except Exception:
+                pass  # Don't fail soft-delete if storage cleanup fails
+
+        # Delete orphaned ScrapeResult
+        if self.scrape_result:
+            scrape = self.scrape_result
+            self.scrape_result = None
+            if not scrape.analyses.exclude(pk=self.pk).exists():
+                scrape.delete()
+
+        # Delete orphaned LLMResponse
+        if self.llm_response:
+            llm = self.llm_response
+            self.llm_response = None
+            if not llm.analyses.exclude(pk=self.pk).exists():
+                llm.delete()
+
+        self.save(update_fields=[
+            'deleted_at', 'resume_text', 'resolved_jd', 'jd_text',
+            'report_pdf', 'scrape_result', 'llm_response',
+        ])

@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-22
+> **Last updated:** 2026-02-23
 > Technical reference for frontend developers integrating with the Resume AI backend.
 
 ---
@@ -15,8 +15,10 @@
 6. [Rate Limiting](#6-rate-limiting)
 7. [Polling for Analysis Status](#7-polling-for-analysis-status)
 8. [LLM Analysis Output Schema](#8-llm-analysis-output-schema)
-9. [Recent Backend Changes (Breaking)](#9-recent-backend-changes-breaking)
-10. [Error Handling Reference](#10-error-handling-reference)
+9. [Resume Endpoints](#9-resume-endpoints)
+10. [Dashboard Endpoints](#10-dashboard-endpoints)
+11. [Recent Backend Changes (Breaking)](#11-recent-backend-changes-breaking)
+12. [Error Handling Reference](#12-error-handling-reference)
 
 ---
 
@@ -311,9 +313,17 @@ Retries a failed analysis from its last incomplete pipeline step.
 
 ---
 
-### DELETE `/api/analyses/<id>/delete/` — Delete Analysis
+### DELETE `/api/analyses/<id>/delete/` — Soft-Delete Analysis
 
 🔒 Requires auth.
+
+**⚠️ BREAKING CHANGE (Phase 7):** This endpoint now performs a **soft-delete** instead of a hard delete. The analysis row is preserved in the database with lightweight metadata for analytics, but:
+- Heavy fields (`resume_text`, `resolved_jd`, `jd_text`) are cleared
+- The `report_pdf` is deleted from R2 storage
+- Orphaned `ScrapeResult` and `LLMResponse` rows are cleaned up
+- The analysis no longer appears in `GET /api/analyses/` list or detail views
+
+Soft-deleted analyses are still counted in `GET /api/dashboard/stats/` for audit trail and analytics.
 
 **Response (204):** No content.
 **Error (404):** Not found / not owned by user.
@@ -331,6 +341,104 @@ If a pre-generated PDF exists (stored in Cloudflare R2), redirects to the signed
 **Errors:**
 - `400` — Analysis not complete yet
 - `404` — Not found
+
+---
+
+---
+
+## 9. Resume Endpoints
+
+All prefixed with `/api/`.
+
+### GET `/api/resumes/` — List Resumes
+
+🔒 Requires auth. Returns **paginated** list of the user's deduplicated resume files (newest first).
+
+Resume files are deduplicated by SHA-256 hash per user — uploading the same PDF multiple times creates only one stored file.
+
+**Response (200):**
+```json
+{
+  "count": 3,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-...",
+      "original_filename": "my_resume.pdf",
+      "file_size_bytes": 245760,
+      "uploaded_at": "2026-02-23T10:00:00Z",
+      "active_analysis_count": 3
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Resume identifier |
+| `original_filename` | string | Original uploaded filename |
+| `file_size_bytes` | int | File size in bytes |
+| `uploaded_at` | datetime | When first uploaded |
+| `active_analysis_count` | int | Number of active (non-deleted) analyses using this resume |
+
+---
+
+### DELETE `/api/resumes/<uuid:id>/` — Delete Resume
+
+🔒 Requires auth. Permanently deletes the resume file from R2 storage.
+
+**Only allowed if no active (non-soft-deleted) analyses reference this resume.** If active analyses exist, returns 409.
+
+**Response (204):** No content.
+
+**Errors:**
+- `404` — Not found / not owned by user
+- `409` — Cannot delete: active analyses still reference this resume
+
+```json
+{ "detail": "Cannot delete: 2 active analysis(es) still reference this resume." }
+```
+
+---
+
+## 10. Dashboard Endpoints
+
+### GET `/api/dashboard/stats/` — User Dashboard Analytics
+
+🔒 Requires auth. Returns aggregated analytics from **all** analyses (including soft-deleted) for audit trail purposes.
+
+**Response (200):**
+```json
+{
+  "total_analyses": 47,
+  "active_analyses": 42,
+  "deleted_analyses": 5,
+  "average_ats_score": 76.3,
+  "score_trend": [
+    { "ats_score": 85, "jd_role": "Senior Dev", "created_at": "2026-02-23T14:00:00Z" },
+    { "ats_score": 72, "jd_role": "Backend Engineer", "created_at": "2026-02-22T10:00:00Z" }
+  ],
+  "top_roles": [
+    { "jd_role": "Backend Engineer", "count": 12 },
+    { "jd_role": "Full Stack Developer", "count": 8 }
+  ],
+  "analyses_per_month": [
+    { "month": "2026-01-01T00:00:00Z", "count": 15 },
+    { "month": "2026-02-01T00:00:00Z", "count": 22 }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_analyses` | int | All analyses ever (including soft-deleted) |
+| `active_analyses` | int | Non-deleted analyses |
+| `deleted_analyses` | int | Soft-deleted analyses |
+| `average_ats_score` | float \| null | Average ATS score across all completed analyses |
+| `score_trend` | array | Last 10 completed analyses with score, role, and date |
+| `top_roles` | array | Top 5 most-analyzed job roles |
+| `analyses_per_month` | array | Monthly count for last 6 months |
 
 ---
 
@@ -621,9 +729,9 @@ This means the frontend can always rely on these fields being populated on a com
 
 ---
 
-## 9. Recent Backend Changes (Breaking)
+## 11. Recent Backend Changes (Breaking)
 
-### 9.1 Pagination on list endpoint
+### 11.1 Pagination on list endpoint
 
 **Affected:** `GET /api/analyses/`
 
@@ -638,7 +746,7 @@ Previously returned a flat JSON array. Now returns a paginated envelope:
 
 ---
 
-### 9.2 Idempotency guard on analyze
+### 11.2 Idempotency guard on analyze
 
 **Affected:** `POST /api/analyze/`
 
@@ -652,7 +760,7 @@ A second submission within 30 seconds now returns **409 Conflict**:
 
 ---
 
-### 9.3 Serializer field changes
+### 11.3 Serializer field changes
 
 **Removed from `scrape_result` nested object:**
 - `markdown` (large raw scrape text)
@@ -669,7 +777,7 @@ These fields were large (~160KB+) and not used by the frontend. If you were disp
 
 ---
 
-### 9.4 New fields on analysis detail
+### 11.4 New fields on analysis detail
 
 These fields are now populated for all JD input types (not just `form`):
 
@@ -686,7 +794,40 @@ For `text` and `url` inputs, these are extracted by the LLM from the job descrip
 
 ---
 
-### 9.5 AI provider change
+### 11.5 AI provider change
+
+---
+
+### 11.6 Soft-delete on analysis delete (Phase 7)
+
+**Affected:** `DELETE /api/analyses/<id>/delete/`
+
+Previously performed a hard delete (row removed from DB). Now performs a **soft-delete**:
+- Row preserved with `deleted_at` timestamp
+- Heavy text fields cleared (`resume_text`, `resolved_jd`, `jd_text`)
+- Report PDF deleted from R2
+- Orphaned ScrapeResult/LLMResponse cleaned up
+- Lightweight metadata retained for analytics (`ats_score`, `jd_role`, `jd_company`, `status`)
+
+**No frontend action required** — the endpoint still returns 204 on success. Soft-deleted analyses are automatically excluded from list/detail views.
+
+---
+
+### 11.7 New endpoints (Phase 7)
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| GET | `/api/resumes/` | List deduplicated resumes (paginated) |
+| DELETE | `/api/resumes/<uuid:id>/` | Delete resume from storage |
+| GET | `/api/dashboard/stats/` | User-level analytics |
+
+---
+
+### 11.8 Resume deduplication (Phase 7)
+
+Resume files are now deduplicated by SHA-256 hash per user. Uploading the same PDF for multiple analyses stores the file only once. The `resume` field is a nullable FK on each analysis pointing to the shared `Resume` row.
+
+**No frontend action required** — deduplication is transparent. The `resume_file` and `resume_file_url` fields on analysis detail still work as before
 
 The backend now uses **OpenRouter** (model: `anthropic/claude-haiku-4.5`) instead of the Luffy self-hosted LLM. The `ai_provider_used` field on analyses will show `"OpenRouterProvider"` or the model name.
 
@@ -694,7 +835,7 @@ No frontend action required — this is transparent to the frontend.
 
 ---
 
-## 10. Error Handling Reference
+## 12. Error Handling Reference
 
 ### HTTP Status Codes
 
@@ -746,6 +887,9 @@ Or for validation errors (400):
 | GET | `/api/analyses/<id>/` | ✅ | None | Full analysis detail |
 | GET | `/api/analyses/<id>/status/` | ✅ | None | Poll status (lightweight) |
 | POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
-| DELETE | `/api/analyses/<id>/delete/` | ✅ | None | Delete analysis |
+| DELETE | `/api/analyses/<id>/delete/` | ✅ | None | Soft-delete analysis |
 | GET | `/api/analyses/<id>/export-pdf/` | ✅ | None | Download PDF report |
+| GET | `/api/resumes/` | ✅ | None | List resumes (paginated) |
+| DELETE | `/api/resumes/<uuid:id>/` | ✅ | None | Delete resume file |
+| GET | `/api/dashboard/stats/` | ✅ | None | User analytics |
 | GET | `/api/health/` | ❌ | None | Health check |

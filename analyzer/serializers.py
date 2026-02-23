@@ -1,7 +1,25 @@
 from rest_framework import serializers
 from django.conf import settings
+from django.db.models import Count
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume
+
+
+class ResumeSerializer(serializers.ModelSerializer):
+    """Read-only serializer for the Resume model."""
+    active_analysis_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Resume
+        fields = (
+            'id', 'original_filename', 'file_size_bytes',
+            'uploaded_at', 'active_analysis_count',
+        )
+        read_only_fields = fields
+
+    def get_active_analysis_count(self, obj):
+        # Annotated by the view queryset for efficiency
+        return getattr(obj, 'active_analysis_count', 0)
 
 
 class ScrapeResultSerializer(serializers.ModelSerializer):
@@ -77,6 +95,18 @@ class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
                 {'jd_role': 'At least a job role is required when input type is "form".'}
             )
         return attrs
+
+    def create(self, validated_data):
+        """Override to handle Resume deduplication on create."""
+        user = validated_data.get('user') or self.context['request'].user
+        resume_file = validated_data.get('resume_file')
+
+        # Deduplicate resume file
+        if resume_file:
+            resume_obj, _created = Resume.get_or_create_from_upload(user, resume_file)
+            validated_data['resume'] = resume_obj
+
+        return super().create(validated_data)
 
 
 class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):

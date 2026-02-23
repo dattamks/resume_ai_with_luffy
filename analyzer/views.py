@@ -1,6 +1,9 @@
 import logging
 
 from django.core.cache import cache
+from django.db.models import Avg, Count, F, Q
+from django.db.models.functions import TruncMonth
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -9,11 +12,12 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
-from .models import ResumeAnalysis
+from .models import ResumeAnalysis, Resume
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
+    ResumeSerializer,
 )
 from .tasks import run_analysis_task
 
@@ -143,16 +147,29 @@ class AnalysisDetailView(RetrieveAPIView):
         )
 
 
-class AnalysisDeleteView(DestroyAPIView):
+class AnalysisDeleteView(APIView):
     """
-    DELETE /api/analyses/<id>/
-    Delete a single analysis owned by the authenticated user.
+    DELETE /api/analyses/<id>/delete/
+    Soft-delete a single analysis owned by the authenticated user.
+    Clears heavy fields, deletes report PDF, orphans ScrapeResult/LLMResponse.
+    Keeps lightweight metadata (ats_score, jd_role, etc.) for analytics.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = []
 
-    def get_queryset(self):
-        return ResumeAnalysis.objects.filter(user=self.request.user)
+    def delete(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        analysis.soft_delete()
+
+        # Invalidate status cache
+        cache.delete(f'analysis_status:{request.user.id}:{pk}')
+
+        logger.info('Soft-deleted analysis id=%s user=%s', pk, request.user.id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AnalysisPDFExportView(APIView):
@@ -229,3 +246,119 @@ class AnalysisStatusView(APIView):
         # Populate cache for next poll
         cache.set(cache_key, data, timeout=3600)
         return Response(data)
+
+
+# ── Resume endpoints ──────────────────────────────────────────────────────
+
+class ResumeListView(ListAPIView):
+    """
+    GET /api/resumes/
+    List the user's deduplicated resume files with analysis counts.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+    serializer_class = ResumeSerializer
+
+    def get_queryset(self):
+        return (
+            Resume.objects
+            .filter(user=self.request.user)
+            .annotate(active_analysis_count=Count(
+                'analyses',
+                filter=Q(analyses__deleted_at__isnull=True),
+            ))
+            .order_by('-uploaded_at')
+        )
+
+
+class ResumeDeleteView(APIView):
+    """
+    DELETE /api/resumes/<id>/
+    Delete a resume file from storage.
+    Only allowed if no active (non-soft-deleted) analyses reference it.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def delete(self, request, pk):
+        try:
+            resume = Resume.objects.get(pk=pk, user=request.user)
+        except Resume.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check for active analyses still referencing this resume
+        active_count = ResumeAnalysis.objects.filter(resume=resume).count()
+        if active_count > 0:
+            return Response(
+                {'detail': f'Cannot delete: {active_count} active analysis(es) still reference this resume.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        logger.info('Deleting resume id=%s file=%s user=%s', pk, resume.file.name, request.user.id)
+        resume.delete()  # post_delete signal cleans up R2 file
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Dashboard stats endpoint ──────────────────────────────────────────────
+
+class DashboardStatsView(APIView):
+    """
+    GET /api/dashboard/stats/
+    User-level analytics computed from all analyses (including soft-deleted).
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = []
+
+    def get(self, request):
+        user = request.user
+        # Use all_objects to include soft-deleted rows for analytics
+        all_qs = ResumeAnalysis.all_objects.filter(user=user)
+        active_qs = all_qs.filter(deleted_at__isnull=True)
+
+        total = all_qs.count()
+        active = active_qs.count()
+        deleted = total - active
+
+        # Average ATS score (all time, only completed analyses)
+        avg_ats = all_qs.filter(
+            status=ResumeAnalysis.STATUS_DONE,
+            ats_score__isnull=False,
+        ).aggregate(avg=Avg('ats_score'))['avg']
+
+        # Score trend — last 10 completed analyses (newest first)
+        score_trend = list(
+            all_qs.filter(
+                status=ResumeAnalysis.STATUS_DONE,
+                ats_score__isnull=False,
+            )
+            .order_by('-created_at')[:10]
+            .values('ats_score', 'jd_role', 'created_at')
+        )
+
+        # Top roles analyzed (all time)
+        top_roles = list(
+            all_qs.filter(jd_role__gt='')
+            .values('jd_role')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:5]
+        )
+
+        # Analyses per month (last 6 months)
+        six_months_ago = timezone.now() - timezone.timedelta(days=180)
+        monthly = list(
+            all_qs.filter(created_at__gte=six_months_ago)
+            .annotate(month=TruncMonth('created_at'))
+            .values('month')
+            .annotate(count=Count('id'))
+            .order_by('month')
+        )
+
+        return Response({
+            'total_analyses': total,
+            'active_analyses': active,
+            'deleted_analyses': deleted,
+            'average_ats_score': round(avg_ats, 1) if avg_ats else None,
+            'score_trend': score_trend,
+            'top_roles': top_roles,
+            'analyses_per_month': monthly,
+        })

@@ -142,3 +142,45 @@ VITE_API_URL=https://<backend>.up.railway.app/api
 - [x] **Fix `LogoutView` bare `except Exception`** — Catch `TokenError` specifically instead.
 - [x] **Redundant system prompt** — "Return ONLY valid JSON" in both system message and user prompt.
 - [x] **Use Firecrawl `summary`** for LLM prompt instead of full markdown (already fetched, never used).
+
+---
+
+## Phase 7 — Resume Model, Soft-Delete & Dashboard Analytics  ✅
+
+> **Goal:** Separate resume storage from analysis lifecycle, enable audit-trail analytics, and clean up orphaned files.
+
+### 7.1 New `Resume` Model (deduplication)
+
+- [x] Create `Resume` model: `id` (UUID), `user` (FK → User), `file` (FileField → `resumes/`), `file_hash` (SHA-256, unique per user, `db_index=True`), `original_filename`, `file_size_bytes`, `uploaded_at`
+- [x] Add `resume` FK (SET_NULL, null=True, blank=True) on `ResumeAnalysis` → `Resume`
+- [x] Upload dedup logic: compute SHA-256 before save → if same hash exists for user, reuse existing `Resume` row
+- [x] `post_delete` signal on `Resume` → delete file from R2
+- [x] Data migration: create `Resume` rows from existing `resume_file` values, compute hashes, deduplicate, link back to analyses
+
+### 7.2 Soft-Delete on `ResumeAnalysis`
+
+- [x] Add `deleted_at` (DateTimeField, null=True, db_index=True) to `ResumeAnalysis`
+- [x] Create `ActiveAnalysisManager` (default manager) — filters `deleted_at__isnull=True`
+- [x] Add `all_objects = models.Manager()` for unfiltered access (admin, analytics)
+- [x] Update `AnalysisDeleteView` → soft-delete: set `deleted_at=now()`, clear heavy fields (`resume_text`, `resolved_jd`), delete `report_pdf` from R2, delete orphaned `ScrapeResult` & `LLMResponse`
+- [x] Keep lightweight metadata on soft-deleted rows: `ats_score`, `jd_role`, `jd_company`, `status`, `created_at`, `jd_input_type`
+- [x] New compound indexes: `(user, deleted_at)`, `(user, status, -created_at)`
+
+### 7.3 New API Endpoints
+
+- [x] `GET /api/resumes/` — list user's deduplicated resumes (filename, size, upload date, analysis count)
+- [x] `DELETE /api/resumes/<id>/` — delete a resume file from R2 (only if no active analyses reference it)
+- [x] `GET /api/dashboard/stats/` — user-level analytics from soft-deleted + active rows:
+  - Total analyses (all time, including deleted)
+  - Active vs deleted count
+  - Average ATS score (all time)
+  - Score trend (last 10 analyses)
+  - Top roles analyzed
+  - Analyses per month (last 6 months)
+
+### 7.4 Cleanup & Docs
+
+- [x] Update `FRONTEND_API_GUIDE.md` with new endpoints, soft-delete behavior, and Resume schema
+- [x] Update admin site to show soft-deleted analyses and Resume model
+- [x] Add tests for: dedup upload, soft-delete, dashboard stats, resume list/delete, orphan cleanup
+- [x] Run full test suite & migrate
