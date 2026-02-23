@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.1] — 2026-02-23
+
+### Resume Reuse & Test Infrastructure
+
+### Added
+- **`resume_id` support in `POST /api/analyze/`** — submit an existing Resume UUID instead of re-uploading the PDF. Send `resume_id` (UUID) as JSON or form field; the analysis reuses the stored file. Exactly one of `resume_file` or `resume_id` is required.
+- `JSONParser` added to `AnalyzeResumeView` so `resume_id`-only requests can be sent as `application/json`.
+- **10 new tests** in `test_resume_id.py`: success with JSON, multipart, and form JD; validation for neither/both provided, invalid UUID, non-existent resume, other user's resume, multiple analyses from same resume, file upload regression.
+
+### Fixed
+- **Test infrastructure — rate-limit isolation** — tests were hitting real Redis-backed throttle counters, causing spurious 429 responses after repeated runs. Root cause: `CACHES` used shared Redis and DRF throttle state persisted across test runs.
+  - Added `TESTING` flag (`'test' in sys.argv`) to `settings.py`.
+  - During tests: `CACHES` falls back to `LocMemCache` (in-memory, per-process) instead of Redis.
+  - During tests: throttle rates set to `10000/minute` (effectively unlimited) so all 99 tests pass reliably.
+
+### Changed
+- `resume_file` field on `ResumeAnalysisCreateSerializer` is now `required=False` (was implicitly required). The `validate()` method enforces that exactly one of `resume_file` / `resume_id` is provided.
+- `serializer.save(user=…)` now passes `request` context for `resume_id` owner validation.
+- Total test count: **99** (78 existing + 10 resume_id + 11 schema/serializer, all passing).
+
+---
+
 ## [0.8.0] — 2026-02-23
 
 ### Phase 8: SSRF Protection & Shareable Analysis Links

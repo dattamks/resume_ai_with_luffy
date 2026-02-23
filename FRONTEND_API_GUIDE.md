@@ -325,28 +325,36 @@ All prefixed with `/api/`.
 
 ### POST `/api/analyze/` — Submit New Analysis
 
-🔒 Requires auth. **Throttled:** 10/hour per user. **Content-Type: `multipart/form-data`**.
+🔒 Requires auth. **Throttled:** 10/hour per user. Accepts **`multipart/form-data`** (file upload) or **`application/json`** (resume reuse).
 
-Submits a resume PDF + job description for async analysis. Returns immediately with a tracking ID. The analysis runs asynchronously via Celery background workers.
+Submits a resume + job description for async analysis. Returns immediately with a tracking ID. The analysis runs asynchronously via Celery background workers.
+
+**Two ways to provide the resume — exactly one is required:**
+
+1. **Upload a new PDF** → send `resume_file` via `multipart/form-data`.
+2. **Reuse an existing resume** → send `resume_id` (UUID from `GET /api/resumes/`) via JSON or form field.
 
 **Idempotency guard:** A second submit within 30 seconds returns **409 Conflict**. The frontend should **disable the submit button** after the first click and show a loading state.
 
-**Form fields:**
+**Form / JSON fields:**
 
-| Field                 | Type    | Required        | Description                                              |
-|-----------------------|---------|-----------------|----------------------------------------------------------|
-| `resume_file`         | File    | ✅              | PDF file, max 5 MB, must have `.pdf` extension and `%PDF` magic bytes |
-| `jd_input_type`       | String  | ✅              | One of: `"text"`, `"url"`, `"form"`                      |
-| `jd_text`             | String  | If type=`text`  | Raw job description text                                 |
-| `jd_url`              | String  | If type=`url`   | URL to a job posting (scraped via Firecrawl)             |
-| `jd_role`             | String  | If type=`form`  | Job title / role name                                    |
-| `jd_company`          | String  | No              | Company name (form mode)                                 |
-| `jd_skills`           | String  | No              | Comma-separated skills (form mode)                       |
-| `jd_experience_years` | Integer | No              | Required years of experience (form mode)                 |
-| `jd_industry`         | String  | No              | Industry/domain (form mode)                              |
-| `jd_extra_details`    | String  | No              | Free-text additional details (form mode)                 |
+| Field                 | Type    | Required                    | Description                                              |
+|-----------------------|---------|-----------------------------|----------------------------------------------------------|
+| `resume_file`         | File    | ✅ unless `resume_id` sent  | PDF file, max 5 MB, must have `.pdf` extension and `%PDF` magic bytes |
+| `resume_id`           | UUID    | ✅ unless `resume_file` sent | UUID of an existing Resume owned by the user (from `GET /api/resumes/`) |
+| `jd_input_type`       | String  | ✅                          | One of: `"text"`, `"url"`, `"form"`                      |
+| `jd_text`             | String  | If type=`text`              | Raw job description text                                 |
+| `jd_url`              | String  | If type=`url`               | URL to a job posting (scraped via Firecrawl)             |
+| `jd_role`             | String  | If type=`form`              | Job title / role name                                    |
+| `jd_company`          | String  | No                          | Company name (form mode)                                 |
+| `jd_skills`           | String  | No                          | Comma-separated skills (form mode)                       |
+| `jd_experience_years` | Integer | No                          | Required years of experience (form mode)                 |
+| `jd_industry`         | String  | No                          | Industry/domain (form mode)                              |
+| `jd_extra_details`    | String  | No                          | Free-text additional details (form mode)                 |
 
-**Resume deduplication:** When submitting, the backend computes a SHA-256 hash of the uploaded PDF. If the same file was uploaded before by this user, the existing stored file is reused (no duplicate storage). This is transparent to the frontend.
+> ⚠️ Sending **both** `resume_file` and `resume_id` returns 400. Sending **neither** also returns 400.
+
+**Resume deduplication:** When uploading via `resume_file`, the backend computes a SHA-256 hash of the PDF. If the same file was uploaded before by this user, the existing stored file is reused (no duplicate storage). This is transparent to the frontend.
 
 **Response (202 Accepted):**
 ```json
@@ -362,14 +370,17 @@ After receiving the `id`, begin [polling for status](#12-polling-for-analysis-st
 
 | Code | Condition | Example Response |
 |------|-----------|-----------------|
+| 400  | Neither file nor id | `{ "non_field_errors": ["Either \"resume_file\" or \"resume_id\" is required."] }` |
+| 400  | Both file and id | `{ "non_field_errors": ["Provide either \"resume_file\" or \"resume_id\", not both."] }` |
 | 400  | Validation error | `{ "resume_file": ["Only PDF files are accepted."] }` |
 | 400  | Bad PDF content | `{ "resume_file": ["File content does not appear to be a valid PDF."] }` |
 | 400  | File too large | `{ "resume_file": ["Resume file must be under 5MB."] }` |
+| 400  | Invalid resume_id | `{ "resume_id": ["Resume not found or does not belong to you."] }` |
 | 400  | Missing JD fields | `{ "jd_text": ["Job description text is required when input type is \"text\"."] }` |
 | 409  | Duplicate submit | `{ "detail": "An analysis is already being submitted. Please wait." }` |
 | 429  | Rate limited | `{ "detail": "Request was throttled. Expected available in 120 seconds." }` |
 
-**Example (JavaScript):**
+**Example — New file upload (multipart/form-data):**
 ```js
 const formData = new FormData();
 formData.append('resume_file', fileInput.files[0]);
@@ -379,9 +390,17 @@ formData.append('jd_text', 'We need a senior Python developer...');
 const { data } = await api.post('/analyze/', formData, {
   headers: { 'Content-Type': 'multipart/form-data' },
 });
-
 // data = { id: 42, status: "processing" }
-// Start polling...
+```
+
+**Example — Reuse existing resume (JSON):**
+```js
+const { data } = await api.post('/analyze/', {
+  resume_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',  // from GET /api/resumes/
+  jd_input_type: 'text',
+  jd_text: 'We need a senior Python developer...',
+});
+// data = { id: 43, status: "processing" }
 ```
 
 ---
@@ -1906,7 +1925,7 @@ function ResumesPage() {
 | POST | `/api/auth/token/refresh/` | ❌ | User (30/hr) | Refresh JWT tokens |
 | GET | `/api/auth/me/` | ✅ | User (30/hr) | Current user profile |
 | **Analysis** |||||
-| POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis |
+| POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
 | GET | `/api/analyses/` | ✅ | None | List analyses (paginated) |
 | GET | `/api/analyses/<id>/` | ✅ | None | Full analysis detail |
 | GET | `/api/analyses/<id>/status/` | ✅ | None | Poll status (lightweight) |

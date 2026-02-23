@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
@@ -6,6 +7,9 @@ from django.core.exceptions import ImproperlyConfigured
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Detect when running under `manage.py test`
+TESTING = 'test' in sys.argv
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 
@@ -146,8 +150,10 @@ else:
 # ── Redis cache ──────────────────────────────────────────────────────────────
 # When REDIS_URL is set, use Redis for caching (DRF throttle state, sessions).
 # Otherwise falls back to in-memory cache for local development.
+# During tests we ALWAYS use LocMemCache so throttle counters don't persist
+# across runs and pollute the shared Redis instance.
 _REDIS_URL = config('REDIS_URL', default='')
-if _REDIS_URL:
+if _REDIS_URL and not TESTING:
     CACHES = {
         'default': {
             'BACKEND': 'django_redis.cache.RedisCache',
@@ -215,6 +221,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
 }
+
+# During tests: disable throttling entirely so rate limits don't cause
+# spurious 429 failures.  We keep the rates dict so views with explicit
+# `throttle_classes` can still instantiate their throttle objects without
+# raising ImproperlyConfigured, but set the rates high enough to never fire.
+if TESTING:
+    REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = []
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+        'user': '10000/minute',
+        'analyze': '10000/minute',
+    }
 
 # JWT
 SIMPLE_JWT = {

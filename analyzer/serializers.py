@@ -44,13 +44,23 @@ class LLMResponseSerializer(serializers.ModelSerializer):
 
 
 class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
-    """Used for creating a new analysis request."""
+    """
+    Used for creating a new analysis request.
+
+    Accepts EITHER:
+      • resume_file  – a PDF upload (multipart/form-data), OR
+      • resume_id    – UUID of an existing Resume owned by the user (JSON / form)
+
+    Exactly one must be provided.
+    """
+    resume_id = serializers.UUIDField(required=False, write_only=True)
 
     class Meta:
         model = ResumeAnalysis
         fields = (
             'id',
             'resume_file',
+            'resume_id',
             'jd_input_type',
             'jd_text',
             'jd_url',
@@ -61,6 +71,9 @@ class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
             'jd_industry',
             'jd_extra_details',
         )
+        extra_kwargs = {
+            'resume_file': {'required': False},
+        }
 
     def validate_resume_file(self, value):
         max_bytes = settings.MAX_RESUME_SIZE_MB * 1024 * 1024
@@ -80,6 +93,18 @@ class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        resume_file = attrs.get('resume_file')
+        resume_id = attrs.get('resume_id')
+
+        if resume_file and resume_id:
+            raise serializers.ValidationError(
+                'Provide either "resume_file" or "resume_id", not both.'
+            )
+        if not resume_file and not resume_id:
+            raise serializers.ValidationError(
+                'Either "resume_file" or "resume_id" is required.'
+            )
+
         jd_type = attrs.get('jd_input_type')
 
         if jd_type == ResumeAnalysis.JD_INPUT_TEXT and not attrs.get('jd_text'):
@@ -97,12 +122,30 @@ class ResumeAnalysisCreateSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        """Override to handle Resume deduplication on create."""
+        """
+        Override to handle Resume deduplication on create.
+
+        Two paths:
+        1) resume_file provided → deduplicate via Resume.get_or_create_from_upload
+        2) resume_id provided   → look up existing Resume by UUID, reuse its file
+        """
         user = validated_data.get('user') or self.context['request'].user
         resume_file = validated_data.get('resume_file')
+        resume_id = validated_data.pop('resume_id', None)
 
-        # Deduplicate resume file
-        if resume_file:
+        if resume_id:
+            # Path 2: reuse an existing Resume
+            try:
+                resume_obj = Resume.objects.get(id=resume_id, user=user)
+            except Resume.DoesNotExist:
+                raise serializers.ValidationError(
+                    {'resume_id': 'Resume not found or does not belong to you.'}
+                )
+            validated_data['resume'] = resume_obj
+            # Point to the same storage path so the pipeline works unchanged
+            validated_data['resume_file'] = resume_obj.file.name
+        elif resume_file:
+            # Path 1: fresh upload → deduplicate
             resume_obj, _created = Resume.get_or_create_from_upload(user, resume_file)
             validated_data['resume'] = resume_obj
 
