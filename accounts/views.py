@@ -1,5 +1,11 @@
 import logging
+from datetime import datetime
 
+from django.contrib.auth.models import User
+from django.contrib.auth.tokens import default_token_generator
+from django.conf import settings
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,8 +20,12 @@ from .serializers import (
     UserSerializer,
     UpdateUserSerializer,
     ChangePasswordSerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
+    NotificationPreferenceSerializer,
     CustomTokenObtainPairSerializer,
 )
+from .email_utils import send_templated_email
 
 logger = logging.getLogger('accounts')
 
@@ -28,6 +38,15 @@ class RegisterView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             refresh = RefreshToken.for_user(user)
+
+            # Send welcome email (best-effort, don't block registration)
+            send_templated_email(
+                slug='welcome',
+                recipient=user.email,
+                context={'username': user.username},
+                fail_silently=True,
+            )
+
             return Response({
                 'user': UserSerializer(user).data,
                 'refresh': str(refresh),
@@ -62,6 +81,10 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # Ensure profile exists (for users created before migration)
+        from .models import UserProfile, NotificationPreference
+        UserProfile.objects.get_or_create(user=request.user)
+        NotificationPreference.objects.get_or_create(user=request.user)
         return Response(UserSerializer(request.user).data)
 
     def put(self, request):
@@ -119,4 +142,108 @@ class ChangePasswordView(APIView):
         request.user.save(update_fields=['password'])
 
         logger.info('Password changed for user=%s', request.user.username)
+
+        # Send confirmation email (best-effort)
+        send_templated_email(
+            slug='password-changed',
+            recipient=request.user.email,
+            context={
+                'username': request.user.username,
+                'changed_at': datetime.now().strftime('%B %d, %Y at %I:%M %p'),
+            },
+            fail_silently=True,
+        )
+
         return Response({'detail': 'Password updated successfully.'})
+
+
+class NotificationPreferenceView(APIView):
+    """
+    GET  /api/auth/notifications/  — Return current notification preferences.
+    PUT  /api/auth/notifications/  — Update notification preferences (partial).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import NotificationPreference
+        prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        return Response(NotificationPreferenceSerializer(prefs).data)
+
+    def put(self, request):
+        from .models import NotificationPreference
+        prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        serializer = NotificationPreferenceSerializer(prefs, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class ForgotPasswordView(APIView):
+    """
+    POST /api/auth/forgot-password/
+    Sends a password reset email with uid + token.
+    Always returns 200 regardless of whether the email exists (security).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        email = serializer.validated_data['email']
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Don't reveal whether the email exists — always return success
+            logger.info('Password reset requested for non-existent email=%s', email)
+            return Response({'detail': 'If an account with that email exists, a reset link has been sent.'})
+
+        # Generate token
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+
+        # Build reset URL (frontend handles the actual reset form)
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        reset_link = f'{frontend_url}/reset-password?uid={uid}&token={token}'
+
+        # Send templated email
+        try:
+            send_templated_email(
+                slug='password-reset',
+                recipient=user.email,
+                context={
+                    'username': user.username,
+                    'reset_link': reset_link,
+                    'expiry_hours': str(settings.PASSWORD_RESET_TIMEOUT // 3600),
+                },
+            )
+            logger.info('Password reset email sent to user=%s', user.username)
+        except Exception as exc:
+            logger.error('Failed to send password reset email to user=%s: %s', user.username, exc)
+            return Response(
+                {'detail': 'Failed to send reset email. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({'detail': 'If an account with that email exists, a reset link has been sent.'})
+
+
+class ResetPasswordView(APIView):
+    """
+    POST /api/auth/reset-password/
+    Validates uid + token from the reset email and sets a new password.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = serializer.save()
+        logger.info('Password reset completed for user=%s', user.username)
+
+        return Response({'detail': 'Password has been reset successfully. You can now log in.'})

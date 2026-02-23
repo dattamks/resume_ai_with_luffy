@@ -279,6 +279,26 @@ MAX_RESUME_SIZE_MB = config('MAX_RESUME_SIZE_MB', default=5, cast=int)
 # JD URL fetch timeout (seconds)
 JD_FETCH_TIMEOUT = config('JD_FETCH_TIMEOUT', default=10, cast=int)
 
+# ── Email configuration ──────────────────────────────────────────────────────
+# Uses SMTP in production (set EMAIL_HOST, EMAIL_HOST_USER, etc. in env).
+# Falls back to console backend for local dev (prints emails to stdout).
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend',
+)
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@resumeai.app')
+
+# Frontend URL — used for constructing password reset links etc.
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
+
+# Password reset token expiry (seconds) — default 1 hour
+PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int)
+
 # Logging
 # In production (Railway), use only the console handler — Railway captures
 # stdout/stderr automatically. The file handler is kept for local dev only.

@@ -1,7 +1,7 @@
 # Frontend API Integration Guide
 
 > **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.9.0
-> Comprehensive technical reference for frontend developers integrating with the Resume AI backend.
+> Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
 
@@ -24,7 +24,8 @@
 15. [Error Handling Reference](#15-error-handling-reference)
 16. [TypeScript Type Definitions](#16-typescript-type-definitions)
 17. [Frontend Integration Recipes](#17-frontend-integration-recipes)
-18. [Quick Reference — All Endpoints](#18-quick-reference--all-endpoints)
+18. [Email Templates (Admin)](#18-email-templates-admin)
+19. [Quick Reference — All Endpoints](#19-quick-reference--all-endpoints)
 
 ---
 
@@ -204,7 +205,9 @@ Creates a new user account and returns tokens immediately (auto-login).
     "id": 1,
     "username": "john",
     "email": "john@example.com",
-    "date_joined": "2026-02-22T10:00:00Z"
+    "date_joined": "2026-02-22T10:00:00Z",
+    "country_code": "+91",
+    "mobile_number": ""
   },
   "access": "<jwt_access_token>",
   "refresh": "<jwt_refresh_token>"
@@ -219,6 +222,8 @@ Creates a new user account and returns tokens immediately (auto-login).
   "password2": ["Passwords do not match."]
 }
 ```
+
+> **Email:** A welcome email (HTML template `welcome`) is sent to the registered email address on successful registration.
 
 ---
 
@@ -243,7 +248,9 @@ Creates a new user account and returns tokens immediately (auto-login).
     "id": 1,
     "username": "john",
     "email": "john@example.com",
-    "date_joined": "2026-02-22T10:00:00Z"
+    "date_joined": "2026-02-22T10:00:00Z",
+    "country_code": "+91",
+    "mobile_number": ""
   }
 }
 ```
@@ -365,6 +372,140 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 | 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
 
 > **Note:** After changing password, existing tokens remain valid until they expire. The frontend may want to re-login the user.
+> **Email:** A confirmation email (HTML template `password-changed`) is sent to the user after a successful password change.
+
+---
+
+### POST `/api/auth/forgot-password/` — Request Password Reset
+
+🔓 Public — no auth header required.
+
+Sends a password reset email containing a one-time link with a `uid` and `token`. The link points to the frontend route `/reset-password?uid=<uid>&token=<token>`. **Always returns 200** — this is intentional; the API never reveals whether an email address is registered.
+
+**Request (JSON):**
+```json
+{ "email": "john@example.com" }
+```
+
+**Response (200):**
+```json
+{ "detail": "If an account with that email exists, a reset link has been sent." }
+```
+
+**Errors:**
+
+| Code | Condition | Example Response |
+|------|-----------|------------------|
+| 400  | Missing or invalid email | `{ "email": ["Enter a valid email address."] }` |
+| 500  | Email delivery failure | `{ "detail": "Failed to send reset email. Please try again later." }` |
+
+> **Reset link format:** `{FRONTEND_URL}/reset-password?uid={base64_uid}&token={token}` 
+> **Token expiry:** 1 hour (configurable via `PASSWORD_RESET_TIMEOUT` setting).
+> **Email:** Sends an HTML email using the `password-reset` template with a styled CTA button.
+
+---
+
+### POST `/api/auth/reset-password/` — Set New Password
+
+🔓 Public — no auth header required.
+
+Validates the `uid` + `token` from the reset email and sets a new password. The frontend should extract `uid` and `token` from the URL query params and submit them here along with the new password.
+
+**Request (JSON):**
+```json
+{
+  "uid": "Mg",
+  "token": "c4j5fx-abc1234567890def",
+  "new_password": "NewStrong456!"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `uid` | `string` | Base64-encoded user ID (from the reset link `?uid=` param) |
+| `token` | `string` | One-time reset token (from the reset link `?token=` param) |
+| `new_password` | `string` | New password (must pass Django password validation) |
+
+**Response (200):**
+```json
+{ "detail": "Password has been reset successfully. You can now log in." }
+```
+
+**Errors:**
+
+| Code | Condition | Example Response |
+|------|-----------|------------------|
+| 400  | Invalid/expired uid | `{ "uid": ["Invalid or expired reset link."] }` |
+| 400  | Invalid/expired token | `{ "token": ["Invalid or expired reset token."] }` |
+| 400  | Weak new password | `{ "new_password": ["This password is too common."] }` |
+
+> **After reset:** The user must log in again with the new password. No tokens are issued in this response.
+
+---
+
+### GET `/api/auth/notifications/` — Get Notification Preferences
+
+🔒 Requires auth. Returns the current user's notification preferences. Email notifications default to `true`; mobile notifications default to `false` (except policy changes).
+
+**Response (200):**
+```json
+{
+  "job_alerts_email": true,
+  "job_alerts_mobile": false,
+  "feature_updates_email": true,
+  "feature_updates_mobile": false,
+  "newsletters_email": true,
+  "newsletters_mobile": false,
+  "policy_changes_email": true,
+  "policy_changes_mobile": true
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `job_alerts_email` | `boolean` | `true` | Receive job match alerts via email |
+| `job_alerts_mobile` | `boolean` | `false` | Receive job match alerts via mobile |
+| `feature_updates_email` | `boolean` | `true` | Feature update emails |
+| `feature_updates_mobile` | `boolean` | `false` | Feature update mobile notifications |
+| `newsletters_email` | `boolean` | `true` | Newsletter emails |
+| `newsletters_mobile` | `boolean` | `false` | Newsletter mobile notifications |
+| `policy_changes_email` | `boolean` | `true` | Policy change emails |
+| `policy_changes_mobile` | `boolean` | `true` | Policy change mobile notifications |
+
+---
+
+### PUT `/api/auth/notifications/` — Update Notification Preferences
+
+🔒 Requires auth. Partial updates supported — send only the fields you want to change.
+
+**Request (JSON):**
+```json
+{
+  "newsletters_email": false,
+  "newsletters_mobile": false
+}
+```
+
+**Response (200):**
+```json
+{
+  "job_alerts_email": true,
+  "job_alerts_mobile": true,
+  "feature_updates_email": true,
+  "feature_updates_mobile": true,
+  "newsletters_email": false,
+  "newsletters_mobile": false,
+  "policy_changes_email": true,
+  "policy_changes_mobile": true
+}
+```
+
+**Errors:**
+
+| Code | Condition | Example Response |
+|------|-----------|------------------|
+| 400  | Invalid boolean value | `{ "newsletters_email": ["Must be a valid boolean."] }` |
+| 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
 
 ---
 
@@ -507,6 +648,7 @@ Only returns **active** (non-soft-deleted) analyses.
       "jd_company": "Acme Corp",
       "status": "done",
       "pipeline_step": "done",
+      "overall_grade": "B",
       "ats_score": 78,
       "ai_provider_used": "OpenRouterProvider",
       "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
@@ -527,6 +669,7 @@ Only returns **active** (non-soft-deleted) analyses.
 | `jd_company`       | string         | Company name                                 |
 | `status`           | string         | `"pending"` / `"processing"` / `"done"` / `"failed"` |
 | `pipeline_step`    | string         | Current step in the pipeline                  |
+| `overall_grade`    | string         | Letter grade `"A"` through `"F"` (empty if not complete) |
 | `ats_score`        | int \| null    | ATS score (null if not complete)             |
 | `ai_provider_used` | string         | AI model that performed the analysis         |
 | `report_pdf_url`   | string \| null | URL to pre-generated PDF report              |
@@ -555,10 +698,19 @@ Returns 404 if the analysis is soft-deleted or belongs to another user.
 {
   "status": "processing",
   "pipeline_step": "llm_call",
+  "overall_grade": "",
   "ats_score": null,
   "error_message": ""
 }
 ```
+
+| Field           | Type          | Description                                          |
+|-----------------|---------------|------------------------------------------------------|
+| `status`        | string        | `"pending"` / `"processing"` / `"done"` / `"failed"` |
+| `pipeline_step` | string        | Current pipeline step (see [Polling](#14-polling-for-analysis-status)) |
+| `overall_grade` | string        | Letter grade `"A"`–`"F"` (empty string until done)    |
+| `ats_score`     | int \| null   | Generic ATS score 0-100 (null until done)            |
+| `error_message` | string        | Error details (empty on success / in-progress)       |
 
 See [Polling for Analysis Status](#14-polling-for-analysis-status) for the full polling implementation guide.
 
@@ -904,28 +1056,53 @@ showToast('Share link copied!');
   "jd_company": "Acme Corp",
   "jd_industry": "Technology/SaaS",
   "status": "done",
-  "ats_score": 82,
-  "ats_score_breakdown": {
-    "keyword_match": 80,
-    "format_score": 85,
-    "relevance_score": 81
+  "overall_grade": "B",
+  "ats_score": 72,
+  "scores": {
+    "generic_ats": 72,
+    "workday_ats": 61,
+    "greenhouse_ats": 68,
+    "keyword_match_percent": 58
   },
-  "keyword_gaps": ["Kubernetes", "Docker"],
-  "section_suggestions": {
-    "summary": "Add targeted summary.",
-    "experience": "Quantify achievements.",
-    "skills": "Add Docker, Kubernetes.",
-    "education": "Well-structured.",
-    "overall": "Strong profile, improve DevOps keywords."
+  "ats_disclaimers": {
+    "workday": "Simulated score based on known Workday parsing behavior. Not affiliated with or endorsed by Workday Inc.",
+    "greenhouse": "Simulated score based on known Greenhouse parsing behavior. Not affiliated with or endorsed by Greenhouse Software."
   },
-  "rewritten_bullets": [
+  "keyword_analysis": {
+    "matched_keywords": ["Python", "SQL", "data analysis"],
+    "missing_keywords": ["Power BI", "ETL pipelines", "Agile"],
+    "recommended_to_add": [
+      "Add Power BI to skills section under tools",
+      "Mention ETL pipelines in work experience"
+    ]
+  },
+  "section_feedback": [
     {
-      "original": "Worked on backend services",
-      "rewritten": "Built 5 microservices serving 10K+ users",
-      "reason": "Added specifics and metrics"
+      "section_name": "Work Experience",
+      "score": 65,
+      "feedback": [
+        "Most bullets lack quantified impact",
+        "Action verbs are weak — replace 'worked on' with owned, led, optimized"
+      ],
+      "ats_flags": ["Non-standard section title 'Professional Journey'"]
     }
   ],
-  "overall_assessment": "Strong backend profile with room for DevOps improvement.",
+  "sentence_suggestions": [
+    {
+      "original": "Worked on building dashboards for the sales team",
+      "suggested": "Developed 5 sales performance dashboards using Python and Tableau, reducing reporting time by 40%",
+      "reason": "Added specificity, quantified impact, and replaced weak verb"
+    }
+  ],
+  "formatting_flags": [
+    "Multi-column layout detected — Workday and many ATS systems parse left column only"
+  ],
+  "quick_wins": [
+    { "priority": 1, "action": "Add missing keywords Power BI, ETL, and Agile" },
+    { "priority": 2, "action": "Remove multi-column layout and convert to single column" },
+    { "priority": 3, "action": "Quantify at least 5 bullet points with numbers" }
+  ],
+  "summary": "Strong backend profile with room for DevOps and keyword improvement.",
   "ai_provider_used": "OpenRouterProvider",
   "created_at": "2026-02-23T14:30:00Z"
 }
@@ -933,20 +1110,24 @@ showToast('Share link copied!');
 
 **Shared response fields:**
 
-| Field                | Type            | Description                          |
-|----------------------|-----------------|--------------------------------------|
-| `jd_role`            | string          | Job title                            |
-| `jd_company`         | string          | Company name                         |
-| `jd_industry`        | string          | Industry/domain                      |
-| `status`             | string          | Always `"done"` for shared analyses  |
-| `ats_score`          | int             | ATS score (0-100)                    |
-| `ats_score_breakdown`| object          | `{ keyword_match, format_score, relevance_score }` |
-| `keyword_gaps`       | string[]        | Missing keywords                     |
-| `section_suggestions`| object          | Per-section feedback                 |
-| `rewritten_bullets`  | array           | Before/after bullet improvements     |
-| `overall_assessment` | string          | AI summary                           |
-| `ai_provider_used`   | string          | AI model identifier                  |
-| `created_at`         | datetime        | When analysis was submitted          |
+| Field                  | Type            | Description                                              |
+|------------------------|-----------------|----------------------------------------------------------|
+| `jd_role`              | string          | Job title                                                |
+| `jd_company`           | string          | Company name                                             |
+| `jd_industry`          | string          | Industry/domain                                          |
+| `status`               | string          | Always `"done"` for shared analyses                      |
+| `overall_grade`        | string          | Letter grade `"A"` through `"F"`                         |
+| `ats_score`            | int             | Generic ATS score (0-100), same as `scores.generic_ats`  |
+| `scores`               | object          | `{ generic_ats, workday_ats, greenhouse_ats, keyword_match_percent }` — all 0-100 |
+| `ats_disclaimers`      | object          | `{ workday, greenhouse }` — legal disclaimer strings     |
+| `keyword_analysis`     | object          | `{ matched_keywords[], missing_keywords[], recommended_to_add[] }` |
+| `section_feedback`     | array           | `[{ section_name, score, feedback[], ats_flags[] }]`     |
+| `sentence_suggestions` | array           | `[{ original, suggested, reason }]`                      |
+| `formatting_flags`     | string[]        | ATS formatting issues found in the resume                |
+| `quick_wins`           | array           | `[{ priority (1-3), action }]` — always exactly 3 items |
+| `summary`              | string          | 2-3 sentence overall summary                             |
+| `ai_provider_used`     | string          | AI model identifier                                      |
+| `created_at`           | datetime        | When analysis was submitted                              |
 
 **Error (404):**
 ```json
@@ -1121,28 +1302,79 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
   "status": "done",
   "pipeline_step": "done",
   "error_message": "",
-  "ats_score": 78,
-  "ats_score_breakdown": {
-    "keyword_match": 72,
-    "format_score": 85,
-    "relevance_score": 76
+  "overall_grade": "B",
+  "ats_score": 72,
+  "scores": {
+    "generic_ats": 72,
+    "workday_ats": 61,
+    "greenhouse_ats": 68,
+    "keyword_match_percent": 58
   },
-  "keyword_gaps": ["Kubernetes", "Terraform", "CI/CD"],
-  "section_suggestions": {
-    "summary": "Add a targeted summary mentioning Python and cloud experience.",
-    "experience": "Include metrics in bullet points — quantify impact.",
-    "skills": "Add missing keywords: Kubernetes, Terraform.",
-    "education": "Education section is well-structured.",
-    "overall": "Strong technical background but needs better keyword alignment."
+  "ats_disclaimers": {
+    "workday": "Simulated score based on known Workday parsing behavior. Not affiliated with or endorsed by Workday Inc.",
+    "greenhouse": "Simulated score based on known Greenhouse parsing behavior. Not affiliated with or endorsed by Greenhouse Software."
   },
-  "rewritten_bullets": [
+  "keyword_analysis": {
+    "matched_keywords": ["Python", "Django", "PostgreSQL"],
+    "missing_keywords": ["Kubernetes", "Terraform", "CI/CD"],
+    "recommended_to_add": [
+      "Add Kubernetes to skills section",
+      "Mention CI/CD experience in work experience bullets",
+      "Add Terraform to infrastructure tools"
+    ]
+  },
+  "section_feedback": [
     {
-      "original": "Worked on backend services",
-      "rewritten": "Architected and maintained 12 Python/Django microservices serving 50K+ daily active users, reducing API latency by 40%",
-      "reason": "Added specifics, metrics, and action verb"
+      "section_name": "Work Experience",
+      "score": 65,
+      "feedback": [
+        "Bullets lack quantified impact — add numbers and percentages",
+        "Action verbs are weak — replace 'worked on' with 'architected', 'led', 'optimized'",
+        "JD mentions cloud infrastructure but resume does not reference any cloud work"
+      ],
+      "ats_flags": []
+    },
+    {
+      "section_name": "Skills",
+      "score": 70,
+      "feedback": [
+        "Skills are listed but not categorized",
+        "Missing JD keywords: Kubernetes, Terraform, CI/CD"
+      ],
+      "ats_flags": []
+    },
+    {
+      "section_name": "Summary",
+      "score": 80,
+      "feedback": [
+        "Good keyword presence in summary",
+        "Could be more specific to the target role"
+      ],
+      "ats_flags": []
     }
   ],
-  "overall_assessment": "Strong Python background with relevant experience. Key gaps are in DevOps/cloud skills mentioned in the JD. Priority: add Kubernetes and CI/CD experience, quantify achievements.",
+  "sentence_suggestions": [
+    {
+      "original": "Worked on backend services",
+      "suggested": "Architected and maintained 12 Python/Django microservices serving 50K+ daily active users, reducing API latency by 40%",
+      "reason": "Added specifics, metrics, and strong action verb"
+    },
+    {
+      "original": "Helped with data cleaning tasks",
+      "suggested": "Automated data cleaning pipelines using Pandas, processing 500K+ records weekly",
+      "reason": "Replaced passive language with ownership verb and added scale"
+    }
+  ],
+  "formatting_flags": [
+    "Multi-column layout detected — Workday and many ATS systems parse left column only",
+    "Table used in skills section — replace with plain comma-separated list"
+  ],
+  "quick_wins": [
+    { "priority": 1, "action": "Add missing keywords Kubernetes, Terraform, and CI/CD" },
+    { "priority": 2, "action": "Remove multi-column layout and convert to single column" },
+    { "priority": 3, "action": "Quantify at least 5 bullet points with numbers, percentages, or scale" }
+  ],
+  "summary": "Strong Python background with relevant experience. Key gaps in DevOps/cloud skills. With targeted keyword additions and bullet point improvements, this resume has strong potential.",
   "ai_provider_used": "OpenRouterProvider",
   "celery_task_id": "abc-123-def",
   "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
@@ -1175,12 +1407,16 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
 | `status`               | string          | `"pending"` / `"processing"` / `"done"` / `"failed"`    |
 | `pipeline_step`        | string          | Current pipeline step (see polling section)              |
 | `error_message`        | string          | Error details (empty on success)                         |
-| `ats_score`            | int \| null     | Overall ATS score 0-100                                  |
-| `ats_score_breakdown`  | object \| null  | `{ keyword_match, format_score, relevance_score }`       |
-| `keyword_gaps`         | string[] \| null| Keywords from JD missing in resume                       |
-| `section_suggestions`  | object \| null  | `{ summary, experience, skills, education, overall }`    |
-| `rewritten_bullets`    | array \| null   | `[{ original, rewritten, reason }]`                      |
-| `overall_assessment`   | string          | 2-3 sentence summary of analysis                         |
+| `overall_grade`        | string          | Letter grade `"A"` through `"F"` (empty if not complete) |
+| `ats_score`            | int \| null     | Generic ATS score 0-100 (same as `scores.generic_ats`)   |
+| `scores`               | object \| null  | `{ generic_ats, workday_ats, greenhouse_ats, keyword_match_percent }` — all integers 0-100 |
+| `ats_disclaimers`      | object \| null  | `{ workday, greenhouse }` — legal disclaimer strings for simulated ATS scores |
+| `keyword_analysis`     | object \| null  | `{ matched_keywords[], missing_keywords[], recommended_to_add[] }` — full keyword breakdown |
+| `section_feedback`     | array \| null   | `[{ section_name, score (0-100), feedback[], ats_flags[] }]` — per-section analysis |
+| `sentence_suggestions` | array \| null   | `[{ original, suggested, reason }]` — up to 10 weak sentences flagged |
+| `formatting_flags`     | string[] \| null| ATS formatting issues found (e.g., multi-column layout, tables) |
+| `quick_wins`           | array \| null   | `[{ priority (1-3), action }]` — always exactly 3 items  |
+| `summary`              | string          | 2-3 sentence overall summary of quality and fit          |
 | `ai_provider_used`     | string          | AI model identifier (e.g., `"OpenRouterProvider"`)       |
 | `celery_task_id`       | string          | Background task ID (for debugging)                       |
 | `report_pdf_url`       | string \| null  | URL to pre-generated PDF report in R2                    |
@@ -1261,6 +1497,8 @@ This means the frontend can **always rely on `jd_role` being populated** on a co
 
 The AI returns the following JSON structure. These fields are stored in `llm_response.parsed_response` **and also flattened** onto the top-level analysis object (so you can access them directly without nesting through `llm_response`).
 
+> **Schema version:** This is the **new schema** introduced in migration `0009_new_llm_schema`. It replaces the old `ats_score_breakdown` / `keyword_gaps` / `section_suggestions` / `rewritten_bullets` / `overall_assessment` structure.
+
 ```json
 {
   "job_metadata": {
@@ -1271,32 +1509,89 @@ The AI returns the following JSON structure. These fields are stored in `llm_res
     "industry": "Technology/SaaS",
     "extra_details": "Remote position. Team of 8 engineers. Series B startup focused on developer tools."
   },
-  "ats_score": 78,
-  "ats_score_breakdown": {
-    "keyword_match": 72,
-    "format_score": 85,
-    "relevance_score": 76
+  "overall_grade": "B",
+  "scores": {
+    "generic_ats": 72,
+    "workday_ats": 61,
+    "greenhouse_ats": 68,
+    "keyword_match_percent": 58
   },
-  "keyword_gaps": [
-    "Kubernetes",
-    "Terraform",
-    "CI/CD"
-  ],
-  "section_suggestions": {
-    "summary": "Add a targeted professional summary highlighting Python and cloud expertise.",
-    "experience": "Quantify achievements with metrics. Use stronger action verbs.",
-    "skills": "Add missing JD keywords: Kubernetes, Terraform, Docker.",
-    "education": "Education section is appropriate and well-formatted.",
-    "overall": "Strong technical profile. Focus on adding DevOps keywords and quantifying impact."
+  "ats_disclaimers": {
+    "workday": "Simulated score based on known Workday parsing behavior. Not affiliated with or endorsed by Workday Inc.",
+    "greenhouse": "Simulated score based on known Greenhouse parsing behavior. Not affiliated with or endorsed by Greenhouse Software."
   },
-  "rewritten_bullets": [
+  "keyword_analysis": {
+    "matched_keywords": ["Python", "SQL", "data analysis", "stakeholder reporting"],
+    "missing_keywords": ["Power BI", "ETL pipelines", "Agile", "data modeling"],
+    "recommended_to_add": [
+      "Add Power BI to skills section under tools",
+      "Mention ETL pipelines in work experience bullet under data engineering role",
+      "Add Agile to work methodology in summary or experience"
+    ]
+  },
+  "section_feedback": [
     {
-      "original": "Worked on backend services",
-      "rewritten": "Architected and maintained 12 Python/Django microservices serving 50K+ DAU, reducing API latency by 40%",
-      "reason": "Added specifics, metrics, and strong action verb"
+      "section_name": "Work Experience",
+      "score": 65,
+      "feedback": [
+        "Most bullets lack quantified impact — add numbers, percentages, or scale",
+        "Action verbs are weak — replace 'worked on' and 'helped with' with owned, led, optimized",
+        "JD mentions stakeholder reporting but resume does not reference any reporting work"
+      ],
+      "ats_flags": [
+        "Non-standard section title 'Professional Journey' — rename to Work Experience for ATS compatibility"
+      ]
+    },
+    {
+      "section_name": "Skills",
+      "score": 70,
+      "feedback": [
+        "Skills are listed but not categorized — group into Technical Skills, Tools, Soft Skills",
+        "Several JD keywords like Power BI and ETL are missing entirely"
+      ],
+      "ats_flags": []
+    },
+    {
+      "section_name": "Summary",
+      "score": 80,
+      "feedback": [
+        "Good keyword presence in summary",
+        "Could be more specific to the target role — mention data analytics explicitly"
+      ],
+      "ats_flags": []
     }
   ],
-  "overall_assessment": "Strong Python background with relevant experience. Key gaps in DevOps/cloud skills. Priority actions: add Kubernetes experience, quantify achievements, add targeted summary."
+  "sentence_suggestions": [
+    {
+      "original": "Worked on building dashboards for the sales team",
+      "suggested": "Developed 5 sales performance dashboards using Python and Tableau, reducing reporting time by 40%",
+      "reason": "Added specificity, quantified impact, and replaced weak verb with action verb"
+    },
+    {
+      "original": "Helped with data cleaning tasks",
+      "suggested": "Automated data cleaning pipelines using Pandas, processing 500K+ records weekly",
+      "reason": "Replaced passive language with ownership verb and added scale to demonstrate impact"
+    }
+  ],
+  "formatting_flags": [
+    "Multi-column layout detected — Workday and many ATS systems parse left column only",
+    "Table used in skills section — replace with plain comma-separated list for ATS safety"
+  ],
+  "quick_wins": [
+    {
+      "priority": 1,
+      "action": "Add missing keywords Power BI, ETL, and Agile — these appear 4+ times in the JD and are completely absent from your resume"
+    },
+    {
+      "priority": 2,
+      "action": "Remove multi-column layout and convert to single column — this is causing your Workday score to drop significantly"
+    },
+    {
+      "priority": 3,
+      "action": "Quantify at least 5 bullet points in Work Experience with numbers, percentages, or scale"
+    }
+  ],
+  "summary": "The resume shows relevant experience for the data analytics role but lacks keyword alignment and quantified achievements that ATS systems and recruiters prioritize. Formatting issues including multi-column layout are significantly hurting ATS parseability. With targeted keyword additions and bullet point improvements, this resume has strong potential to rank higher."
 }
 ```
 
@@ -1304,37 +1599,82 @@ The AI returns the following JSON structure. These fields are stored in `llm_res
 
 | Field | Type | Description |
 |-------|------|-------------|
+| **`job_metadata`** | **object** | **Extracted metadata from the job description** |
 | `job_metadata.job_title` | string | Job title extracted from JD by LLM |
 | `job_metadata.company` | string | Company name (`""` if not found) |
 | `job_metadata.skills` | string | Comma-separated key skills from JD |
 | `job_metadata.experience_years` | int \| null | Required years of experience |
 | `job_metadata.industry` | string | Industry/domain (`""` if unclear) |
 | `job_metadata.extra_details` | string | 2-4 sentence summary of other JD details |
-| `ats_score` | int (0-100) | Overall ATS compatibility score |
-| `ats_score_breakdown.keyword_match` | int (0-100) | How many JD keywords appear in resume |
-| `ats_score_breakdown.format_score` | int (0-100) | Resume structure and readability |
-| `ats_score_breakdown.relevance_score` | int (0-100) | Overall alignment with the role |
-| `keyword_gaps` | string[] | Keywords from JD missing in resume |
-| `section_suggestions.summary` | string | Feedback on summary/objective section |
-| `section_suggestions.experience` | string | Feedback on work experience |
-| `section_suggestions.skills` | string | Feedback on skills section |
-| `section_suggestions.education` | string | Feedback on education section |
-| `section_suggestions.overall` | string | High-level structural feedback |
-| `rewritten_bullets[].original` | string | Original bullet from resume |
-| `rewritten_bullets[].rewritten` | string | Improved version |
-| `rewritten_bullets[].reason` | string | Explanation of what was improved |
-| `overall_assessment` | string | 2-3 sentence summary of strengths, gaps, priorities |
+| **`overall_grade`** | **string** | **Letter grade `"A"`, `"B"`, `"C"`, `"D"`, or `"F"`** |
+| **`scores`** | **object** | **Multi-ATS score breakdown** |
+| `scores.generic_ats` | int (0-100) | General ATS compatibility score (also copied to top-level `ats_score`) |
+| `scores.workday_ats` | int (0-100) | Simulated Workday ATS score based on Workday parsing behavior |
+| `scores.greenhouse_ats` | int (0-100) | Simulated Greenhouse ATS score based on Greenhouse parsing behavior |
+| `scores.keyword_match_percent` | int (0-100) | Percentage of JD keywords found in resume |
+| **`ats_disclaimers`** | **object** | **Legal disclaimers for simulated ATS scores** |
+| `ats_disclaimers.workday` | string | Disclaimer for Workday score (always present) |
+| `ats_disclaimers.greenhouse` | string | Disclaimer for Greenhouse score (always present) |
+| **`keyword_analysis`** | **object** | **Full keyword gap analysis** |
+| `keyword_analysis.matched_keywords` | string[] | JD keywords found in resume |
+| `keyword_analysis.missing_keywords` | string[] | Important JD keywords NOT found in resume |
+| `keyword_analysis.recommended_to_add` | string[] | Actionable recommendations with context (e.g., `"Add SQL to skills section"`) |
+| **`section_feedback`** | **array** | **Per-section analysis (covers every section in the resume)** |
+| `section_feedback[].section_name` | string | Section name (e.g., `"Work Experience"`, `"Skills"`, `"Summary"`) |
+| `section_feedback[].score` | int (0-100) | Section quality score |
+| `section_feedback[].feedback` | string[] | 2-3 specific actionable feedback points |
+| `section_feedback[].ats_flags` | string[] | ATS red flags in this section (empty array if none) |
+| **`sentence_suggestions`** | **array** | **Weak sentences flagged with improvements (max 10)** |
+| `sentence_suggestions[].original` | string | Exact original sentence from resume |
+| `sentence_suggestions[].suggested` | string | Improved version of the sentence |
+| `sentence_suggestions[].reason` | string | Explanation (e.g., `"Restructured to quantify impact and added action verb"`) |
+| **`formatting_flags`** | **string[]** | **ATS formatting issues (e.g., multi-column, tables, images)** |
+| **`quick_wins`** | **array** | **Top 3 priority actions — always exactly 3 items** |
+| `quick_wins[].priority` | int (1-3) | Priority level (1 = highest) |
+| `quick_wins[].action` | string | Specific action to take |
+| **`summary`** | **string** | **2-3 sentence overall summary of resume quality and fit** |
+
+### How flattened fields map to the analysis model
+
+The backend parses `llm_response.parsed_response` and flattens key fields onto the `ResumeAnalysis` model:
+
+| LLM field | Analysis model field | Notes |
+|-----------|---------------------|-------|
+| `overall_grade` | `overall_grade` | Stored as `CharField(max_length=2)` |
+| `scores` | `scores` | Stored as `JSONField` |
+| `scores.generic_ats` | `ats_score` | Copied to legacy int field for dashboard stats |
+| `ats_disclaimers` | `ats_disclaimers` | Stored as `JSONField` |
+| `keyword_analysis` | `keyword_analysis` | Stored as `JSONField` |
+| `section_feedback` | `section_feedback` | Stored as `JSONField` |
+| `sentence_suggestions` | `sentence_suggestions` | Stored as `JSONField` |
+| `formatting_flags` | `formatting_flags` | Stored as `JSONField` |
+| `quick_wins` | `quick_wins` | Stored as `JSONField` |
+| `summary` | `summary` | Stored as `TextField` |
+| `job_metadata.job_title` | `jd_role` | Auto-populated if not already set |
+| `job_metadata.company` | `jd_company` | Auto-populated if not already set |
+| `job_metadata.skills` | `jd_skills` | Auto-populated if not already set |
+| `job_metadata.experience_years` | `jd_experience_years` | Auto-populated if not already set |
+| `job_metadata.industry` | `jd_industry` | Auto-populated if not already set |
+| `job_metadata.extra_details` | `jd_extra_details` | Auto-populated if not already set |
 
 ### Mapping LLM output → UI components
 
 | LLM Field | Suggested UI | Notes |
 |-----------|-------------|-------|
-| `ats_score` | Large circular gauge (0-100) | Color: red < 50, yellow < 75, green >= 75 |
-| `ats_score_breakdown.*` | Three horizontal bars or radial chart | Label each sub-score |
-| `keyword_gaps` | Tag/chip list (red/orange) | Show as "Missing Keywords" section |
-| `section_suggestions.*` | Accordion panels per section | Expandable cards for each resume section |
-| `rewritten_bullets` | Before/after card list | Show original → rewritten with reason |
-| `overall_assessment` | Summary paragraph at top | Use as the "AI Summary" hero text |
+| `overall_grade` | Large letter grade badge (A-F) | Color: A=green, B=blue, C=yellow, D=orange, F=red |
+| `scores.generic_ats` | Primary circular gauge (0-100) | Color: red < 50, yellow < 75, green >= 75 |
+| `scores.workday_ats` | Secondary gauge/bar | Show with Workday disclaimer |
+| `scores.greenhouse_ats` | Secondary gauge/bar | Show with Greenhouse disclaimer |
+| `scores.keyword_match_percent` | Percentage bar | Label "Keyword Match" |
+| `ats_disclaimers.*` | Small italic text beneath ATS scores | Required for legal compliance |
+| `keyword_analysis.matched_keywords` | Tag/chip list (green) | Show as "Matched Keywords" |
+| `keyword_analysis.missing_keywords` | Tag/chip list (red/orange) | Show as "Missing Keywords" |
+| `keyword_analysis.recommended_to_add` | Bullet list with context | Show as actionable checklist |
+| `section_feedback` | Accordion panels per section | Each with score bar + feedback list + ATS flag badges |
+| `sentence_suggestions` | Before/after card list | Show original → suggested with reason |
+| `formatting_flags` | Warning badges/chips | Yellow/orange alert cards |
+| `quick_wins` | Numbered priority list | Priority 1 = red, 2 = orange, 3 = yellow |
+| `summary` | Summary paragraph at top | Use as the "AI Summary" hero text |
 | `job_metadata.*` | Header/metadata card | Show role, company, industry as breadcrumb |
 
 ---
@@ -1640,7 +1980,20 @@ interface User {
   id: number;
   username: string;
   email: string;
-  date_joined: string; // ISO 8601
+  date_joined: string;    // ISO 8601
+  country_code: string;   // e.g., "+91" (default)
+  mobile_number: string;  // digits only, "" if not set
+}
+
+interface NotificationPreferences {
+  job_alerts_email: boolean;
+  job_alerts_mobile: boolean;
+  feature_updates_email: boolean;
+  feature_updates_mobile: boolean;
+  newsletters_email: boolean;
+  newsletters_mobile: boolean;
+  policy_changes_email: boolean;
+  policy_changes_mobile: boolean;
 }
 
 interface AuthTokens {
@@ -1709,6 +2062,7 @@ interface AnalysisListItem {
   jd_company: string;
   status: AnalysisStatus;
   pipeline_step: PipelineStep;
+  overall_grade: string;        // "A" through "F" (empty if not complete)
   ats_score: number | null;
   ai_provider_used: string;
   report_pdf_url: string | null;
@@ -1717,24 +2071,42 @@ interface AnalysisListItem {
   created_at: string;         // ISO 8601
 }
 
-interface ATSScoreBreakdown {
-  keyword_match: number;      // 0-100
-  format_score: number;       // 0-100
-  relevance_score: number;    // 0-100
+// ── New LLM Schema Types ─────────────────────────────────────────────────
+
+interface Scores {
+  generic_ats: number;          // 0-100, general ATS compatibility
+  workday_ats: number;          // 0-100, simulated Workday ATS score
+  greenhouse_ats: number;       // 0-100, simulated Greenhouse ATS score
+  keyword_match_percent: number; // 0-100, % of JD keywords in resume
 }
 
-interface SectionSuggestions {
-  summary: string;
-  experience: string;
-  skills: string;
-  education: string;
-  overall: string;
+interface ATSDisclaimers {
+  workday: string;              // Legal disclaimer for Workday score
+  greenhouse: string;           // Legal disclaimer for Greenhouse score
 }
 
-interface RewrittenBullet {
-  original: string;
-  rewritten: string;
-  reason: string;
+interface KeywordAnalysis {
+  matched_keywords: string[];   // JD keywords found in resume
+  missing_keywords: string[];   // JD keywords NOT found in resume
+  recommended_to_add: string[]; // Actionable recs, e.g. "Add SQL to skills section"
+}
+
+interface SectionFeedbackItem {
+  section_name: string;         // e.g. "Work Experience", "Skills", "Summary"
+  score: number;                // 0-100
+  feedback: string[];           // 2-3 specific actionable points
+  ats_flags: string[];          // ATS red flags (empty array if none)
+}
+
+interface SentenceSuggestion {
+  original: string;             // Exact original sentence from resume
+  suggested: string;            // Improved version
+  reason: string;               // Why the change was made
+}
+
+interface QuickWin {
+  priority: number;             // 1 (highest), 2, or 3
+  action: string;               // Specific action to take
 }
 
 interface ScrapeResult {
@@ -1766,12 +2138,15 @@ interface LLMParsedResponse {
     industry: string;
     extra_details: string;
   };
-  ats_score: number;
-  ats_score_breakdown: ATSScoreBreakdown;
-  keyword_gaps: string[];
-  section_suggestions: SectionSuggestions;
-  rewritten_bullets: RewrittenBullet[];
-  overall_assessment: string;
+  overall_grade: string;                    // "A" through "F"
+  scores: Scores;
+  ats_disclaimers: ATSDisclaimers;
+  keyword_analysis: KeywordAnalysis;
+  section_feedback: SectionFeedbackItem[];
+  sentence_suggestions: SentenceSuggestion[];  // max 10
+  formatting_flags: string[];
+  quick_wins: QuickWin[];                   // always exactly 3
+  summary: string;                          // 2-3 sentence summary
 }
 
 interface AnalysisDetail {
@@ -1793,16 +2168,20 @@ interface AnalysisDetail {
   status: AnalysisStatus;
   pipeline_step: PipelineStep;
   error_message: string;
-  ats_score: number | null;
-  ats_score_breakdown: ATSScoreBreakdown | null;
-  keyword_gaps: string[] | null;
-  section_suggestions: SectionSuggestions | null;
-  rewritten_bullets: RewrittenBullet[] | null;
-  overall_assessment: string;
+  overall_grade: string;                      // "A" through "F"
+  ats_score: number | null;                   // same as scores.generic_ats
+  scores: Scores | null;
+  ats_disclaimers: ATSDisclaimers | null;
+  keyword_analysis: KeywordAnalysis | null;
+  section_feedback: SectionFeedbackItem[] | null;
+  sentence_suggestions: SentenceSuggestion[] | null;
+  formatting_flags: string[] | null;
+  quick_wins: QuickWin[] | null;
+  summary: string;
   ai_provider_used: string;
   celery_task_id: string;
   report_pdf_url: string | null;
-  share_token: string | null;   // UUID
+  share_token: string | null;                 // UUID
   share_url: string | null;
   created_at: string;
   updated_at: string;
@@ -1811,6 +2190,7 @@ interface AnalysisDetail {
 interface AnalysisStatusResponse {
   status: AnalysisStatus;
   pipeline_step: PipelineStep;
+  overall_grade: string;        // "A"-"F" (empty until done)
   ats_score: number | null;
   error_message: string;
 }
@@ -1836,12 +2216,16 @@ interface SharedAnalysis {
   jd_company: string;
   jd_industry: string;
   status: 'done';
-  ats_score: number;
-  ats_score_breakdown: ATSScoreBreakdown;
-  keyword_gaps: string[];
-  section_suggestions: SectionSuggestions;
-  rewritten_bullets: RewrittenBullet[];
-  overall_assessment: string;
+  overall_grade: string;                      // "A" through "F"
+  ats_score: number;                          // same as scores.generic_ats
+  scores: Scores;
+  ats_disclaimers: ATSDisclaimers;
+  keyword_analysis: KeywordAnalysis;
+  section_feedback: SectionFeedbackItem[];
+  sentence_suggestions: SentenceSuggestion[];
+  formatting_flags: string[];
+  quick_wins: QuickWin[];
+  summary: string;
   ai_provider_used: string;
   created_at: string;
 }
@@ -2031,6 +2415,9 @@ function HistoryPage() {
             <span className="ml-2 text-sm text-gray-500">{a.status}</span>
           </div>
           <div>
+            {a.overall_grade && (
+              <span className="mr-2 font-bold text-lg">{a.overall_grade}</span>
+            )}
             {a.ats_score && <span className="font-bold">{a.ats_score}/100</span>}
             <button onClick={() => handleDelete(a.id)} className="ml-4 text-red-500">
               Delete
@@ -2125,7 +2512,62 @@ function ResumesPage() {
 
 ---
 
-## 18. Quick Reference — All Endpoints
+## 18. Email Templates (Admin)
+
+Email templates are stored in the database (`EmailTemplate` model) and managed via Django Admin. They use **Django template syntax** for variable substitution.
+
+### Model Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slug` | `SlugField` (unique) | Lookup key used in code (e.g., `"password-reset"`) |
+| `name` | `CharField(200)` | Human-readable name (admin display) |
+| `category` | `CharField(20)` | One of: `auth`, `notification`, `marketing`, `system` |
+| `subject` | `CharField(255)` | Email subject line — supports `{{ variables }}` |
+| `html_body` | `TextField` | HTML email body — supports `{{ variables }}` |
+| `plain_text_body` | `TextField` | Plain-text fallback (auto-generated from HTML if blank) |
+| `description` | `CharField(500)` | Internal note explaining when the template is used |
+| `is_active` | `BooleanField` | Inactive templates cannot be sent |
+| `created_at` | `DateTimeField` | Auto-set on creation |
+| `updated_at` | `DateTimeField` | Auto-set on save |
+
+### Default Templates
+
+Seeded via `python manage.py seed_email_templates` (idempotent — safe to re-run).
+
+| Slug | Category | Trigger | Template Variables |
+|------|----------|---------|--------------------|
+| `password-reset` | `auth` | `POST /api/auth/forgot-password/` | `{{ username }}`, `{{ reset_link }}`, `{{ expiry_hours }}`, `{{ app_name }}` |
+| `welcome` | `auth` | `POST /api/auth/register/` | `{{ username }}`, `{{ frontend_url }}`, `{{ app_name }}` |
+| `password-changed` | `auth` | `POST /api/auth/change-password/` | `{{ username }}`, `{{ changed_at }}`, `{{ app_name }}` |
+
+### Auto-injected Variables
+
+These variables are available in **every** template without explicitly passing them:
+
+| Variable | Source | Example |
+|----------|--------|---------|
+| `{{ app_name }}` | Hardcoded in `email_utils.py` | `"i-Luffy"` |
+| `{{ frontend_url }}` | `FRONTEND_URL` setting | `"http://localhost:5173"` |
+| `{{ support_email }}` | `DEFAULT_FROM_EMAIL` setting | `"luffy@invrsys.com"` |
+
+### Usage in Code
+
+```python
+from accounts.email_utils import send_templated_email
+
+send_templated_email(
+    slug='password-reset',
+    recipient='user@example.com',
+    context={'username': 'john', 'reset_link': 'https://...', 'expiry_hours': '1'},
+)
+```
+
+> **Adding new templates:** Create in Django Admin → use `send_templated_email(slug='your-slug', ...)` in views. Templates are editable without code deploys.
+
+---
+
+## 19. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -2138,6 +2580,10 @@ function ResumesPage() {
 | PUT | `/api/auth/me/` | ✅ | User (30/hr) | Update username/email |
 | DELETE | `/api/auth/me/` | ✅ | User (30/hr) | Delete account permanently |
 | POST | `/api/auth/change-password/` | ✅ | User (30/hr) | Change password |
+| POST | `/api/auth/forgot-password/` | ❌ | User (30/hr) | Request password reset email |
+| POST | `/api/auth/reset-password/` | ❌ | User (30/hr) | Set new password with reset token |
+| GET | `/api/auth/notifications/` | ✅ | User (30/hr) | Get notification preferences |
+| PUT | `/api/auth/notifications/` | ✅ | User (30/hr) | Update notification preferences |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
 | GET | `/api/analyses/` | ✅ | None | List analyses (paginated) |
