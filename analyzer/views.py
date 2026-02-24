@@ -200,19 +200,26 @@ class AnalysisPDFExportView(APIView):
             return redirect(analysis.report_pdf.url)
 
         # Fallback: generate on-the-fly (e.g. for older analyses before migration)
-        from .services.pdf_report import render_analysis_pdf_html
-        import weasyprint
+        try:
+            from .services.pdf_report import render_analysis_pdf_html
+            import weasyprint
 
-        html_string = render_analysis_pdf_html(analysis)
-        pdf_bytes = weasyprint.HTML(string=html_string).write_pdf()
+            html_string = render_analysis_pdf_html(analysis)
+            pdf_bytes = weasyprint.HTML(string=html_string).write_pdf()
 
-        role_slug = (analysis.jd_role or 'analysis').replace(' ', '_')[:30]
-        filename = f'resume_ai_{role_slug}_{analysis.pk}.pdf'
+            role_slug = (analysis.jd_role or 'analysis').replace(' ', '_')[:30]
+            filename = f'resume_ai_{role_slug}_{analysis.pk}.pdf'
 
-        from django.http import HttpResponse
-        response = HttpResponse(pdf_bytes, content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        return response
+            from django.http import HttpResponse
+            response = HttpResponse(pdf_bytes, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+        except Exception:
+            logger.exception('On-the-fly PDF generation failed for analysis %s', pk)
+            return Response(
+                {'detail': 'PDF generation failed. Please try again later.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
 
 class AnalysisStatusView(APIView):

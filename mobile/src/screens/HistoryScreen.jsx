@@ -61,7 +61,7 @@ export default function HistoryScreen({ navigation }) {
   const fetchData = useCallback(async () => {
     try {
       const { data } = await api.get('/analyses/')
-      setAnalyses(data)
+      setAnalyses(Array.isArray(data) ? data : data.results ?? [])
     } catch {
       // keep existing data on refresh failure
     }

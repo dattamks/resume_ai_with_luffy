@@ -36,13 +36,14 @@ export default function AccountScreen() {
 
   useEffect(() => {
     api.get('/analyses/').then(({ data }) => {
-      const done = data.filter((a) => a.status === 'done' && a.ats_score != null)
+      const list = Array.isArray(data) ? data : data.results ?? []
+      const done = list.filter((a) => a.status === 'done' && a.ats_score != null)
       const best = done.length > 0 ? Math.max(...done.map((a) => a.ats_score)) : null
       const avg =
         done.length > 0
           ? Math.round(done.reduce((s, a) => s + a.ats_score, 0) / done.length)
           : null
-      setStats({ total: data.length, best, avg })
+      setStats({ total: list.length, best, avg })
     }).catch(() => {})
   }, [])
 
