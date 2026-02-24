@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-23 &nbsp;|&nbsp; **API version:** v0.9.0
+> **Last updated:** 2026-02-24 &nbsp;|&nbsp; **API version:** v0.10.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -24,8 +24,9 @@
 15. [Error Handling Reference](#15-error-handling-reference)
 16. [TypeScript Type Definitions](#16-typescript-type-definitions)
 17. [Frontend Integration Recipes](#17-frontend-integration-recipes)
-18. [Email Templates (Admin)](#18-email-templates-admin)
-19. [Quick Reference — All Endpoints](#19-quick-reference--all-endpoints)
+18. [Plans (Admin-Managed)](#18-plans-admin-managed)
+19. [Email Templates (Admin)](#19-email-templates-admin)
+20. [Quick Reference — All Endpoints](#20-quick-reference--all-endpoints)
 
 ---
 
@@ -184,7 +185,7 @@ All prefixed with `/api/auth/`.
 
 ### POST `/api/auth/register/` — Create Account
 
-🔓 Public — no auth required.
+🔓 Public — no auth required. **Throttled:** `auth` scope (20/hour per IP).
 
 Creates a new user account and returns tokens immediately (auto-login).
 
@@ -207,7 +208,24 @@ Creates a new user account and returns tokens immediately (auto-login).
     "email": "john@example.com",
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
-    "mobile_number": ""
+    "mobile_number": "",
+    "plan": {
+      "id": 1,
+      "name": "Free",
+      "slug": "free",
+      "description": "Get started with basic resume analysis.",
+      "billing_cycle": "free",
+      "price": "0.00",
+      "analyses_per_month": 0,
+      "api_rate_per_hour": 200,
+      "max_resume_size_mb": 5,
+      "max_resumes_stored": 5,
+      "pdf_export": true,
+      "share_analysis": true,
+      "job_tracking": true,
+      "priority_queue": false,
+      "email_support": false
+    }
   },
   "access": "<jwt_access_token>",
   "refresh": "<jwt_refresh_token>"
@@ -229,7 +247,7 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 ### POST `/api/auth/login/` — Sign In
 
-🔓 Public — no auth required.
+🔓 Public — no auth required. **Throttled:** `auth` scope (20/hour per IP).
 
 **Request:**
 ```json
@@ -250,7 +268,8 @@ Creates a new user account and returns tokens immediately (auto-login).
     "email": "john@example.com",
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
-    "mobile_number": ""
+    "mobile_number": "",
+    "plan": { "id": 1, "name": "Free", "slug": "free", "...":  "..." }
   }
 }
 ```
@@ -283,7 +302,7 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 ### GET `/api/auth/me/` — Current User Profile
 
-🔒 Requires auth. Returns the currently authenticated user's profile.
+🔒 Requires auth. Returns the currently authenticated user's profile including phone fields and plan.
 
 **Response (200):**
 ```json
@@ -291,9 +310,30 @@ Creates a new user account and returns tokens immediately (auto-login).
   "id": 1,
   "username": "john",
   "email": "john@example.com",
-  "date_joined": "2026-02-22T10:00:00Z"
+  "date_joined": "2026-02-22T10:00:00Z",
+  "country_code": "+91",
+  "mobile_number": "",
+  "plan": {
+    "id": 1,
+    "name": "Free",
+    "slug": "free",
+    "description": "Get started with basic resume analysis.",
+    "billing_cycle": "free",
+    "price": "0.00",
+    "analyses_per_month": 0,
+    "api_rate_per_hour": 200,
+    "max_resume_size_mb": 5,
+    "max_resumes_stored": 5,
+    "pdf_export": true,
+    "share_analysis": true,
+    "job_tracking": true,
+    "priority_queue": false,
+    "email_support": false
+  }
 }
 ```
+
+> **`plan`** is `null` if the user has no plan assigned (shouldn't happen — new users auto-get the "Free" plan).
 
 Use this on app load to verify the stored token is still valid and hydrate user state.
 
@@ -301,11 +341,16 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ### PUT `/api/auth/me/` — Update Profile
 
-🔒 Requires auth. Update the current user's username and/or email. Partial updates are supported (send only the fields you want to change).
+🔒 Requires auth. Update the current user's username, email, and/or phone fields. Partial updates are supported (send only the fields you want to change).
 
 **Request (JSON):**
 ```json
-{ "username": "new_name", "email": "new@example.com" }
+{
+  "username": "new_name",
+  "email": "new@example.com",
+  "country_code": "+1",
+  "mobile_number": "5551234567"
+}
 ```
 
 **Response (200):**
@@ -314,7 +359,10 @@ Use this on app load to verify the stored token is still valid and hydrate user 
   "id": 1,
   "username": "new_name",
   "email": "new@example.com",
-  "date_joined": "2026-02-22T10:00:00Z"
+  "date_joined": "2026-02-22T10:00:00Z",
+  "country_code": "+1",
+  "mobile_number": "5551234567",
+  "plan": { "id": 1, "name": "Free", "slug": "free", "...": "..." }
 }
 ```
 
@@ -378,7 +426,7 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ### POST `/api/auth/forgot-password/` — Request Password Reset
 
-🔓 Public — no auth header required.
+🔓 Public — no auth header required. **Throttled:** `auth` scope (20/hour per IP).
 
 Sends a password reset email containing a one-time link with a `uid` and `token`. The link points to the frontend route `/reset-password?uid=<uid>&token=<token>`. **Always returns 200** — this is intentional; the API never reveals whether an email address is registered.
 
@@ -407,7 +455,7 @@ Sends a password reset email containing a one-time link with a `uid` and `token`
 
 ### POST `/api/auth/reset-password/` — Set New Password
 
-🔓 Public — no auth header required.
+🔓 Public — no auth header required. **Throttled:** `auth` scope (20/hour per IP).
 
 Validates the `uid` + `token` from the reset email and sets a new password. The frontend should extract `uid` and `token` from the URL query params and submit them here along with the new password.
 
@@ -625,7 +673,7 @@ const { data } = await api.post('/analyze/', {
 
 ### GET `/api/analyses/` — List Analyses (Paginated)
 
-🔒 Requires auth. Not throttled. Returns **paginated** list of the user's own analyses, newest first.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns **paginated** list of the user's own analyses, newest first.
 
 Only returns **active** (non-soft-deleted) analyses.
 
@@ -681,7 +729,7 @@ Only returns **active** (non-soft-deleted) analyses.
 
 ### GET `/api/analyses/<id>/` — Analysis Detail
 
-🔒 Requires auth. Not throttled. Returns the full analysis with all results, nested scrape result, and LLM response.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns the full analysis with all results, nested scrape result, and LLM response.
 
 Returns 404 if the analysis is soft-deleted or belongs to another user.
 
@@ -691,7 +739,7 @@ Returns 404 if the analysis is soft-deleted or belongs to another user.
 
 ### GET `/api/analyses/<id>/status/` — Poll Status (Lightweight)
 
-🔒 Requires auth. Not throttled. Ultra-fast polling endpoint — reads from Redis cache first, falls back to DB.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Ultra-fast polling endpoint — reads from Redis cache first, falls back to DB.
 
 **Response (200):**
 ```json
@@ -718,7 +766,7 @@ See [Polling for Analysis Status](#14-polling-for-analysis-status) for the full 
 
 ### POST `/api/analyses/<id>/retry/` — Retry Failed Analysis
 
-🔒 Requires auth. **Throttled:** 10/hour (shares the `analyze` throttle scope).
+🔒 Requires auth. **Throttled:** `analyze` scope (10/hour per user).
 
 Retries a failed analysis from its last incomplete pipeline step. Does not require re-uploading the resume.
 
@@ -747,7 +795,7 @@ After receiving 202, begin [polling for status](#14-polling-for-analysis-status)
 
 ### DELETE `/api/analyses/<id>/delete/` — Soft-Delete Analysis
 
-🔒 Requires auth. Not throttled.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour).
 
 Performs a **soft-delete** — the analysis row is preserved in the database with lightweight metadata for analytics, but is removed from all list/detail views.
 
@@ -770,7 +818,7 @@ Performs a **soft-delete** — the analysis row is preserved in the database wit
 
 ### GET `/api/analyses/<id>/export-pdf/` — Download PDF Report
 
-🔒 Requires auth. Not throttled.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour).
 
 If a pre-generated PDF exists (stored in Cloudflare R2), returns a **302 redirect** to the signed URL. Otherwise generates on-the-fly and returns the PDF bytes directly.
 
@@ -814,7 +862,7 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 
 ### GET `/api/resumes/` — List Resumes (Paginated)
 
-🔒 Requires auth. Not throttled. Returns **paginated** list of the user's deduplicated resume files, newest first.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns **paginated** list of the user's deduplicated resume files, newest first.
 
 **Query parameters:**
 
@@ -866,7 +914,7 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 
 ### DELETE `/api/resumes/<uuid:id>/` — Delete Resume
 
-🔒 Requires auth. Not throttled. Permanently deletes the resume file from R2 storage.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Permanently deletes the resume file from R2 storage.
 
 **Blocked if active analyses exist.** Only allowed when `active_analysis_count === 0` (no active, non-soft-deleted analyses reference this resume). If active analyses exist, returns **409 Conflict**.
 
@@ -904,7 +952,7 @@ try {
 
 ### GET `/api/dashboard/stats/` — User Dashboard Analytics
 
-🔒 Requires auth. Not throttled. Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail.
 
 **Response (200):**
 ```json
@@ -995,7 +1043,7 @@ Allow users to generate a public, read-only link for a completed analysis. Anyon
 
 ### POST `/api/analyses/<id>/share/` — Generate Share Link
 
-🔒 Requires auth. Not throttled. Only works on **completed** (`status: "done"`) analyses.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Only works on **completed** (`status: "done"`) analyses.
 
 **Idempotent:** If a share token already exists, returns the existing token (200). Otherwise creates a new one (201).
 
@@ -1028,7 +1076,7 @@ showToast('Share link copied!');
 
 ### DELETE `/api/analyses/<id>/share/` — Revoke Share Link
 
-🔒 Requires auth. Not throttled. Immediately revokes the share token — the public link stops working.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Immediately revokes the share token — the public link stops working.
 
 **Request:** Empty body.
 
@@ -1144,7 +1192,7 @@ Track job postings found on the internet. Jobs are linked to a user and optional
 
 ### GET `/api/jobs/` — List Tracked Jobs
 
-🔒 Requires auth. Not throttled. Returns all tracked jobs for the user, newest first.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns all tracked jobs for the user, newest first.
 
 **Query parameters:**
 
@@ -1729,10 +1777,15 @@ const { items, totalPages, hasNext } = await fetchPage('/analyses/', 1);
 
 ## 13. Rate Limiting
 
-| Scope                     | Default Limit | Env Var Override         |
-|---------------------------|---------------|--------------------------|
-| General API (per user)    | 30 / hour     | `USER_THROTTLE_RATE`     |
-| Analyze + Retry endpoints | 10 / hour     | `ANALYZE_THROTTLE_RATE`  |
+Every endpoint is throttled. Five scopes exist, each overridable via environment variable:
+
+| Scope | Default Limit | Env Var Override | Applied To |
+|-------|---------------|------------------|------------|
+| `anon` (IP-based) | 60 / hour | `ANON_THROTTLE_RATE` | All unauthenticated requests (global default) |
+| `user` (per user) | 200 / hour | `USER_THROTTLE_RATE` | All authenticated requests (global default) |
+| `auth` (IP-based) | 20 / hour | `AUTH_THROTTLE_RATE` | Register, Login, Forgot-password, Reset-password |
+| `analyze` (per user) | 10 / hour | `ANALYZE_THROTTLE_RATE` | `POST /api/analyze/`, `POST /api/analyses/<id>/retry/` |
+| `readonly` (per user) | 120 / hour | `READONLY_THROTTLE_RATE` | All authenticated read/write endpoints except analyze |
 
 When rate-limited, the API returns:
 
@@ -1746,18 +1799,8 @@ Retry-After: 120
 ```
 
 **Exempt endpoints (no throttle applied):**
-- `GET /api/analyses/` — list analyses
-- `GET /api/analyses/<id>/` — analysis detail
-- `GET /api/analyses/<id>/status/` — polling
-- `DELETE /api/analyses/<id>/delete/` — soft-delete
-- `GET /api/analyses/<id>/export-pdf/` — PDF export
-- `GET /api/resumes/` — list resumes
-- `DELETE /api/resumes/<uuid:id>/` — delete resume
-- `GET /api/dashboard/stats/` — dashboard analytics
-- `POST /api/analyses/<id>/share/` — generate share link
-- `DELETE /api/analyses/<id>/share/` — revoke share link
-- `GET /api/shared/<token>/` — public shared analysis
-- `GET /api/health/` — health check
+- `GET /api/health/` — health check (must always respond)
+- `GET /api/shared/<token>/` — public shared analysis (uses default `anon` scope only)
 
 **Frontend handling:**
 ```js
@@ -2512,7 +2555,77 @@ function ResumesPage() {
 
 ---
 
-## 18. Email Templates (Admin)
+## 18. Plans (Admin-Managed)
+
+Plans define subscription tiers with quotas, rate limits, and feature flags. They are managed via Django Admin and assigned to users via `UserProfile.plan` (FK). New users auto-receive the **Free** plan on registration.
+
+### Plan Model Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `int` | Primary key |
+| `name` | `CharField(50)` | Display name (e.g., "Free", "Pro") |
+| `slug` | `SlugField(50)` | Code identifier (e.g., `"free"`, `"pro"`) |
+| `description` | `CharField(500)` | Short description shown to users |
+| `billing_cycle` | `CharField(10)` | One of: `free`, `monthly`, `yearly`, `lifetime` |
+| `price` | `DecimalField(8,2)` | Price in INR (`0.00` for free tier) |
+| `analyses_per_month` | `int` | Max analyses per month (`0` = unlimited) |
+| `api_rate_per_hour` | `int` | Max general API requests per hour |
+| `max_resume_size_mb` | `int` | Max resume file size in MB |
+| `max_resumes_stored` | `int` | Max resumes stored at once (`0` = unlimited) |
+| `pdf_export` | `bool` | Can export analysis as PDF |
+| `share_analysis` | `bool` | Can generate public share links |
+| `job_tracking` | `bool` | Can use job tracking features |
+| `priority_queue` | `bool` | Analyses processed in priority Celery queue |
+| `email_support` | `bool` | Has access to email support |
+| `is_active` | `bool` | Inactive plans cannot be assigned to new users |
+| `display_order` | `int` | Sort order on pricing page (lower = first) |
+
+### Default Plans
+
+Seeded via `python manage.py seed_plans` (idempotent — safe to re-run).
+
+| Name | Slug | Price | Rate | Resumes | Features |
+|------|------|-------|------|---------|----------|
+| **Free** | `free` | ₹0 | 200/hr | 5 stored, 5MB max | PDF export, share, jobs |
+| **Pro** | `pro` | ₹499/mo | 500/hr | Unlimited, 10MB max | All Free + priority queue + email support |
+
+### Plan in User Responses
+
+The `plan` object is included in all user-facing responses (`register`, `login`, `GET /me/`, `PUT /me/`):
+
+```json
+{
+  "id": 1,
+  "username": "john",
+  "...": "...",
+  "plan": {
+    "id": 1,
+    "name": "Free",
+    "slug": "free",
+    "description": "Get started with basic resume analysis.",
+    "billing_cycle": "free",
+    "price": "0.00",
+    "analyses_per_month": 0,
+    "api_rate_per_hour": 200,
+    "max_resume_size_mb": 5,
+    "max_resumes_stored": 5,
+    "pdf_export": true,
+    "share_analysis": true,
+    "job_tracking": true,
+    "priority_queue": false,
+    "email_support": false
+  }
+}
+```
+
+> **`plan` is `null`** if no plan is assigned (edge case — all new users auto-get "Free"). Frontend should treat `null` as free tier defaults.
+
+> **Note:** Plan limits are not yet enforced server-side. The model is in place for a future wallet/Stripe-based upgrade system. Frontend can use `plan` fields to show UI hints (e.g., "Upgrade to Pro for priority processing").
+
+---
+
+## 19. Email Templates (Admin)
 
 Email templates are stored in the database (`EmailTemplate` model) and managed via Django Admin. They use **Django template syntax** for variable substitution.
 
@@ -2567,47 +2680,47 @@ send_templated_email(
 
 ---
 
-## 19. Quick Reference — All Endpoints
+## 20. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
 | **Auth** |||||
-| POST | `/api/auth/register/` | ❌ | User (30/hr) | Create account + auto-login |
-| POST | `/api/auth/login/` | ❌ | User (30/hr) | Get JWT tokens |
-| POST | `/api/auth/logout/` | ✅ | User (30/hr) | Blacklist refresh token |
-| POST | `/api/auth/token/refresh/` | ❌ | User (30/hr) | Refresh JWT tokens |
-| GET | `/api/auth/me/` | ✅ | User (30/hr) | Current user profile |
-| PUT | `/api/auth/me/` | ✅ | User (30/hr) | Update username/email |
-| DELETE | `/api/auth/me/` | ✅ | User (30/hr) | Delete account permanently |
-| POST | `/api/auth/change-password/` | ✅ | User (30/hr) | Change password |
-| POST | `/api/auth/forgot-password/` | ❌ | User (30/hr) | Request password reset email |
-| POST | `/api/auth/reset-password/` | ❌ | User (30/hr) | Set new password with reset token |
-| GET | `/api/auth/notifications/` | ✅ | User (30/hr) | Get notification preferences |
-| PUT | `/api/auth/notifications/` | ✅ | User (30/hr) | Update notification preferences |
+| POST | `/api/auth/register/` | ❌ | Auth (20/hr IP) | Create account + auto-login |
+| POST | `/api/auth/login/` | ❌ | Auth (20/hr IP) | Get JWT tokens |
+| POST | `/api/auth/logout/` | ✅ | User (200/hr) | Blacklist refresh token |
+| POST | `/api/auth/token/refresh/` | ❌ | Anon (60/hr IP) | Refresh JWT tokens |
+| GET | `/api/auth/me/` | ✅ | User (200/hr) | Current user profile + plan |
+| PUT | `/api/auth/me/` | ✅ | User (200/hr) | Update username/email/phone |
+| DELETE | `/api/auth/me/` | ✅ | User (200/hr) | Delete account permanently |
+| POST | `/api/auth/change-password/` | ✅ | User (200/hr) | Change password |
+| POST | `/api/auth/forgot-password/` | ❌ | Auth (20/hr IP) | Request password reset email |
+| POST | `/api/auth/reset-password/` | ❌ | Auth (20/hr IP) | Set new password with reset token |
+| GET | `/api/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
+| PUT | `/api/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
-| GET | `/api/analyses/` | ✅ | None | List analyses (paginated) |
-| GET | `/api/analyses/<id>/` | ✅ | None | Full analysis detail |
-| GET | `/api/analyses/<id>/status/` | ✅ | None | Poll status (lightweight) |
+| GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (paginated) |
+| GET | `/api/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
+| GET | `/api/analyses/<id>/status/` | ✅ | Readonly (120/hr) | Poll status (lightweight) |
 | POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
-| DELETE | `/api/analyses/<id>/delete/` | ✅ | None | Soft-delete analysis |
-| GET | `/api/analyses/<id>/export-pdf/` | ✅ | None | Download PDF report |
-| POST | `/api/analyses/<id>/share/` | ✅ | None | Generate public share link |
-| DELETE | `/api/analyses/<id>/share/` | ✅ | None | Revoke share link |
+| DELETE | `/api/analyses/<id>/delete/` | ✅ | Readonly (120/hr) | Soft-delete analysis |
+| GET | `/api/analyses/<id>/export-pdf/` | ✅ | Readonly (120/hr) | Download PDF report |
+| POST | `/api/analyses/<id>/share/` | ✅ | Readonly (120/hr) | Generate public share link |
+| DELETE | `/api/analyses/<id>/share/` | ✅ | Readonly (120/hr) | Revoke share link |
 | **Resume** |||||
-| GET | `/api/resumes/` | ✅ | None | List resumes (with `file_url` for download) |
-| DELETE | `/api/resumes/<uuid:id>/` | ✅ | None | Delete resume file (blocked if in use) |
+| GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (with `file_url` for download) |
+| DELETE | `/api/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
 | **Jobs** |||||
-| GET | `/api/jobs/` | ✅ | None | List tracked jobs (filterable by `?relevance=`) |
-| POST | `/api/jobs/` | ✅ | None | Create tracked job |
-| GET | `/api/jobs/<uuid:id>/` | ✅ | None | Retrieve single job |
-| DELETE | `/api/jobs/<uuid:id>/` | ✅ | None | Delete tracked job |
-| POST | `/api/jobs/<uuid:id>/relevant/` | ✅ | None | Mark job as relevant |
-| POST | `/api/jobs/<uuid:id>/irrelevant/` | ✅ | None | Mark job as irrelevant |
+| GET | `/api/jobs/` | ✅ | Readonly (120/hr) | List tracked jobs (filterable by `?relevance=`) |
+| POST | `/api/jobs/` | ✅ | Readonly (120/hr) | Create tracked job |
+| GET | `/api/jobs/<uuid:id>/` | ✅ | Readonly (120/hr) | Retrieve single job |
+| DELETE | `/api/jobs/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete tracked job |
+| POST | `/api/jobs/<uuid:id>/relevant/` | ✅ | Readonly (120/hr) | Mark job as relevant |
+| POST | `/api/jobs/<uuid:id>/irrelevant/` | ✅ | Readonly (120/hr) | Mark job as irrelevant |
 | **Dashboard** |||||
-| GET | `/api/dashboard/stats/` | ✅ | None | User analytics & trends |
+| GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends |
 | **Share** |||||
-| GET | `/api/shared/<uuid:token>/` | ❌ | None | Public read-only shared analysis |
+| GET | `/api/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
 | **System** |||||
 | GET | `/api/health/` | ❌ | None | Health check |
 
