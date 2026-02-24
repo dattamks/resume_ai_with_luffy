@@ -1,13 +1,14 @@
 # System packages required by WeasyPrint for PDF generation.
 # Railway's Nixpacks builder reads this file during the build phase.
+# Uses nixPkgs (not aptPkgs) so libraries are on the Nix LD path.
 [phases.setup]
-aptPkgs = [
-  "libpango-1.0-0",
-  "libpangocairo-1.0-0",
-  "libpangoft2-1.0-0",
-  "libcairo2",
-  "libgdk-pixbuf-2.0-0",
-  "libffi-dev",
-  "libglib2.0-0",
+nixPkgs = [
+  "pango",
+  "cairo",
+  "gdk-pixbuf",
+  "glib",
+  "fontconfig",
+  "freetype",
+  "harfbuzz",
   "shared-mime-info",
 ]
