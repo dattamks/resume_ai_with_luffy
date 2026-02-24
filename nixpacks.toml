@@ -1,14 +1,22 @@
 # System packages required by WeasyPrint for PDF generation.
 # Railway's Nixpacks builder reads this file during the build phase.
-# Uses nixPkgs (not aptPkgs) so libraries are on the Nix LD path.
+#
+# aptPkgs installs Debian packages alongside the Nix-managed Python.
+# LD_LIBRARY_PATH must include /usr/lib paths so ctypes/cffi can
+# find the shared objects at runtime (Nix env doesn't search /usr/lib
+# by default).
 [phases.setup]
-nixPkgs = [
-  "pango",
-  "cairo",
-  "gdk-pixbuf",
-  "glib",
-  "fontconfig",
-  "freetype",
-  "harfbuzz",
+aptPkgs = [
+  "libpango-1.0-0",
+  "libpangocairo-1.0-0",
+  "libpangoft2-1.0-0",
+  "libcairo2",
+  "libgdk-pixbuf-2.0-0",
+  "libffi-dev",
+  "libglib2.0-0",
   "shared-mime-info",
 ]
+
+[variables]
+LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/usr/lib"
+GDK_PIXBUF_MODULE_FILE = "/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
