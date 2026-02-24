@@ -2,9 +2,8 @@
 # Railway's Nixpacks builder reads this file during the build phase.
 #
 # aptPkgs installs Debian packages alongside the Nix-managed Python.
-# LD_LIBRARY_PATH must include /usr/lib paths so ctypes/cffi can
-# find the shared objects at runtime (Nix env doesn't search /usr/lib
-# by default).
+# LD_LIBRARY_PATH is set at runtime in entrypoint.sh (not here) to
+# avoid poisoning the Nix-managed Python during the build phase.
 [phases.setup]
 aptPkgs = [
   "libpango-1.0-0",
@@ -16,7 +15,3 @@ aptPkgs = [
   "libglib2.0-0",
   "shared-mime-info",
 ]
-
-[variables]
-LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/usr/lib"
-GDK_PIXBUF_MODULE_FILE = "/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"

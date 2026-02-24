@@ -7,6 +7,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
+# WeasyPrint (PDF generation) needs system libs installed via aptPkgs
+# in nixpacks.toml. The Nix env doesn't search /usr/lib by default,
+# so we add it to LD_LIBRARY_PATH at runtime (not build time).
+export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GDK_PIXBUF_MODULE_FILE="/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+
 case "${SERVICE_TYPE}" in
   web)
     echo "▶ Starting web service (gunicorn)…"
