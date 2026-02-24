@@ -5,7 +5,6 @@ Tests for profile management endpoints:
   POST   /api/auth/change-password/ — Change password
 """
 from django.contrib.auth.models import User
-from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient

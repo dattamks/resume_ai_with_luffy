@@ -7,9 +7,7 @@ Tasks:
   - cleanup_stale_analyses: Periodic — mark hung analyses as failed
   - flush_expired_tokens: Periodic — purge expired JWT blacklist entries
 """
-import io
 import logging
-import time
 
 from celery import shared_task
 from django.core.cache import cache

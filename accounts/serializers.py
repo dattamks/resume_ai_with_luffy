@@ -5,7 +5,22 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import UserProfile, NotificationPreference
+from .models import UserProfile, NotificationPreference, Plan
+
+
+class PlanSerializer(serializers.ModelSerializer):
+    """Read-only serializer for plan details exposed in user profile."""
+
+    class Meta:
+        model = Plan
+        fields = (
+            'id', 'name', 'slug', 'description', 'billing_cycle', 'price',
+            'analyses_per_month', 'api_rate_per_hour',
+            'max_resume_size_mb', 'max_resumes_stored',
+            'pdf_export', 'share_analysis', 'job_tracking',
+            'priority_queue', 'email_support',
+        )
+        read_only_fields = fields
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -52,10 +67,18 @@ class UserSerializer(serializers.ModelSerializer):
     """Read-only serializer for user info + profile (phone) fields."""
     country_code = serializers.CharField(source='profile.country_code', read_only=True)
     mobile_number = serializers.CharField(source='profile.mobile_number', read_only=True)
+    plan = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'date_joined', 'country_code', 'mobile_number')
+        fields = ('id', 'username', 'email', 'date_joined', 'country_code', 'mobile_number', 'plan')
+
+    def get_plan(self, obj):
+        """Return plan details or None if no plan assigned."""
+        profile = getattr(obj, 'profile', None)
+        if profile and profile.plan:
+            return PlanSerializer(profile.plan).data
+        return None
 
 
 class UpdateUserSerializer(serializers.ModelSerializer):

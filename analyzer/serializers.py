@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from django.conf import settings
-from django.db.models import Count
 
 from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job
 

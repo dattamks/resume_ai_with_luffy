@@ -11,6 +11,8 @@ case "${SERVICE_TYPE}" in
   web)
     echo "▶ Starting web service (gunicorn)…"
     python manage.py migrate --noinput
+    python manage.py seed_email_templates
+    python manage.py seed_plans
     exec gunicorn resume_ai.wsgi:application \
       --bind "0.0.0.0:${PORT:-8000}" \
       --workers "${GUNICORN_WORKERS:-2}" \

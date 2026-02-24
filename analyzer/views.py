@@ -2,17 +2,17 @@ import logging
 import uuid
 
 from django.core.cache import cache
-from django.db.models import Avg, Count, F, Q
+from django.db.models import Avg, Count, Q
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
+from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle
 from .models import ResumeAnalysis, Resume, Job
 from .serializers import (
     ResumeAnalysisCreateSerializer,
@@ -26,11 +26,6 @@ from .serializers import (
 from .tasks import run_analysis_task
 
 logger = logging.getLogger('analyzer')
-
-
-class AnalyzeThrottle(UserRateThrottle):
-    """Separate, stricter throttle for the expensive AI analysis endpoint."""
-    scope = 'analyze'
 
 
 class AnalyzeResumeView(APIView):
@@ -130,7 +125,7 @@ class AnalysisListView(ListAPIView):
     List all analyses for the authenticated user (paginated).
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []  # read-only, no throttle
+    throttle_classes = [ReadOnlyThrottle]
     serializer_class = ResumeAnalysisListSerializer
 
     def get_queryset(self):
@@ -143,7 +138,7 @@ class AnalysisDetailView(RetrieveAPIView):
     Retrieve full details of a single analysis.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []  # read-only, no throttle (used by polling)
+    throttle_classes = [ReadOnlyThrottle]
     serializer_class = ResumeAnalysisDetailSerializer
 
     def get_queryset(self):
@@ -162,7 +157,7 @@ class AnalysisDeleteView(APIView):
     Keeps lightweight metadata (ats_score, jd_role, etc.) for analytics.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def delete(self, request, pk):
         try:
@@ -185,7 +180,7 @@ class AnalysisPDFExportView(APIView):
     Return the pre-generated PDF from R2, or generate on-the-fly as fallback.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request, pk):
         try:
@@ -227,7 +222,7 @@ class AnalysisStatusView(APIView):
     falls back to DB. Returns minimal payload for polling.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request, pk):
         # Try Redis cache first (set by Celery task) — scoped by user to prevent data leakage
@@ -264,7 +259,7 @@ class ResumeListView(ListAPIView):
     List the user's deduplicated resume files with analysis counts.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
     serializer_class = ResumeSerializer
 
     def get_queryset(self):
@@ -286,7 +281,7 @@ class ResumeDeleteView(APIView):
     Only allowed if no active (non-soft-deleted) analyses reference it.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def delete(self, request, pk):
         try:
@@ -315,7 +310,7 @@ class DashboardStatsView(APIView):
     User-level analytics computed from all analyses (including soft-deleted).
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
         user = request.user
@@ -380,7 +375,7 @@ class AnalysisShareView(APIView):
     DELETE /api/analyses/<id>/share/  — Revoke the share token.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def post(self, request, pk):
         try:
@@ -435,7 +430,7 @@ class SharedAnalysisView(APIView):
     Public read-only view of a shared analysis. No auth required.
     """
     permission_classes = [AllowAny]
-    throttle_classes = []
+    throttle_classes = []  # uses default AnonRateThrottle from settings
     authentication_classes = []  # Skip JWT auth entirely for public access
 
     def get(self, request, token):
@@ -461,7 +456,7 @@ class JobListCreateView(APIView):
     POST /api/jobs/             — Create a new tracked job.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
         qs = Job.objects.filter(user=request.user).select_related('resume')
@@ -490,7 +485,7 @@ class JobDetailView(APIView):
     DELETE /api/jobs/<uuid:id>/  — Delete a tracked job.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def _get_job(self, request, pk):
         try:
@@ -518,7 +513,7 @@ class JobRelevanceView(APIView):
     POST /api/jobs/<uuid:id>/irrelevant/  — Mark job as irrelevant.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
+    throttle_classes = [ReadOnlyThrottle]
 
     def post(self, request, pk, relevance):
         if relevance not in ('relevant', 'irrelevant'):

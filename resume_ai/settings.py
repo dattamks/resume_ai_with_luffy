@@ -1,4 +1,3 @@
-import logging
 import sys
 from pathlib import Path
 from decouple import config
@@ -43,7 +42,6 @@ INSTALLED_APPS = [
     'django_celery_beat',
     'accounts',
     'analyzer',
-    'frontend_app',
 ]
 
 MIDDLEWARE = [
@@ -80,14 +78,24 @@ WSGI_APPLICATION = 'resume_ai.wsgi.application'
 
 # Database — uses DATABASE_URL env var in production (PostgreSQL on Railway),
 # falls back to SQLite for local development.
+# During tests with DEBUG=True, always use SQLite so tests run fast without
+# needing access to a remote database.
 _DATABASE_URL = config('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db.sqlite3"}')
-DATABASES = {
-    'default': dj_database_url.parse(
-        _DATABASE_URL,
-        conn_max_age=0 if TESTING else 600,
-        conn_health_checks=True,
-    )
-}
+if TESTING and DEBUG:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'test_db.sqlite3',
+        }
+    }
+else:
+    DATABASES = {
+        'default': dj_database_url.parse(
+            _DATABASE_URL,
+            conn_max_age=0 if TESTING else 600,
+            conn_health_checks=True,
+        )
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -148,12 +156,13 @@ else:
     }
 
 # ── Redis cache ──────────────────────────────────────────────────────────────
-# When REDIS_URL is set, use Redis for caching (DRF throttle state, sessions).
-# Otherwise falls back to in-memory cache for local development.
-# During tests we ALWAYS use LocMemCache so throttle counters don't persist
-# across runs and pollute the shared Redis instance.
+# When REDIS_URL is set AND we're not in test/debug mode, use Redis for
+# caching (DRF throttle state, sessions).
+# In debug mode or during tests, always fall back to LocMemCache so a local
+# Redis service is never required for development.
 _REDIS_URL = config('REDIS_URL', default='')
-if _REDIS_URL and not TESTING:
+_USE_REDIS = bool(_REDIS_URL) and not TESTING and not DEBUG
+if _USE_REDIS:
     CACHES = {
         'default': {
             'BACKEND': 'django_redis.cache.RedisCache',
@@ -170,9 +179,9 @@ if _REDIS_URL and not TESTING:
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ── Celery (task queue) ──────────────────────────────────────────────────────
-# Uses Redis as broker and result backend when REDIS_URL is set.
-# Falls back to 'memory://' for local dev (tasks run eagerly/in-process).
-if _REDIS_URL:
+# Uses Redis as broker and result backend in production (DEBUG=False + REDIS_URL).
+# In debug/test mode, falls back to in-memory broker — tasks run eagerly/in-process.
+if _USE_REDIS:
     CELERY_BROKER_URL = _REDIS_URL
     CELERY_RESULT_BACKEND = _REDIS_URL
 else:
@@ -212,11 +221,15 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'user': config('USER_THROTTLE_RATE', default='30/hour'),
+        'anon': config('ANON_THROTTLE_RATE', default='60/hour'),
+        'user': config('USER_THROTTLE_RATE', default='200/hour'),
         'analyze': config('ANALYZE_THROTTLE_RATE', default='10/hour'),
+        'readonly': config('READONLY_THROTTLE_RATE', default='120/hour'),
+        'auth': config('AUTH_THROTTLE_RATE', default='20/hour'),
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -229,8 +242,11 @@ REST_FRAMEWORK = {
 if TESTING:
     REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = []
     REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+        'anon': '10000/minute',
         'user': '10000/minute',
         'analyze': '10000/minute',
+        'readonly': '10000/minute',
+        'auth': '10000/minute',
     }
 
 # JWT

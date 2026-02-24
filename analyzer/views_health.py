@@ -4,13 +4,14 @@ uptime monitor).  Returns 200 with a JSON body so it can double as a
 smoke-test for the API layer.
 """
 from django.db import connection
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([])  # health checks must never be rate-limited
 def health_check(request):
     """
     GET /api/health/

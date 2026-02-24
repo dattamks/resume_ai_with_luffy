@@ -26,12 +26,14 @@ from .serializers import (
     CustomTokenObtainPairSerializer,
 )
 from .email_utils import send_templated_email
+from .throttles import AuthEndpointThrottle
 
 logger = logging.getLogger('accounts')
 
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [AuthEndpointThrottle]
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -57,6 +59,7 @@ class RegisterView(APIView):
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [AuthEndpointThrottle]
 
 
 class LogoutView(APIView):
@@ -186,6 +189,7 @@ class ForgotPasswordView(APIView):
     Always returns 200 regardless of whether the email exists (security).
     """
     permission_classes = [AllowAny]
+    throttle_classes = [AuthEndpointThrottle]
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
@@ -237,6 +241,7 @@ class ResetPasswordView(APIView):
     Validates uid + token from the reset email and sets a new password.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [AuthEndpointThrottle]
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
