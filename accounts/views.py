@@ -4,6 +4,7 @@ from datetime import datetime
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
@@ -116,10 +117,15 @@ class MeView(APIView):
         except Exception:
             pass  # best-effort; user is being deleted anyway
 
-        # Soft-delete all active analyses (clears heavy data, keeps analytics)
+        # Bulk soft-delete all active analyses (clears heavy data, keeps analytics)
+        # FK-linked ScrapeResult/LLMResponse are cascade-deleted by user.delete() below.
         from analyzer.models import ResumeAnalysis
-        for analysis in ResumeAnalysis.objects.filter(user=user):
-            analysis.soft_delete()
+        ResumeAnalysis.objects.filter(user=user, deleted_at__isnull=True).update(
+            deleted_at=timezone.now(),
+            resume_text='',
+            resolved_jd='',
+            jd_text='',
+        )
 
         # Hard-delete user (cascades to Resume, ScrapeResult, LLMResponse via FK)
         user.delete()
