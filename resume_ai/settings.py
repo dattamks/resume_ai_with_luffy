@@ -259,8 +259,9 @@ SIMPLE_JWT = {
 }
 
 # CORS — comma-separated list of allowed origins (no wildcard).
+# Origins must not have a trailing slash or path (django-corsheaders requirement).
 _cors_raw = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173,http://127.0.0.1:5173')
-CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(',') if o.strip()]
+CORS_ALLOWED_ORIGINS = [o.strip().rstrip('/') for o in _cors_raw.split(',') if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
 # HTTPS / security headers (only enforced when not in DEBUG mode)
