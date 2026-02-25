@@ -34,7 +34,6 @@ class ResumeAnalyzer:
 
     def __init__(self):
         self.pdf_extractor = PDFExtractor()
-        self.jd_fetcher = JDFetcher()
         self.ai_provider = get_ai_provider()
         logger.debug('ResumeAnalyzer initialized — provider: %s', type(self.ai_provider).__name__)
 
@@ -235,7 +234,9 @@ class ResumeAnalyzer:
             return analysis.jd_text, None
 
         if analysis.jd_input_type == ResumeAnalysis.JD_INPUT_URL:
-            cleaned_text, scrape_result = self.jd_fetcher.fetch(analysis.jd_url, user=analysis.user)
+            # Lazy instantiation — only create JDFetcher when we actually need Firecrawl
+            jd_fetcher = JDFetcher()
+            cleaned_text, scrape_result = jd_fetcher.fetch(analysis.jd_url, user=analysis.user)
             # Prefer Firecrawl's concise summary over full markdown to reduce token usage
             if scrape_result and scrape_result.summary:
                 logger.debug('Using Firecrawl summary (%d chars) instead of full markdown (%d chars)',
@@ -244,7 +245,8 @@ class ResumeAnalyzer:
             return cleaned_text, scrape_result
 
         if analysis.jd_input_type == ResumeAnalysis.JD_INPUT_FORM:
-            text = self.jd_fetcher.build_from_form(
+            # build_from_form is a pure string builder — no Firecrawl needed
+            text = JDFetcher.build_from_form(
                 role=analysis.jd_role,
                 company=analysis.jd_company,
                 skills=analysis.jd_skills,

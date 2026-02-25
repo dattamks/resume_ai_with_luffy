@@ -139,8 +139,8 @@ class JDFetcher:
         lines = [line.strip() for line in markdown.splitlines() if line.strip()]
         return '\n'.join(lines)
 
+    @staticmethod
     def build_from_form(
-        self,
         role: str = '',
         company: str = '',
         skills: str = '',
