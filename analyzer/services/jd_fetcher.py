@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from django.conf import settings
 from firecrawl import FirecrawlApp
+from firecrawl.v2.types import ScrapeFormats
 
 from ..models import ScrapeResult
 
@@ -79,7 +80,10 @@ class JDFetcher:
 
         logger.debug('JDFetcher: scraping %s via Firecrawl...', url)
         try:
-            result = self.app.scrape(url, formats=['markdown', 'json', 'summary'])
+            result = self.app.scrape(
+                url,
+                formats=ScrapeFormats(markdown=True, summary=True),
+            )
         except Exception as exc:
             logger.error('Firecrawl scrape failed for %s: %s', url, exc)
             if scrape:
