@@ -62,9 +62,9 @@ class JDFetcher:
         """
         self._validate_url(url)
 
-        # ── Check cache ──
+        # ── Check cache (scoped to user to avoid cross-user leakage) ──
         if user:
-            cached = ScrapeResult.find_cached(url)
+            cached = ScrapeResult.find_cached(url, user=user)
             if cached:
                 logger.debug('JDFetcher: reusing cached scrape (id=%s, age=%s)', cached.id, cached.created_at)
                 cleaned = self._clean_markdown(cached.markdown)

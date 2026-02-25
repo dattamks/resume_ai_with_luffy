@@ -105,15 +105,15 @@ class ScrapeResult(models.Model):
         return f"Scrape {self.source_url[:60]} | {self.status} | {self.created_at:%Y-%m-%d %H:%M}"
 
     @classmethod
-    def find_cached(cls, url: str, max_age_hours: int = 24):
-        """Return a recent successful scrape for the same URL, or None."""
+    def find_cached(cls, url: str, user=None, max_age_hours: int = 24):
+        """Return a recent successful scrape for the same URL by the same user, or None."""
         cutoff = timezone.now() - timezone.timedelta(hours=max_age_hours)
-        return (
-            cls.objects
-            .filter(source_url=url, status=cls.STATUS_DONE, created_at__gte=cutoff)
-            .order_by('-created_at')
-            .first()
+        qs = cls.objects.filter(
+            source_url=url, status=cls.STATUS_DONE, created_at__gte=cutoff,
         )
+        if user:
+            qs = qs.filter(user=user)
+        return qs.order_by('-created_at').first()
 
 
 class LLMResponse(models.Model):
