@@ -56,6 +56,10 @@ def run_analysis_task(self, analysis_id, user_id):
 
     logger.info('Task started: analysis_id=%s user_id=%s', analysis_id, user_id)
 
+    # Release the idempotency lock as soon as the task starts — the analysis
+    # record already exists so a duplicate submission would be harmless.
+    cache.delete(f'analyze_lock:{user_id}')
+
     try:
         analysis = ResumeAnalysis.objects.get(id=analysis_id)
     except ResumeAnalysis.DoesNotExist:
