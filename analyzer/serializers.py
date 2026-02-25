@@ -218,7 +218,11 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
 
     def get_share_url(self, obj):
         if obj.share_token:
-            return f'/api/shared/{obj.share_token}/'
+            request = self.context.get('request')
+            path = f'/api/shared/{obj.share_token}/'
+            if request:
+                return request.build_absolute_uri(path)
+            return path
         return None
 
 
@@ -252,7 +256,11 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
 
     def get_share_url(self, obj):
         if obj.share_token:
-            return f'/api/shared/{obj.share_token}/'
+            request = self.context.get('request')
+            path = f'/api/shared/{obj.share_token}/'
+            if request:
+                return request.build_absolute_uri(path)
+            return path
         return None
 
 

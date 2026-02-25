@@ -396,18 +396,20 @@ class AnalysisShareView(APIView):
 
         # If already shared, return existing token (idempotent)
         if analysis.share_token:
+            share_path = f'/api/shared/{analysis.share_token}/'
             return Response({
                 'share_token': str(analysis.share_token),
-                'share_url': f'/api/shared/{analysis.share_token}/',
+                'share_url': request.build_absolute_uri(share_path),
             })
 
         analysis.share_token = uuid.uuid4()
         analysis.save(update_fields=['share_token'])
         logger.info('Share token created for analysis id=%s user=%s', pk, request.user.id)
 
+        share_path = f'/api/shared/{analysis.share_token}/'
         return Response({
             'share_token': str(analysis.share_token),
-            'share_url': f'/api/shared/{analysis.share_token}/',
+            'share_url': request.build_absolute_uri(share_path),
         }, status=status.HTTP_201_CREATED)
 
     def delete(self, request, pk):

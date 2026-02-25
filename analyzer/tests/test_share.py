@@ -272,7 +272,7 @@ class ShareFieldExposureTests(TestCase):
         self.assertIn('share_token', resp.data)
         self.assertIn('share_url', resp.data)
         self.assertEqual(resp.data['share_token'], str(self.analysis.share_token))
-        self.assertEqual(resp.data['share_url'], f'/api/shared/{self.analysis.share_token}/')
+        self.assertIn(f'/api/shared/{self.analysis.share_token}/', resp.data['share_url'])
 
     def test_list_includes_share_fields(self):
         resp = self.client.get('/api/analyses/')
