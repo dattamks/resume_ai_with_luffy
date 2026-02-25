@@ -1,11 +1,234 @@
 """
-HTML template for PDF export of analysis results.
-Rendered server-side via WeasyPrint.
+PDF report generation for resume analysis results.
+Uses ReportLab (pure Python — no native C dependencies).
 """
+import io
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm, cm
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    HRFlowable, KeepTogether,
+)
 
 
-def render_analysis_pdf_html(analysis):
-    """Return an HTML string for the analysis report."""
+# ── Colour palette ──────────────────────────────────────────────────────────
+
+GRADE_COLORS = {
+    'A': colors.HexColor('#22c55e'),
+    'B': colors.HexColor('#3b82f6'),
+    'C': colors.HexColor('#f59e0b'),
+    'D': colors.HexColor('#f97316'),
+    'F': colors.HexColor('#ef4444'),
+}
+COLOR_GREEN = colors.HexColor('#22c55e')
+COLOR_YELLOW = colors.HexColor('#f59e0b')
+COLOR_RED = colors.HexColor('#ef4444')
+COLOR_INDIGO = colors.HexColor('#4f46e5')
+COLOR_GRAY_900 = colors.HexColor('#111827')
+COLOR_GRAY_700 = colors.HexColor('#374151')
+COLOR_GRAY_500 = colors.HexColor('#6b7280')
+COLOR_GRAY_400 = colors.HexColor('#9ca3af')
+COLOR_GRAY_200 = colors.HexColor('#e5e7eb')
+COLOR_GRAY_100 = colors.HexColor('#f3f4f6')
+COLOR_INDIGO_BG = colors.HexColor('#eef2ff')
+COLOR_GREEN_BG = colors.HexColor('#ecfdf5')
+COLOR_RED_BG = colors.HexColor('#fef2f2')
+
+
+def _bar_color(value):
+    if value >= 75:
+        return COLOR_GREEN
+    if value >= 50:
+        return COLOR_YELLOW
+    return COLOR_RED
+
+
+def _grade_color(grade):
+    return GRADE_COLORS.get(grade.upper(), COLOR_GRAY_500)
+
+
+# ── Styles ───────────────────────────────────────────────────────────────────
+
+def _build_styles():
+    ss = getSampleStyleSheet()
+
+    ss.add(ParagraphStyle(
+        'Title_Custom', parent=ss['Title'],
+        fontSize=18, leading=22, textColor=COLOR_GRAY_900,
+        spaceAfter=2, alignment=TA_LEFT,
+    ))
+    ss.add(ParagraphStyle(
+        'Subtitle', parent=ss['Normal'],
+        fontSize=10, textColor=COLOR_GRAY_500, spaceAfter=0,
+    ))
+    ss.add(ParagraphStyle(
+        'Timestamp', parent=ss['Normal'],
+        fontSize=8, textColor=COLOR_GRAY_400, spaceAfter=6,
+    ))
+    ss.add(ParagraphStyle(
+        'SectionHeading', parent=ss['Heading2'],
+        fontSize=12, leading=16, textColor=COLOR_GRAY_700,
+        spaceBefore=14, spaceAfter=6, fontName='Helvetica-Bold',
+    ))
+    ss.add(ParagraphStyle(
+        'SubHeading', parent=ss['Normal'],
+        fontSize=10, leading=13, textColor=COLOR_INDIGO,
+        fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=2,
+    ))
+    ss.add(ParagraphStyle(
+        'BodyText_Custom', parent=ss['Normal'],
+        fontSize=9, leading=13, textColor=COLOR_GRAY_700,
+    ))
+    ss.add(ParagraphStyle(
+        'SmallLabel', parent=ss['Normal'],
+        fontSize=8, leading=10, textColor=COLOR_GRAY_500,
+        fontName='Helvetica-Bold',
+    ))
+    ss.add(ParagraphStyle(
+        'BulletItem', parent=ss['Normal'],
+        fontSize=9, leading=13, textColor=COLOR_GRAY_700,
+        leftIndent=12, bulletIndent=0, spaceBefore=1, spaceAfter=1,
+    ))
+    ss.add(ParagraphStyle(
+        'BulletItemRed', parent=ss['Normal'],
+        fontSize=9, leading=13, textColor=COLOR_RED,
+        leftIndent=12, bulletIndent=0, spaceBefore=1, spaceAfter=1,
+    ))
+    ss.add(ParagraphStyle(
+        'GradeLabel', parent=ss['Normal'],
+        fontSize=24, leading=28, textColor=COLOR_GRAY_900,
+        fontName='Helvetica-Bold', alignment=TA_CENTER,
+    ))
+    ss.add(ParagraphStyle(
+        'GradeAts', parent=ss['Normal'],
+        fontSize=9, leading=12, alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+    ))
+    ss.add(ParagraphStyle(
+        'OriginalText', parent=ss['Normal'],
+        fontSize=9, leading=12, textColor=COLOR_GRAY_500,
+    ))
+    ss.add(ParagraphStyle(
+        'SuggestedText', parent=ss['Normal'],
+        fontSize=9, leading=12, textColor=COLOR_GRAY_900,
+        fontName='Helvetica-Bold',
+    ))
+    ss.add(ParagraphStyle(
+        'ReasonText', parent=ss['Normal'],
+        fontSize=8, leading=11, textColor=COLOR_GRAY_400,
+        fontStyle='italic',
+    ))
+    ss.add(ParagraphStyle(
+        'Footer', parent=ss['Normal'],
+        fontSize=7, textColor=COLOR_GRAY_400, alignment=TA_CENTER,
+    ))
+    ss.add(ParagraphStyle(
+        'SummaryBody', parent=ss['Normal'],
+        fontSize=9, leading=14, textColor=COLOR_GRAY_700,
+    ))
+    ss.add(ParagraphStyle(
+        'PillGreen', parent=ss['Normal'],
+        fontSize=8, textColor=colors.HexColor('#15803d'),
+        backColor=COLOR_GREEN_BG,
+    ))
+    ss.add(ParagraphStyle(
+        'PillRed', parent=ss['Normal'],
+        fontSize=8, textColor=colors.HexColor('#b91c1c'),
+        backColor=COLOR_RED_BG,
+    ))
+
+    return ss
+
+
+# ── Score bar as a small table ───────────────────────────────────────────────
+
+def _score_bar(label, value, available_width):
+    """Return a list of flowables representing a labelled score bar."""
+    bar_color = _bar_color(value)
+    pct = max(0, min(100, value))
+    filled_w = available_width * pct / 100
+    empty_w = available_width - filled_w
+
+    # Label row
+    label_table_data = [[
+        Paragraph(label, ParagraphStyle('_lbl', fontSize=9, textColor=COLOR_GRAY_500)),
+        Paragraph(f'<b>{value}</b>', ParagraphStyle('_val', fontSize=9, textColor=COLOR_GRAY_700, alignment=TA_RIGHT)),
+    ]]
+    label_table = Table(label_table_data, colWidths=[available_width * 0.7, available_width * 0.3])
+    label_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+    ]))
+
+    # Bar row — two-cell table simulating a progress bar
+    bar_cells = []
+    col_widths = []
+    if filled_w > 0:
+        bar_cells.append('')
+        col_widths.append(filled_w)
+    if empty_w > 0:
+        bar_cells.append('')
+        col_widths.append(empty_w)
+
+    bar_table = Table([bar_cells], colWidths=col_widths, rowHeights=[6])
+    style_cmds = [
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]
+    if filled_w > 0:
+        style_cmds.append(('BACKGROUND', (0, 0), (0, 0), bar_color))
+        style_cmds.append(('ROUNDEDCORNERS', [3, 0, 0, 3] if empty_w > 0 else [3, 3, 3, 3]))
+    if empty_w > 0:
+        idx = 1 if filled_w > 0 else 0
+        style_cmds.append(('BACKGROUND', (idx, 0), (idx, 0), COLOR_GRAY_100))
+    bar_table.setStyle(TableStyle(style_cmds))
+
+    return [label_table, bar_table, Spacer(1, 4)]
+
+
+# ── Keyword pills ────────────────────────────────────────────────────────────
+
+def _keyword_pills(keywords, style_name, styles):
+    """Render keywords as a comma-separated paragraph (pill-style)."""
+    if not keywords:
+        return []
+    text = ' &nbsp;·&nbsp; '.join(f'<b>{kw}</b>' for kw in keywords)
+    return [Paragraph(text, styles[style_name])]
+
+
+# ── Main builder ─────────────────────────────────────────────────────────────
+
+def generate_analysis_pdf(analysis):
+    """
+    Build a PDF report for the given analysis and return bytes.
+
+    This is the single public entry point — called by both the Celery task
+    and the on-the-fly fallback in the view.
+    """
+    buf = io.BytesIO()
+    styles = _build_styles()
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+        title='Resume Analysis Report',
+    )
+
+    content_width = doc.width  # usable width between margins
+    story = []
+
+    # ── Extract data ─────────────────────────────────────────────────────
     scores = analysis.scores or {}
     kw = analysis.keyword_analysis or {}
     sections = analysis.section_feedback or []
@@ -18,188 +241,150 @@ def render_analysis_pdf_html(analysis):
     greenhouse_ats = scores.get('greenhouse_ats', 0)
     kw_match = scores.get('keyword_match_percent', 0)
 
-    grade_color = {
-        'A': '#22c55e', 'B': '#3b82f6', 'C': '#f59e0b', 'D': '#f97316', 'F': '#ef4444',
-    }.get(grade.upper(), '#6b7280')
+    # ── Header with grade ────────────────────────────────────────────────
+    role_parts = [p for p in [analysis.jd_role, analysis.jd_company] if p]
+    role_line = ' at '.join(role_parts) if role_parts else ''
 
-    def bar_html(label, value):
-        bg = '#22c55e' if value >= 75 else '#f59e0b' if value >= 50 else '#ef4444'
-        return f'''
-        <div style="margin-bottom:10px;">
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-bottom:3px;">
-            <span>{label}</span><span style="font-weight:600;color:#374151;">{value}</span>
-          </div>
-          <div style="height:8px;background:#f3f4f6;border-radius:99px;overflow:hidden;">
-            <div style="height:100%;width:{value}%;background:{bg};border-radius:99px;"></div>
-          </div>
-        </div>'''
+    grade_col = _grade_color(grade)
+    grade_para = Paragraph(grade, styles['GradeLabel'])
+    ats_para = Paragraph(f'ATS: {generic_ats}', ParagraphStyle(
+        '_ats', parent=styles['GradeAts'], textColor=grade_col,
+    ))
 
-    bars = ''.join([
-        bar_html('Generic ATS', generic_ats),
-        bar_html('Workday ATS', workday_ats),
-        bar_html('Greenhouse ATS', greenhouse_ats),
-        bar_html('Keyword Match', kw_match),
-    ])
+    left_parts = [Paragraph('Resume Analysis Report', styles['Title_Custom'])]
+    if role_line:
+        left_parts.append(Paragraph(role_line, styles['Subtitle']))
+    ts = analysis.created_at.strftime('%B %d, %Y at %I:%M %p')
+    provider = analysis.ai_provider_used or 'AI'
+    left_parts.append(Paragraph(f'{ts}  ·  via {provider}', styles['Timestamp']))
 
-    # Keyword analysis
+    # Build as a two-column table: [title info | grade circle]
+    header_table = Table(
+        [[left_parts, [grade_para, ats_para]]],
+        colWidths=[content_width * 0.78, content_width * 0.22],
+    )
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, 0), 'CENTER'),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 10))
+
+    # ── Score breakdown ──────────────────────────────────────────────────
+    story.append(HRFlowable(width='100%', thickness=0.5, color=COLOR_GRAY_200))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph('<b>Score Breakdown</b>', styles['BodyText_Custom']))
+    story.append(Spacer(1, 6))
+
+    bar_width = content_width - 4 * mm
+    for label, value in [
+        ('Generic ATS', generic_ats),
+        ('Workday ATS', workday_ats),
+        ('Greenhouse ATS', greenhouse_ats),
+        ('Keyword Match', kw_match),
+    ]:
+        story.extend(_score_bar(label, value, bar_width))
+
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width='100%', thickness=0.5, color=COLOR_GRAY_200))
+
+    # ── Summary ──────────────────────────────────────────────────────────
+    if analysis.summary:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph('Summary', styles['SectionHeading']))
+        story.append(Paragraph(analysis.summary, styles['SummaryBody']))
+
+    # ── Keyword analysis ─────────────────────────────────────────────────
     missing = kw.get('missing_keywords', [])
     matched = kw.get('matched_keywords', [])
     recs = kw.get('recommended_to_add', [])
 
-    keywords_html = ''
-    if missing or matched:
-        matched_pills = ' '.join(
-            f'<span style="display:inline-block;background:#ecfdf5;color:#15803d;border:1px solid #bbf7d0;'
-            f'padding:3px 10px;border-radius:99px;font-size:11px;font-weight:500;margin:2px;">{kw_item}</span>'
-            for kw_item in matched
-        )
-        missing_pills = ' '.join(
-            f'<span style="display:inline-block;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;'
-            f'padding:3px 10px;border-radius:99px;font-size:11px;font-weight:500;margin:2px;">{kw_item}</span>'
-            for kw_item in missing
-        )
-        recs_html = ''
+    if matched or missing:
+        story.append(Paragraph('Keyword Analysis', styles['SectionHeading']))
+
+        if matched:
+            story.append(Paragraph(f'Matched ({len(matched)})', ParagraphStyle(
+                '_m', fontSize=8, textColor=colors.HexColor('#15803d'), fontName='Helvetica-Bold',
+            )))
+            story.extend(_keyword_pills(matched, 'PillGreen', styles))
+            story.append(Spacer(1, 4))
+
+        if missing:
+            story.append(Paragraph(f'Missing ({len(missing)})', ParagraphStyle(
+                '_mi', fontSize=8, textColor=colors.HexColor('#dc2626'), fontName='Helvetica-Bold',
+            )))
+            story.extend(_keyword_pills(missing, 'PillRed', styles))
+            story.append(Spacer(1, 4))
+
         if recs:
-            recs_items = ''.join(f'<li style="font-size:12px;color:#374151;margin-bottom:4px;">{r}</li>' for r in recs)
-            recs_html = f'<p style="font-size:11px;font-weight:600;color:#374151;margin:8px 0 4px;">Recommended Actions:</p><ul style="margin:0;padding-left:18px;">{recs_items}</ul>'
-        keywords_html = f'''
-        <div style="margin-top:20px;">
-          <h3 style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px;">Keyword Analysis</h3>
-          <p style="font-size:10px;font-weight:600;color:#15803d;margin:0 0 4px;">Matched ({len(matched)})</p>
-          <div>{matched_pills}</div>
-          <p style="font-size:10px;font-weight:600;color:#dc2626;margin:10px 0 4px;">Missing ({len(missing)})</p>
-          <div>{missing_pills}</div>
-          {recs_html}
-        </div>'''
+            story.append(Paragraph('Recommended Actions:', styles['SmallLabel']))
+            for r in recs:
+                story.append(Paragraph(f'• {r}', styles['BulletItem']))
 
-    # Section feedback
-    sections_html = ''
+    # ── Section feedback ─────────────────────────────────────────────────
     if sections:
-        items = ''
+        story.append(Paragraph('Section Feedback', styles['SectionHeading']))
         for sec in sections:
-            fb_list = ''.join(f'<li style="font-size:12px;color:#374151;margin-bottom:3px;">{f}</li>' for f in sec.get('feedback', []))
-            flags_list = ''.join(
-                f'<li style="font-size:11px;color:#dc2626;margin-bottom:2px;">⚠ {fl}</li>'
-                for fl in sec.get('ats_flags', [])
-            )
-            items += f'''
-            <div style="margin-bottom:14px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                <h4 style="font-size:11px;font-weight:700;color:#4f46e5;text-transform:uppercase;letter-spacing:0.05em;margin:0;">{sec.get("section_name", "")}</h4>
-                <span style="font-size:11px;font-weight:600;color:#374151;">{sec.get("score", "")}/100</span>
-              </div>
-              <ul style="margin:0;padding-left:18px;">{fb_list}</ul>
-              {"<ul style='margin:4px 0 0;padding-left:18px;'>" + flags_list + "</ul>" if flags_list else ""}
-            </div>'''
-        sections_html = f'''
-        <div style="margin-top:20px;">
-          <h3 style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px;">Section Feedback</h3>
-          {items}
-        </div>'''
+            name = sec.get('section_name', '')
+            score = sec.get('score', '')
+            heading_text = f'{name.upper()}  —  {score}/100'
+            block = [Paragraph(heading_text, styles['SubHeading'])]
 
-    # Sentence suggestions
-    suggestions_html = ''
+            for fb in sec.get('feedback', []):
+                block.append(Paragraph(f'• {fb}', styles['BulletItem']))
+            for fl in sec.get('ats_flags', []):
+                block.append(Paragraph(f'⚠ {fl}', styles['BulletItemRed']))
+
+            story.append(KeepTogether(block))
+            story.append(Spacer(1, 4))
+
+    # ── Sentence suggestions ─────────────────────────────────────────────
     if suggestions:
-        items = ''.join(
-            f'<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;">'
-            f'<p style="font-size:9px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin:0 0 2px 0;">Original</p>'
-            f'<p style="font-size:12px;color:#6b7280;text-decoration:line-through;margin:0 0 8px 0;">{item.get("original", "")}</p>'
-            f'<p style="font-size:9px;font-weight:700;color:#22c55e;text-transform:uppercase;margin:0 0 2px 0;">Suggested</p>'
-            f'<p style="font-size:12px;color:#111827;font-weight:500;margin:0;">{item.get("suggested", "")}</p>'
-            f'{"<p style=font-size:10px;color:#9ca3af;font-style:italic;margin:6px 0 0 0;border-top:1px solid #e5e7eb;padding-top:6px;>" + item["reason"] + "</p>" if item.get("reason") else ""}'
-            f'</div>'
-            for item in suggestions
-        )
-        suggestions_html = f'''
-        <div style="margin-top:20px;">
-          <h3 style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px;">
-            Sentence Suggestions <span style="background:#ecfdf5;color:#15803d;font-size:10px;padding:2px 8px;border-radius:99px;">{len(suggestions)}</span>
-          </h3>
-          {items}
-        </div>'''
+        story.append(Paragraph(
+            f'Sentence Suggestions ({len(suggestions)})', styles['SectionHeading'],
+        ))
+        for item in suggestions:
+            block = []
+            block.append(Paragraph('ORIGINAL', styles['SmallLabel']))
+            block.append(Paragraph(
+                f'<strike>{item.get("original", "")}</strike>', styles['OriginalText'],
+            ))
+            block.append(Spacer(1, 2))
+            block.append(Paragraph('SUGGESTED', ParagraphStyle(
+                '_sg', fontSize=8, textColor=COLOR_GREEN, fontName='Helvetica-Bold',
+            )))
+            block.append(Paragraph(item.get('suggested', ''), styles['SuggestedText']))
+            if item.get('reason'):
+                block.append(Spacer(1, 2))
+                block.append(Paragraph(item['reason'], styles['ReasonText']))
+            block.append(Spacer(1, 6))
+            story.append(KeepTogether(block))
 
-    # Formatting flags
-    flags_html = ''
+    # ── Formatting flags ─────────────────────────────────────────────────
     if flags:
-        flag_items = ''.join(f'<li style="font-size:12px;color:#dc2626;margin-bottom:4px;">⚠ {f}</li>' for f in flags)
-        flags_html = f'''
-        <div style="margin-top:20px;">
-          <h3 style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px;">Formatting Issues</h3>
-          <ul style="margin:0;padding-left:18px;">{flag_items}</ul>
-        </div>'''
+        story.append(Paragraph('Formatting Issues', styles['SectionHeading']))
+        for f in flags:
+            story.append(Paragraph(f'⚠ {f}', styles['BulletItemRed']))
 
-    # Quick wins
-    wins_html = ''
+    # ── Quick wins ───────────────────────────────────────────────────────
     if wins:
-        win_items = ''.join(
-            f'<div style="display:flex;gap:8px;margin-bottom:8px;">'
-            f'<span style="background:#eef2ff;color:#4f46e5;font-weight:700;font-size:11px;'
-            f'width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{w.get("priority", "")}</span>'
-            f'<p style="font-size:12px;color:#374151;margin:0;">{w.get("action", "")}</p>'
-            f'</div>'
-            for w in wins
-        )
-        wins_html = f'''
-        <div style="margin-top:20px;">
-          <h3 style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px;">Quick Wins</h3>
-          {win_items}
-        </div>'''
+        story.append(Paragraph('Quick Wins', styles['SectionHeading']))
+        for w in wins:
+            priority = w.get('priority', '')
+            action = w.get('action', '')
+            story.append(Paragraph(
+                f'<b>{priority}.</b>  {action}', styles['BulletItem'],
+            ))
 
-    # Summary
-    summary_html = ''
-    if analysis.summary:
-        summary_html = f'''
-        <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:14px;margin-top:20px;">
-          <p style="font-size:10px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 6px 0;">Summary</p>
-          <p style="font-size:12px;color:#1f2937;line-height:1.6;margin:0;">{analysis.summary}</p>
-        </div>'''
+    # ── Footer ───────────────────────────────────────────────────────────
+    story.append(Spacer(1, 20))
+    story.append(HRFlowable(width='100%', thickness=0.5, color=COLOR_GRAY_200))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        f'Generated by Resume AI  ·  {analysis.created_at.strftime("%Y-%m-%d")}',
+        styles['Footer'],
+    ))
 
-    role_line = ''
-    if analysis.jd_role or analysis.jd_company:
-        parts = [p for p in [analysis.jd_role, analysis.jd_company] if p]
-        role_line = f'<p style="font-size:13px;color:#6b7280;margin:2px 0 0 0;">{" at ".join(parts)}</p>'
-
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    @page {{ size: A4; margin: 1.5cm; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #111827; margin: 0; padding: 0; font-size: 12px; }}
-    * {{ box-sizing: border-box; }}
-  </style>
-</head>
-<body>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;">
-    <div>
-      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0;">Resume Analysis Report</h1>
-      {role_line}
-      <p style="font-size:10px;color:#9ca3af;margin:4px 0 0 0;">
-        {analysis.created_at.strftime('%B %d, %Y at %I:%M %p')} &middot; via {analysis.ai_provider_used or 'AI'}
-      </p>
-    </div>
-    <div style="text-align:center;">
-      <div style="width:80px;height:80px;border-radius:50%;border:6px solid {grade_color};display:flex;align-items:center;justify-content:center;">
-        <span style="font-size:30px;font-weight:700;color:#111827;">{grade}</span>
-      </div>
-      <p style="font-size:11px;font-weight:600;color:{grade_color};margin:4px 0 0 0;">ATS: {generic_ats}</p>
-    </div>
-  </div>
-
-  <div style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:20px;">
-    <p style="font-size:12px;font-weight:600;color:#374151;margin:0 0 12px 0;">Score Breakdown</p>
-    {bars}
-  </div>
-
-  {summary_html}
-  {keywords_html}
-  {sections_html}
-  {suggestions_html}
-  {flags_html}
-  {wins_html}
-
-  <div style="margin-top:30px;border-top:1px solid #e5e7eb;padding-top:10px;text-align:center;">
-    <p style="font-size:9px;color:#9ca3af;">Generated by Resume AI &middot; {analysis.created_at.strftime('%Y-%m-%d')}</p>
-  </div>
-</body>
-</html>'''
+    # ── Build ────────────────────────────────────────────────────────────
+    doc.build(story)
+    return buf.getvalue()

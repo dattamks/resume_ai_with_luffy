@@ -201,11 +201,9 @@ class AnalysisPDFExportView(APIView):
 
         # Fallback: generate on-the-fly (e.g. for older analyses before migration)
         try:
-            from .services.pdf_report import render_analysis_pdf_html
-            import weasyprint
+            from .services.pdf_report import generate_analysis_pdf
 
-            html_string = render_analysis_pdf_html(analysis)
-            pdf_bytes = weasyprint.HTML(string=html_string).write_pdf()
+            pdf_bytes = generate_analysis_pdf(analysis)
 
             role_slug = (analysis.jd_role or 'analysis').replace(' ', '_')[:30]
             filename = f'resume_ai_{role_slug}_{analysis.pk}.pdf'

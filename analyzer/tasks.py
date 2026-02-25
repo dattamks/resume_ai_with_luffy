@@ -119,7 +119,7 @@ def generate_pdf_report_task(self, analysis_id):
     which automatically uses R2 when configured.
     """
     from .models import ResumeAnalysis
-    from .services.pdf_report import render_analysis_pdf_html
+    from .services.pdf_report import generate_analysis_pdf
 
     logger.info('PDF report task started: analysis_id=%s', analysis_id)
 
@@ -139,10 +139,7 @@ def generate_pdf_report_task(self, analysis_id):
         return
 
     try:
-        import weasyprint
-
-        html_string = render_analysis_pdf_html(analysis)
-        pdf_bytes = weasyprint.HTML(string=html_string).write_pdf()
+        pdf_bytes = generate_analysis_pdf(analysis)
 
         role_slug = (analysis.jd_role or 'analysis').replace(' ', '_')[:30]
         filename = f'reports/resume_ai_{role_slug}_{analysis.pk}.pdf'
