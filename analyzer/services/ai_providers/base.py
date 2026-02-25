@@ -142,6 +142,8 @@ def validate_ai_response(data: dict) -> None:
             raise ValueError(f'AI response "scores.{k}" must be numeric, got {type(v).__name__}')
         if not (0 <= v <= 100):
             raise ValueError(f'AI response "scores.{k}" out of range [0, 100]: {v}')
+        # Coerce floats to int (schema specifies integers)
+        data['scores'][k] = int(v)
 
     # Validate job_metadata sub-fields
     job_meta = data['job_metadata']
@@ -164,6 +166,10 @@ def validate_ai_response(data: dict) -> None:
                 raise ValueError(f'AI response "section_feedback[{i}]" missing key: "{k}"')
 
     # Validate quick_wins entries
+    if len(data['quick_wins']) != 3:
+        raise ValueError(
+            f'AI response "quick_wins" must contain exactly 3 items, got {len(data["quick_wins"])}'
+        )
     for i, qw in enumerate(data['quick_wins']):
         if not isinstance(qw, dict):
             raise ValueError(f'AI response "quick_wins[{i}]" must be a dict')
