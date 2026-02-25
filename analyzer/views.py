@@ -188,7 +188,7 @@ class AnalysisPDFExportView(APIView):
         except ResumeAnalysis.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if analysis.status != 'done':
+        if analysis.status != ResumeAnalysis.STATUS_DONE:
             return Response(
                 {'detail': 'Analysis is not complete yet.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -437,7 +437,6 @@ class SharedAnalysisView(APIView):
     Public read-only view of a shared analysis. No auth required.
     """
     permission_classes = [AllowAny]
-    throttle_classes = []  # uses default AnonRateThrottle from settings
     authentication_classes = []  # Skip JWT auth entirely for public access
 
     def get(self, request, token):
