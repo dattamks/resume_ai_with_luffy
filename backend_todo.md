@@ -114,6 +114,36 @@
 
 ---
 
+## Audit Backlog (Skipped / Deferred)
+
+> Items from the Feb 2026 security & design audit that require larger feature work.
+
+### Security
+
+- [ ] **Email verification on registration (5.5)** — Set `user.is_active = False` until email link is clicked. Requires: verification token model/migration, send-verification endpoint, verify endpoint, resend endpoint, new email template, auth flow changes.
+
+### Design — Plan Quota Enforcement (6.1)
+
+- [ ] **Monthly analysis quota** — Check `plan.analyses_per_month` in `AnalyzeResumeView.post()` before creating analysis
+- [ ] **Per-plan resume size limit** — Use `plan.max_resume_size_mb` instead of global `settings.MAX_RESUME_SIZE_MB` in `ResumeAnalysisCreateSerializer`
+- [ ] **PDF export feature flag** — Check `plan.pdf_export` in `ExportPDFView`
+- [ ] **Share analysis feature flag** — Check `plan.share_analysis` in `AnalysisShareView`
+- [ ] **Job tracking feature flag** — Check `plan.job_tracking` in `JobCreateView`
+- [ ] **Max resumes stored** — Check `plan.max_resumes_stored` before accepting new uploads
+
+### Design — Other (6.2–6.10)
+
+- [ ] **Structured logging improvements (6.2)** — Consistent log format with request IDs
+- [ ] **Admin dashboard enhancements (6.3)** — Better admin views for Plan, UserProfile
+- [ ] **Celery task monitoring (6.5)** — Flower or custom task status dashboard
+- [ ] **API versioning (6.6)** — URL-based or header-based API versioning
+- [ ] **Webhook notifications (6.7)** — Allow users to register webhook URLs for analysis completion
+- [ ] **Rate limit headers (6.8)** — Return `X-RateLimit-*` headers in responses
+- [ ] **Health check improvements (6.9)** — Check Redis, DB, R2 connectivity in health endpoint
+- [ ] **Test coverage (6.10)** — Increase test coverage for edge cases, error paths
+
+---
+
 ## Env Vars Summary (Railway backend service)
 
 ```

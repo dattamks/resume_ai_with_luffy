@@ -294,7 +294,12 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 **Response (200):** `{ "detail": "Successfully logged out." }`
 
-**Error (400):** `{ "detail": "Invalid token." }` (already blacklisted or malformed)
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Missing refresh token | `{ "detail": "Refresh token is required." }` |
+| 400  | Invalid/blacklisted token | `{ "detail": "Invalid token." }` |
 
 **Frontend action:** After calling logout, clear both tokens from storage and redirect to login.
 
@@ -701,7 +706,7 @@ Only returns **active** (non-soft-deleted) analyses.
       "ai_provider_used": "OpenRouterProvider",
       "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
       "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "share_url": "/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
+      "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
       "created_at": "2026-02-22T14:30:00Z"
     }
   ]
@@ -1053,7 +1058,7 @@ Allow users to generate a public, read-only link for a completed analysis. Anyon
 ```json
 {
   "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "share_url": "/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/"
+  "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/"
 }
 ```
 
@@ -1427,7 +1432,7 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
   "celery_task_id": "abc-123-def",
   "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
   "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "share_url": "/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
+  "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
   "created_at": "2026-02-22T14:30:00Z",
   "updated_at": "2026-02-22T14:30:12Z"
 }
@@ -2251,7 +2256,7 @@ interface RetryResponse {
 
 interface ShareResponse {
   share_token: string;          // UUID
-  share_url: string;            // e.g., "/api/shared/<uuid>/"
+  share_url: string;            // e.g., "https://yourhost.com/api/shared/<uuid>/"
 }
 
 interface SharedAnalysis {

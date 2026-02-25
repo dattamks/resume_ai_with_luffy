@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.9.1] — 2026-02-25
+
+### Bug Fixes & Security Hardening (Audit Sweep)
+
+### Changed
+- **PDF export: WeasyPrint → ReportLab** — Replaced WeasyPrint (C-library dependency) with ReportLab 4.4.0 (pure Python). Eliminates native `libpango`, `libcairo` linking failures on Railway Nixpacks. PDF report visuals fully rebuilt with Platypus flowables, score bars, keyword pills, and section feedback.
+- **Share URLs now absolute** — `share_url` in API responses changed from relative (`/api/shared/<uuid>/`) to absolute (`https://host/api/shared/<uuid>/`) using `request.build_absolute_uri()`. Affects `POST /api/analyses/<id>/share/`, list serializer, and detail serializer.
+- **CORS: wildcard removed** — Removed `CORS_ALLOW_ALL_ORIGINS=True` path. Only explicit comma-separated origins via `CORS_ALLOWED_ORIGINS` env var are accepted. Prevents accidental wildcard + credentials misconfiguration.
+- **R2 signed URL TTL explicit** — Added `AWS_QUERYSTRING_EXPIRE = 3600` (1 hour). Was relying on django-storages default; now discoverable and tunable.
+- **ScrapeResult cache scoped to user** — `find_cached()` now filters by requesting user, preventing cross-user cache hits and cascade-delete breakage.
+- **SharedAnalysisView throttling restored** — Removed `throttle_classes = []` that was silently disabling all rate limiting on the public share endpoint. Now inherits global `AnonRateThrottle`.
+- **`STATUS_DONE` constant** — `ExportPDFView` replaced `'done'` string literal with `ResumeAnalysis.STATUS_DONE`.
+- **Removed unused `anthropic` dependency** — Not imported anywhere; LLM calls use OpenRouter (openai SDK) exclusively.
+
+### Fixed
+- **Lazy-init JDFetcher** — `JDFetcher.__init__` raised `ValueError` when `FIRECRAWL_API_KEY` was missing, breaking text/form analysis types that never use Firecrawl. Now instantiated lazily only for URL inputs.
+- **LogoutView refresh guard** — Returns 400 with `"Refresh token is required."` when `refresh` key is missing from request body, instead of potential 500.
+- **Removed redundant `save_user_profile` signal** — Was causing an extra DB write on every `user.save()`. Profile saves handled explicitly in serializers.
+- **Bulk soft-delete on account deletion** — Replaced N+1 loop with single `QuerySet.update()` for soft-deleting analyses during account deletion.
+- **AI response validation** — `quick_wins` now enforced to exactly 3 items; all score values coerced to `int` to prevent float leakage from LLM responses.
+- **Idempotency lock release** — Analysis lock (`analyze_lock:{user_id}`) now explicitly deleted when Celery task starts, instead of waiting for 30s TTL expiry.
+
+---
+
 ## [0.9.0] — 2026-02-23
 
 ### Phase 9: Profile Management, Jobs Model & Resume Download
