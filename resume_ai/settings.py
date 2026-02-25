@@ -141,6 +141,7 @@ if _R2_BUCKET:
     AWS_DEFAULT_ACL = None  # R2 doesn't support ACLs
     AWS_S3_SIGNATURE_VERSION = 's3v4'
     AWS_QUERYSTRING_AUTH = True  # signed URLs for private files
+    AWS_QUERYSTRING_EXPIRE = 3600  # signed URL TTL in seconds (1 hour)
     AWS_S3_FILE_OVERWRITE = False
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',  # 1 day
