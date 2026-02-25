@@ -239,10 +239,3 @@ def create_user_profile(sender, instance, created, **kwargs):
         free_plan = Plan.objects.filter(slug='free', is_active=True).first()
         UserProfile.objects.get_or_create(user=instance, defaults={'plan': free_plan})
         NotificationPreference.objects.get_or_create(user=instance)
-
-
-@receiver(post_save, sender=User)
-def save_user_profile(sender, instance, **kwargs):
-    """Ensure profile is saved whenever user is saved."""
-    if hasattr(instance, 'profile'):
-        instance.profile.save()
