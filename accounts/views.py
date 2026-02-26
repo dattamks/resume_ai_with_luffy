@@ -25,6 +25,9 @@ from .serializers import (
     ResetPasswordSerializer,
     NotificationPreferenceSerializer,
     CustomTokenObtainPairSerializer,
+    PlanSerializer,
+    WalletSerializer,
+    WalletTransactionSerializer,
 )
 from .email_utils import send_templated_email
 from .throttles import AuthEndpointThrottle
@@ -260,3 +263,122 @@ class ResetPasswordView(APIView):
         logger.info('Password reset completed for user=%s', user.username)
 
         return Response({'detail': 'Password has been reset successfully. You can now log in.'})
+
+
+class WalletView(APIView):
+    """
+    GET /api/auth/wallet/
+    Return wallet balance, plan credits info, and top-up availability.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import Wallet
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        profile = request.user.profile
+        plan = profile.plan
+
+        return Response({
+            'balance': wallet.balance,
+            'updated_at': wallet.updated_at,
+            'plan_name': plan.name if plan else 'Free',
+            'credits_per_month': plan.credits_per_month if plan else 0,
+            'can_topup': bool(plan and plan.topup_credits_per_pack > 0 and profile.pending_plan is None),
+            'topup_credits_per_pack': plan.topup_credits_per_pack if plan else 0,
+            'topup_price': float(plan.topup_price) if plan else 0,
+            'plan_valid_until': profile.plan_valid_until,
+            'pending_downgrade': profile.pending_plan.slug if profile.pending_plan else None,
+        })
+
+
+class WalletTransactionListView(APIView):
+    """
+    GET /api/auth/wallet/transactions/
+    Paginated transaction history for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import Wallet, WalletTransaction
+        from rest_framework.pagination import PageNumberPagination
+
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        transactions = WalletTransaction.objects.filter(wallet=wallet)
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        page = paginator.paginate_queryset(transactions, request)
+        serializer = WalletTransactionSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class WalletTopUpView(APIView):
+    """
+    POST /api/auth/wallet/topup/
+    Buy credit packs. Pro users only.
+    Body: { "quantity": 3 }  (default: 1)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .services import topup_credits
+
+        quantity = request.data.get('quantity', 1)
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'Quantity must be a positive integer.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = topup_credits(request.user, quantity)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'detail': f'{result["credits_added"]} credits added.',
+            'credits_added': result['credits_added'],
+            'balance': result['balance_after'],
+            'total_price': result['total_price'],
+        })
+
+
+class PlanListView(APIView):
+    """
+    GET /api/auth/plans/
+    List all active plans. Public endpoint.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .models import Plan
+        plans = Plan.objects.filter(is_active=True)
+        return Response(PlanSerializer(plans, many=True).data)
+
+
+class PlanSubscribeView(APIView):
+    """
+    POST /api/auth/plans/subscribe/
+    Switch to a different plan.
+    Body: { "plan_slug": "pro" }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .services import subscribe_plan
+
+        plan_slug = request.data.get('plan_slug')
+        if not plan_slug:
+            return Response(
+                {'detail': 'plan_slug is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = subscribe_plan(request.user, plan_slug)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result)

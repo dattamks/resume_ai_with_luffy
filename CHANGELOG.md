@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.10.0] — 2026-02-26
+
+### Phase 10: Plans & Wallet (Credits System)
+
+### Added
+- **Wallet model** — Per-user credit wallet (`OneToOneField(User)`) with a `PositiveIntegerField` balance. Created automatically on user registration via signal.
+- **WalletTransaction model** — Append-only audit log for all credit movements. Types: `plan_credit`, `topup`, `analysis_debit`, `refund`, `admin_adjustment`, `upgrade_bonus`. Stores `amount`, `balance_after`, `description`, and optional `reference_id`.
+- **CreditCost model** — Admin-manageable per-action credit costs (e.g., `resume_analysis = 1`). Seeded via `python manage.py seed_credit_costs`.
+- **Plan credit fields** — `credits_per_month`, `max_credits_balance`, `topup_credits_per_pack`, `topup_price`, `job_notifications` added to `Plan` model.
+- **UserProfile billing fields** — `plan_valid_until` (DateTimeField) and `pending_plan` (FK to Plan) for billing cycle tracking and scheduled downgrades.
+- **`credits_deducted` field on ResumeAnalysis** — Boolean flag for idempotent deduction/refund. Prevents double-debit on Celery redelivery and double-refund on failure.
+- **Credit deduction on analysis submit** — `POST /api/analyze/` and `POST /api/analyses/<id>/retry/` now deduct 1 credit upfront. Returns **HTTP 402** with `{detail, balance, cost}` on insufficient credits. On task failure, credits are automatically refunded.
+- **`accounts/services.py`** — New service layer with all credit/wallet business logic:
+  - `deduct_credits()` / `refund_credits()` — Atomic with `select_for_update()` for race safety
+  - `topup_credits()` — Multi-pack top-up (Pro only, blocked during pending downgrade)
+  - `subscribe_plan()` — Handles upgrades (immediate bonus credits) and downgrades (scheduled at billing cycle end)
+  - `check_balance()` / `can_use_feature()` — Query helpers
+  - `grant_monthly_credits_for_user()` — Respects `max_credits_balance` cap
+  - `process_expired_plans()` — Celery Beat hook for scheduled downgrades
+  - `InsufficientCreditsError` — Custom exception with balance/cost info
+- **Wallet endpoints:**
+  - `GET /api/auth/wallet/` — Balance, plan credits info, top-up availability
+  - `GET /api/auth/wallet/transactions/` — Paginated transaction history
+  - `POST /api/auth/wallet/topup/` — Buy credit packs (`{quantity: N}`). Pro users only. Multi-pack supported.
+- **Plan endpoints:**
+  - `GET /api/auth/plans/` — List active plans (public, no auth required)
+  - `POST /api/auth/plans/subscribe/` — Switch plan. Upgrades apply immediately with bonus credits. Downgrades scheduled until billing cycle ends.
+- **`seed_credit_costs` management command** — Seeds `resume_analysis = 1 credit`. Idempotent.
+- **Updated `seed_plans` command** — Now includes `credits_per_month`, `max_credits_balance`, `topup_credits_per_pack`, `topup_price`, `job_notifications` for both Free and Pro plans.
+- **Admin panels** — `WalletAdmin` (read-only), `WalletTransactionAdmin` (fully read-only, no add/change/delete), `CreditCostAdmin` for managing action costs.
+- **Stale analysis refund** — `cleanup_stale_analyses` task now refunds credits for any stale analysis that had `credits_deducted=True`.
+
+### Changed
+- **Analysis submit responses** now include `credits_used` and `balance` fields.
+- **User serializer** now includes `wallet` (balance + updated_at), `plan_valid_until`, and `pending_plan` in all user-facing responses (register, login, GET/PUT /me/).
+- **Plan serializer** now includes all new credit/wallet fields.
+- **Test fixtures** — Three test classes updated with `_ensure_free_plan()` and `_give_credits()` helpers to work with the new credit requirement.
+
+---
+
 ## [0.9.1] — 2026-02-25
 
 ### Bug Fixes & Security Hardening (Audit Sweep)

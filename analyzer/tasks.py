@@ -92,6 +92,8 @@ def run_analysis_task(self, analysis_id, user_id):
             _set_analysis_cache(analysis)
         except Exception:
             pass
+        # Refund credits on failure
+        _refund_analysis_credits(analysis)
 
     except Exception as exc:
         logger.exception('Unexpected error during analysis (user=%s)', user_id)
@@ -104,9 +106,40 @@ def run_analysis_task(self, analysis_id, user_id):
             _set_analysis_cache(analysis)
         except Exception:
             pass
+        # Refund credits on failure
+        _refund_analysis_credits(analysis)
         # Re-raise for Celery retry (ConnectionError etc.)
         if isinstance(exc, (ConnectionError, OSError)):
             raise
+
+
+def _refund_analysis_credits(analysis):
+    """
+    Refund credits for a failed analysis.
+    Only refunds if credits were actually deducted (credits_deducted=True).
+    Sets credits_deducted=False after refund to prevent double-refund.
+    """
+    try:
+        analysis.refresh_from_db()
+        if not analysis.credits_deducted:
+            return
+
+        from accounts.services import refund_credits
+        from django.contrib.auth.models import User
+
+        user = User.objects.get(id=analysis.user_id)
+        refund_credits(
+            user,
+            'resume_analysis',
+            description=f'Refund: analysis #{analysis.id} failed',
+            reference_id=str(analysis.id),
+        )
+
+        analysis.credits_deducted = False
+        analysis.save(update_fields=['credits_deducted'])
+        logger.info('Credits refunded for failed analysis id=%s', analysis.id)
+    except Exception:
+        logger.exception('Failed to refund credits for analysis id=%s', analysis.id)
 
 
 @shared_task(
@@ -167,6 +200,7 @@ def cleanup_stale_analyses():
     """
     Periodic task: mark analyses stuck in 'processing' for > 30 min as failed.
     This catches cases where a Celery worker died mid-pipeline.
+    Also refunds credits for these stale analyses.
     """
     from .models import ResumeAnalysis
 
@@ -175,6 +209,11 @@ def cleanup_stale_analyses():
         status=ResumeAnalysis.STATUS_PROCESSING,
         updated_at__lt=cutoff,
     )
+
+    # Refund credits for each stale analysis before bulk-updating
+    for analysis in stale.filter(credits_deducted=True):
+        _refund_analysis_credits(analysis)
+
     count = stale.update(
         status=ResumeAnalysis.STATUS_FAILED,
         pipeline_step=ResumeAnalysis.STEP_FAILED,

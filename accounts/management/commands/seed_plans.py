@@ -20,6 +20,11 @@ PLANS = [
         'api_rate_per_hour': 200,
         'max_resume_size_mb': 5,
         'max_resumes_stored': 5,
+        'credits_per_month': 2,
+        'max_credits_balance': 10,  # Admin-configurable cap
+        'topup_credits_per_pack': 0,  # Free users cannot top up
+        'topup_price': 0,
+        'job_notifications': False,
         'pdf_export': True,
         'share_analysis': True,
         'job_tracking': True,
@@ -38,6 +43,11 @@ PLANS = [
         'api_rate_per_hour': 500,
         'max_resume_size_mb': 10,
         'max_resumes_stored': 0,  # unlimited
+        'credits_per_month': 25,
+        'max_credits_balance': 100,  # Admin-configurable cap
+        'topup_credits_per_pack': 5,
+        'topup_price': 49,
+        'job_notifications': True,
         'pdf_export': True,
         'share_analysis': True,
         'job_tracking': True,

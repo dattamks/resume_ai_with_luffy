@@ -5,7 +5,7 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import UserProfile, NotificationPreference, Plan
+from .models import UserProfile, NotificationPreference, Plan, Wallet, WalletTransaction
 
 
 class PlanSerializer(serializers.ModelSerializer):
@@ -17,8 +17,32 @@ class PlanSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'billing_cycle', 'price',
             'analyses_per_month', 'api_rate_per_hour',
             'max_resume_size_mb', 'max_resumes_stored',
+            'credits_per_month', 'max_credits_balance',
+            'topup_credits_per_pack', 'topup_price',
+            'job_notifications',
             'pdf_export', 'share_analysis', 'job_tracking',
             'priority_queue', 'email_support',
+        )
+        read_only_fields = fields
+
+
+class WalletSerializer(serializers.ModelSerializer):
+    """Read-only serializer for wallet balance."""
+
+    class Meta:
+        model = Wallet
+        fields = ('balance', 'updated_at')
+        read_only_fields = fields
+
+
+class WalletTransactionSerializer(serializers.ModelSerializer):
+    """Read-only serializer for wallet transaction history."""
+
+    class Meta:
+        model = WalletTransaction
+        fields = (
+            'id', 'amount', 'balance_after', 'transaction_type',
+            'description', 'reference_id', 'created_at',
         )
         read_only_fields = fields
 
@@ -68,16 +92,37 @@ class UserSerializer(serializers.ModelSerializer):
     country_code = serializers.CharField(source='profile.country_code', read_only=True)
     mobile_number = serializers.CharField(source='profile.mobile_number', read_only=True)
     plan = serializers.SerializerMethodField()
+    wallet = serializers.SerializerMethodField()
+    plan_valid_until = serializers.DateTimeField(source='profile.plan_valid_until', read_only=True)
+    pending_plan = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'date_joined', 'country_code', 'mobile_number', 'plan')
+        fields = (
+            'id', 'username', 'email', 'date_joined',
+            'country_code', 'mobile_number',
+            'plan', 'wallet', 'plan_valid_until', 'pending_plan',
+        )
 
     def get_plan(self, obj):
         """Return plan details or None if no plan assigned."""
         profile = getattr(obj, 'profile', None)
         if profile and profile.plan:
             return PlanSerializer(profile.plan).data
+        return None
+
+    def get_wallet(self, obj):
+        """Return wallet balance or None."""
+        wallet = getattr(obj, 'wallet', None)
+        if wallet:
+            return WalletSerializer(wallet).data
+        return None
+
+    def get_pending_plan(self, obj):
+        """Return pending plan details or None."""
+        profile = getattr(obj, 'profile', None)
+        if profile and profile.pending_plan:
+            return PlanSerializer(profile.pending_plan).data
         return None
 
 

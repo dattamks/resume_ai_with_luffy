@@ -1,10 +1,13 @@
 from django.contrib import admin
-from .models import UserProfile, NotificationPreference, EmailTemplate, Plan
+from .models import (
+    UserProfile, NotificationPreference, EmailTemplate, Plan,
+    Wallet, WalletTransaction, CreditCost,
+)
 
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'plan', 'country_code', 'mobile_number')
+    list_display = ('user', 'plan', 'plan_valid_until', 'pending_plan', 'country_code', 'mobile_number')
     list_filter = ('plan',)
     search_fields = ('user__username', 'mobile_number')
     raw_id_fields = ('user',)
@@ -48,6 +51,8 @@ class EmailTemplateAdmin(admin.ModelAdmin):
 class PlanAdmin(admin.ModelAdmin):
     list_display = (
         'name', 'slug', 'billing_cycle', 'price',
+        'credits_per_month', 'max_credits_balance',
+        'topup_credits_per_pack', 'topup_price',
         'analyses_per_month', 'api_rate_per_hour',
         'is_active', 'display_order',
     )
@@ -59,14 +64,49 @@ class PlanAdmin(admin.ModelAdmin):
         (None, {
             'fields': ('name', 'slug', 'description', 'billing_cycle', 'price', 'is_active', 'display_order'),
         }),
+        ('Credits & Wallet', {
+            'fields': ('credits_per_month', 'max_credits_balance', 'topup_credits_per_pack', 'topup_price'),
+        }),
         ('Quotas & Limits', {
             'fields': ('analyses_per_month', 'api_rate_per_hour', 'max_resume_size_mb', 'max_resumes_stored'),
         }),
         ('Feature Flags', {
-            'fields': ('pdf_export', 'share_analysis', 'job_tracking', 'priority_queue', 'email_support'),
+            'fields': ('job_notifications', 'pdf_export', 'share_analysis', 'job_tracking', 'priority_queue', 'email_support'),
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',),
         }),
     )
+
+
+@admin.register(Wallet)
+class WalletAdmin(admin.ModelAdmin):
+    list_display = ('user', 'balance', 'updated_at')
+    search_fields = ('user__username',)
+    raw_id_fields = ('user',)
+    readonly_fields = ('user', 'balance', 'updated_at')
+
+
+@admin.register(WalletTransaction)
+class WalletTransactionAdmin(admin.ModelAdmin):
+    list_display = ('wallet', 'amount', 'balance_after', 'transaction_type', 'description', 'created_at')
+    list_filter = ('transaction_type', 'created_at')
+    search_fields = ('wallet__user__username', 'description', 'reference_id')
+    readonly_fields = ('wallet', 'amount', 'balance_after', 'transaction_type', 'description', 'reference_id', 'created_at')
+    ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False  # Transactions are created by the system only
+
+    def has_change_permission(self, request, obj=None):
+        return False  # Transactions are immutable
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Transactions are immutable
+
+
+@admin.register(CreditCost)
+class CreditCostAdmin(admin.ModelAdmin):
+    list_display = ('action', 'cost', 'description')
+    search_fields = ('action',)

@@ -15,6 +15,21 @@ from rest_framework import status
 from analyzer.models import Resume, ResumeAnalysis
 
 
+def _ensure_free_plan():
+    from accounts.models import Plan
+    Plan.objects.get_or_create(
+        slug='free',
+        defaults={'name': 'Free', 'billing_cycle': 'free', 'price': 0, 'credits_per_month': 2},
+    )
+
+
+def _give_credits(user, amount=100):
+    from accounts.models import Wallet
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+    wallet.balance = amount
+    wallet.save(update_fields=['balance'])
+
+
 def _make_pdf(content=b'%PDF-1.4 fake content'):
     return SimpleUploadedFile('resume.pdf', content, content_type='application/pdf')
 
@@ -23,8 +38,10 @@ class ResumeIdAnalyzeTests(TestCase):
     """POST /api/analyze/ with resume_id instead of resume_file."""
 
     def setUp(self):
+        _ensure_free_plan()
         self.client = APIClient()
         self.user = User.objects.create_user(username='riduser', password='StrongPass123!')
+        _give_credits(self.user)
         token_resp = self.client.post(
             '/api/auth/login/',
             {'username': 'riduser', 'password': 'StrongPass123!'},

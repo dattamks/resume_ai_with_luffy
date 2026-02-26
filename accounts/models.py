@@ -1,7 +1,12 @@
+import logging
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
+
+logger = logging.getLogger('accounts')
 
 
 class UserProfile(models.Model):
@@ -27,6 +32,19 @@ class UserProfile(models.Model):
         max_length=15,
         blank=True,
         help_text='Mobile number without country code',
+    )
+    plan_valid_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When the current billing cycle ends. NULL for free plans.',
+    )
+    pending_plan = models.ForeignKey(
+        'Plan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pending_users',
+        help_text='Plan to switch to after current billing cycle expires (for downgrades).',
     )
 
     class Meta:
@@ -187,7 +205,31 @@ class Plan(models.Model):
         help_text='Max resumes stored at once (0 = unlimited).',
     )
 
+    # ── Credits & Wallet ──────────────────────────────────────────────
+    credits_per_month = models.PositiveIntegerField(
+        default=0,
+        help_text='Credits granted each billing cycle (0 = none).',
+    )
+    max_credits_balance = models.PositiveIntegerField(
+        default=0,
+        help_text='Max credits from monthly grants (0 = no cap). Top-ups bypass this cap.',
+    )
+    topup_credits_per_pack = models.PositiveIntegerField(
+        default=0,
+        help_text='Credits per top-up pack (0 = top-up not allowed for this plan).',
+    )
+    topup_price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=0,
+        help_text='Price per top-up pack in INR.',
+    )
+
     # ── Feature Flags ────────────────────────────────────────────────────
+    job_notifications = models.BooleanField(
+        default=False,
+        help_text='Can receive job alert notifications.',
+    )
     pdf_export = models.BooleanField(
         default=True,
         help_text='Can export analysis as PDF report.',
@@ -229,13 +271,126 @@ class Plan(models.Model):
         return f"{self.name} (₹{self.price}/{self.billing_cycle})"
 
 
-# ── Signals — auto-create profile + notification prefs on user creation ────
+class Wallet(models.Model):
+    """
+    Per-user credit wallet. OneToOne with User.
+    Balance is always >= 0; enforced at the service layer with select_for_update().
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='wallet')
+    balance = models.PositiveIntegerField(
+        default=0,
+        help_text='Current credit balance.',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Wallet'
+        verbose_name_plural = 'Wallets'
+
+    def __str__(self):
+        return f"Wallet({self.user.username}, balance={self.balance})"
+
+
+class WalletTransaction(models.Model):
+    """
+    Immutable audit log for every credit change.
+    Append-only — never update or delete rows.
+    """
+    TYPE_PLAN_CREDIT = 'plan_credit'
+    TYPE_TOPUP = 'topup'
+    TYPE_ANALYSIS_DEBIT = 'analysis_debit'
+    TYPE_REFUND = 'refund'
+    TYPE_ADMIN_ADJUSTMENT = 'admin_adjustment'
+    TYPE_UPGRADE_BONUS = 'upgrade_bonus'
+    TYPE_CHOICES = [
+        (TYPE_PLAN_CREDIT, 'Monthly Plan Credit'),
+        (TYPE_TOPUP, 'Top-Up Purchase'),
+        (TYPE_ANALYSIS_DEBIT, 'Analysis Debit'),
+        (TYPE_REFUND, 'Refund'),
+        (TYPE_ADMIN_ADJUSTMENT, 'Admin Adjustment'),
+        (TYPE_UPGRADE_BONUS, 'Upgrade Bonus'),
+    ]
+
+    wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='transactions')
+    amount = models.IntegerField(
+        help_text='Positive = credit, negative = debit.',
+    )
+    balance_after = models.PositiveIntegerField(
+        help_text='Wallet balance after this transaction.',
+    )
+    transaction_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    description = models.CharField(max_length=255)
+    reference_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Links to analysis ID or other context.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Wallet Transaction'
+        verbose_name_plural = 'Wallet Transactions'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['wallet', '-created_at']),
+            models.Index(fields=['transaction_type', '-created_at']),
+        ]
+
+    def __str__(self):
+        sign = '+' if self.amount >= 0 else ''
+        return f"{sign}{self.amount} ({self.transaction_type}) → {self.balance_after}"
+
+
+class CreditCost(models.Model):
+    """
+    Admin-managed credit costs per action.
+    Allows changing analysis cost without code deploys.
+    """
+    action = models.SlugField(
+        max_length=50,
+        unique=True,
+        help_text='Action identifier (e.g., "resume_analysis").',
+    )
+    cost = models.PositiveIntegerField(
+        default=1,
+        help_text='Credits consumed per action.',
+    )
+    description = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Human-readable description of this action.',
+    )
+
+    class Meta:
+        verbose_name = 'Credit Cost'
+        verbose_name_plural = 'Credit Costs'
+
+    def __str__(self):
+        return f"{self.action} = {self.cost} credits"
+
+
+# ── Signals — auto-create profile + notification prefs + wallet on user creation ──
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
-    """Create UserProfile and NotificationPreference when a new User is created."""
+    """Create UserProfile, NotificationPreference, and Wallet when a new User is created."""
     if created:
         # Assign the default 'free' plan if it exists
         free_plan = Plan.objects.filter(slug='free', is_active=True).first()
         UserProfile.objects.get_or_create(user=instance, defaults={'plan': free_plan})
         NotificationPreference.objects.get_or_create(user=instance)
+
+        # Create wallet with initial plan credits
+        initial_credits = free_plan.credits_per_month if free_plan else 0
+        wallet, wallet_created = Wallet.objects.get_or_create(
+            user=instance, defaults={'balance': initial_credits}
+        )
+        if wallet_created and initial_credits > 0:
+            WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=initial_credits,
+                balance_after=initial_credits,
+                transaction_type=WalletTransaction.TYPE_PLAN_CREDIT,
+                description=f'Initial {free_plan.name} plan credits',
+            )
+            logger.info('Wallet created for user=%s with %d credits', instance.username, initial_credits)

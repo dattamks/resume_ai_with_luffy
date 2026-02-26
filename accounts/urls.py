@@ -4,6 +4,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, LoginView, LogoutView, MeView, ChangePasswordView,
     NotificationPreferenceView, ForgotPasswordView, ResetPasswordView,
+    WalletView, WalletTransactionListView, WalletTopUpView,
+    PlanListView, PlanSubscribeView,
 )
 
 urlpatterns = [
@@ -16,4 +18,11 @@ urlpatterns = [
     path('forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
     path('reset-password/', ResetPasswordView.as_view(), name='reset-password'),
     path('notifications/', NotificationPreferenceView.as_view(), name='notification-preferences'),
+    # Wallet & Credits
+    path('wallet/', WalletView.as_view(), name='wallet'),
+    path('wallet/transactions/', WalletTransactionListView.as_view(), name='wallet-transactions'),
+    path('wallet/topup/', WalletTopUpView.as_view(), name='wallet-topup'),
+    # Plans
+    path('plans/', PlanListView.as_view(), name='plan-list'),
+    path('plans/subscribe/', PlanSubscribeView.as_view(), name='plan-subscribe'),
 ]

@@ -24,7 +24,7 @@
 15. [Error Handling Reference](#15-error-handling-reference)
 16. [TypeScript Type Definitions](#16-typescript-type-definitions)
 17. [Frontend Integration Recipes](#17-frontend-integration-recipes)
-18. [Plans (Admin-Managed)](#18-plans-admin-managed)
+18. [Plans & Wallet (Credits System)](#18-plans--wallet-credits-system)
 19. [Email Templates (Admin)](#19-email-templates-admin)
 20. [Quick Reference — All Endpoints](#20-quick-reference--all-endpoints)
 
@@ -2560,9 +2560,30 @@ function ResumesPage() {
 
 ---
 
-## 18. Plans (Admin-Managed)
+## 18. Plans & Wallet (Credits System)
 
-Plans define subscription tiers with quotas, rate limits, and feature flags. They are managed via Django Admin and assigned to users via `UserProfile.plan` (FK). New users auto-receive the **Free** plan on registration.
+Plans define subscription tiers with quotas, rate limits, and feature flags. Each plan grants monthly credits used for resume analysis. Plans are managed via Django Admin and assigned to users via `UserProfile.plan` FK. New users auto-receive the **Free** plan on registration.
+
+### Credit Economics
+
+| Item | Value |
+|------|-------|
+| Resume analysis | **1 credit** |
+| All other actions | **0 credits** (free) |
+| Free plan monthly grant | **2 credits** |
+| Pro plan monthly grant | **25 credits** |
+| Monthly grant behavior | Accumulate with admin-configurable cap |
+| Top-up | Pro users only, multi-pack, credits bypass cap |
+
+### Credit Flow
+
+```
+POST /api/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
+                                   → YES → deduct 1 credit → dispatch task
+                                                 ↓
+                     Celery task → FAILED → refund 1 credit
+                                → SUCCESS → credit stays deducted
+```
 
 ### Plan Model Fields
 
@@ -2574,10 +2595,15 @@ Plans define subscription tiers with quotas, rate limits, and feature flags. The
 | `description` | `CharField(500)` | Short description shown to users |
 | `billing_cycle` | `CharField(10)` | One of: `free`, `monthly`, `yearly`, `lifetime` |
 | `price` | `DecimalField(8,2)` | Price in INR (`0.00` for free tier) |
+| `credits_per_month` | `int` | Credits granted each billing cycle |
+| `max_credits_balance` | `int` | Max credits from monthly grants (`0` = no cap). Top-ups bypass this |
+| `topup_credits_per_pack` | `int` | Credits per top-up pack (`0` = top-up not allowed) |
+| `topup_price` | `DecimalField(8,2)` | Price per top-up pack in INR |
 | `analyses_per_month` | `int` | Max analyses per month (`0` = unlimited) |
 | `api_rate_per_hour` | `int` | Max general API requests per hour |
 | `max_resume_size_mb` | `int` | Max resume file size in MB |
 | `max_resumes_stored` | `int` | Max resumes stored at once (`0` = unlimited) |
+| `job_notifications` | `bool` | Can receive job alert notifications |
 | `pdf_export` | `bool` | Can export analysis as PDF |
 | `share_analysis` | `bool` | Can generate public share links |
 | `job_tracking` | `bool` | Can use job tracking features |
@@ -2590,20 +2616,23 @@ Plans define subscription tiers with quotas, rate limits, and feature flags. The
 
 Seeded via `python manage.py seed_plans` (idempotent — safe to re-run).
 
-| Name | Slug | Price | Rate | Resumes | Features |
-|------|------|-------|------|---------|----------|
-| **Free** | `free` | ₹0 | 200/hr | 5 stored, 5MB max | PDF export, share, jobs |
-| **Pro** | `pro` | ₹499/mo | 500/hr | Unlimited, 10MB max | All Free + priority queue + email support |
+| Name | Slug | Price | Credits/mo | Cap | Top-up | Job Notifications | Rate | Resumes |
+|------|------|-------|-----------|-----|--------|-------------------|------|---------|
+| **Free** | `free` | ₹0 | 2 | 10 | ❌ | ❌ | 200/hr | 5 stored, 5MB max |
+| **Pro** | `pro` | ₹499/mo | 25 | 100 | 5 credits/₹49 | ✅ | 500/hr | Unlimited, 10MB max |
 
 ### Plan in User Responses
 
-The `plan` object is included in all user-facing responses (`register`, `login`, `GET /me/`, `PUT /me/`):
+The `plan`, `wallet`, `plan_valid_until`, and `pending_plan` objects are included in all user-facing responses (`register`, `login`, `GET /me/`, `PUT /me/`):
 
 ```json
 {
   "id": 1,
   "username": "john",
-  "...": "...",
+  "email": "john@example.com",
+  "date_joined": "2026-02-26T10:00:00Z",
+  "country_code": "+91",
+  "mobile_number": "",
   "plan": {
     "id": 1,
     "name": "Free",
@@ -2611,22 +2640,369 @@ The `plan` object is included in all user-facing responses (`register`, `login`,
     "description": "Get started with basic resume analysis.",
     "billing_cycle": "free",
     "price": "0.00",
+    "credits_per_month": 2,
+    "max_credits_balance": 10,
+    "topup_credits_per_pack": 0,
+    "topup_price": "0.00",
     "analyses_per_month": 0,
     "api_rate_per_hour": 200,
     "max_resume_size_mb": 5,
     "max_resumes_stored": 5,
+    "job_notifications": false,
     "pdf_export": true,
     "share_analysis": true,
     "job_tracking": true,
     "priority_queue": false,
     "email_support": false
-  }
+  },
+  "wallet": {
+    "balance": 2,
+    "updated_at": "2026-02-26T10:00:00Z"
+  },
+  "plan_valid_until": null,
+  "pending_plan": null
 }
 ```
 
 > **`plan` is `null`** if no plan is assigned (edge case — all new users auto-get "Free"). Frontend should treat `null` as free tier defaults.
+>
+> **`wallet` is `null`** if wallet hasn't been created yet (edge case for pre-migration users). Frontend should treat `null` as `{ balance: 0 }`.
+>
+> **`plan_valid_until`** is set when user is on a paid plan (e.g., Pro). `null` for free plan.
+>
+> **`pending_plan`** is set when a downgrade is scheduled. Shows the plan the user will switch to after `plan_valid_until` expires.
 
-> **Note:** Plan limits are not yet enforced server-side. The model is in place for a future wallet/Stripe-based upgrade system. Frontend can use `plan` fields to show UI hints (e.g., "Upgrade to Pro for priority processing").
+### Wallet Endpoints
+
+#### `GET /api/auth/wallet/`
+
+Returns wallet balance, plan credits info, and top-up availability.
+
+**Response:**
+```json
+{
+  "balance": 15,
+  "updated_at": "2026-02-26T10:00:00Z",
+  "plan_name": "Pro",
+  "credits_per_month": 25,
+  "can_topup": true,
+  "topup_credits_per_pack": 5,
+  "topup_price": 49.0,
+  "plan_valid_until": "2026-03-28T10:00:00Z",
+  "pending_downgrade": null
+}
+```
+
+#### `GET /api/auth/wallet/transactions/`
+
+Paginated transaction history.
+
+**Response:**
+```json
+{
+  "count": 12,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 5,
+      "amount": -1,
+      "balance_after": 14,
+      "transaction_type": "analysis_debit",
+      "description": "Resume analysis",
+      "reference_id": "42",
+      "created_at": "2026-02-26T12:00:00Z"
+    },
+    {
+      "id": 4,
+      "amount": 5,
+      "balance_after": 15,
+      "transaction_type": "topup",
+      "description": "Top-up: 1 pack(s) × 5 credits = 5 credits",
+      "reference_id": "",
+      "created_at": "2026-02-26T11:00:00Z"
+    }
+  ]
+}
+```
+
+**Transaction types:**
+
+| Type | Description |
+|------|-------------|
+| `plan_credit` | Monthly plan credit grant |
+| `topup` | Top-up purchase |
+| `analysis_debit` | Credit deducted for analysis |
+| `refund` | Credit refunded (analysis failed) |
+| `admin_adjustment` | Admin-initiated adjustment |
+| `upgrade_bonus` | Credits granted on plan upgrade |
+
+#### `POST /api/auth/wallet/topup/`
+
+Buy credit packs. **Pro users only.**
+
+**Request:**
+```json
+{
+  "quantity": 3
+}
+```
+
+**Success Response (200):**
+```json
+{
+  "detail": "15 credits added.",
+  "credits_added": 15,
+  "balance": 30,
+  "total_price": 147.0
+}
+```
+
+**Error Responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Free plan user: `"Your plan does not support credit top-ups."` |
+| `400` | Downgrade pending: `"Cannot top up while a plan downgrade is pending."` |
+| `400` | Invalid quantity: `"Quantity must be a positive integer."` |
+
+### Plan Endpoints
+
+#### `GET /api/auth/plans/`
+
+List all active plans. **Public endpoint — no auth required.**
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "Free",
+    "slug": "free",
+    "credits_per_month": 2,
+    "topup_credits_per_pack": 0,
+    "topup_price": "0.00",
+    "job_notifications": false,
+    "...": "..."
+  },
+  {
+    "id": 2,
+    "name": "Pro",
+    "slug": "pro",
+    "credits_per_month": 25,
+    "topup_credits_per_pack": 5,
+    "topup_price": "49.00",
+    "job_notifications": true,
+    "...": "..."
+  }
+]
+```
+
+#### `POST /api/auth/plans/subscribe/`
+
+Switch to a different plan.
+
+**Request:**
+```json
+{
+  "plan_slug": "pro"
+}
+```
+
+**Upgrade Response (200):**
+```json
+{
+  "action": "upgraded",
+  "message": "Upgraded to Pro. 25 bonus credits added.",
+  "plan": "pro",
+  "plan_valid_until": "2026-03-28T10:00:00Z"
+}
+```
+
+**Downgrade Response (200):**
+```json
+{
+  "action": "downgrade_scheduled",
+  "message": "Downgrade to Free scheduled. You will remain on Pro until March 28, 2026. Your credit balance carries forward.",
+  "plan": "pro",
+  "pending_plan": "free",
+  "effective_date": "2026-03-28T10:00:00Z"
+}
+```
+
+**Same Plan Response (200):**
+```json
+{
+  "action": "none",
+  "message": "Already on the Free plan.",
+  "plan": "free"
+}
+```
+
+### Analysis Submit Response Changes
+
+`POST /api/analyze/` and `POST /api/analyses/<id>/retry/` now include credit info:
+
+**Success (202):**
+```json
+{
+  "id": 42,
+  "status": "processing",
+  "credits_used": 1,
+  "balance": 14
+}
+```
+
+**Insufficient Credits (402):**
+```json
+{
+  "detail": "Insufficient credits.",
+  "balance": 0,
+  "cost": 1
+}
+```
+
+### Frontend Handling
+
+```js
+// Handle 402 in your API interceptor
+api.interceptors.response.use(null, (error) => {
+  if (error.response?.status === 402) {
+    const { balance, cost } = error.response.data;
+    showUpgradeModal({
+      message: `You need ${cost} credit(s) but have ${balance}. Upgrade or top up!`,
+    });
+  }
+  return Promise.reject(error);
+});
+
+// Top-up flow
+const handleTopUp = async (quantity = 1) => {
+  try {
+    const { data } = await api.post('/auth/wallet/topup/', { quantity });
+    showToast(`${data.credits_added} credits added! Balance: ${data.balance}`);
+  } catch (err) {
+    showToast(err.response?.data?.detail || 'Top-up failed', 'error');
+  }
+};
+
+// Subscribe flow
+const handleSubscribe = async (planSlug) => {
+  const { data } = await api.post('/auth/plans/subscribe/', { plan_slug: planSlug });
+  showToast(data.message);
+  refreshUser(); // Refetch /auth/me/ to update plan + wallet in context
+};
+```
+
+### TypeScript Types
+
+```typescript
+// ── Wallet & Credits ─────────────────────────────────────────────────────
+
+interface WalletInfo {
+  balance: number;
+  updated_at: string;        // ISO 8601
+}
+
+interface WalletTransaction {
+  id: number;
+  amount: number;            // positive = credit, negative = debit
+  balance_after: number;
+  transaction_type: 'plan_credit' | 'topup' | 'analysis_debit' | 'refund' | 'admin_adjustment' | 'upgrade_bonus';
+  description: string;
+  reference_id: string;
+  created_at: string;        // ISO 8601
+}
+
+interface WalletDetail {
+  balance: number;
+  updated_at: string;
+  plan_name: string;
+  credits_per_month: number;
+  can_topup: boolean;
+  topup_credits_per_pack: number;
+  topup_price: number;
+  plan_valid_until: string | null;
+  pending_downgrade: string | null;  // plan slug
+}
+
+interface TopUpRequest {
+  quantity: number;           // number of packs (≥ 1)
+}
+
+interface TopUpResponse {
+  detail: string;
+  credits_added: number;
+  balance: number;
+  total_price: number;
+}
+
+interface PlanSubscribeRequest {
+  plan_slug: string;
+}
+
+interface PlanSubscribeResponse {
+  action: 'upgraded' | 'downgraded' | 'downgrade_scheduled' | 'none';
+  message: string;
+  plan: string;               // current plan slug
+  pending_plan?: string;       // only for downgrade_scheduled
+  plan_valid_until?: string;   // only for upgrade
+  effective_date?: string;     // only for downgrade_scheduled
+}
+
+// Updated User interface (add these fields)
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  date_joined: string;
+  country_code: string;
+  mobile_number: string;
+  plan: Plan | null;
+  wallet: WalletInfo | null;
+  plan_valid_until: string | null;
+  pending_plan: Plan | null;
+}
+
+// Updated Plan interface (add these fields)
+interface Plan {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  billing_cycle: string;
+  price: string;
+  credits_per_month: number;
+  max_credits_balance: number;
+  topup_credits_per_pack: number;
+  topup_price: string;
+  analyses_per_month: number;
+  api_rate_per_hour: number;
+  max_resume_size_mb: number;
+  max_resumes_stored: number;
+  job_notifications: boolean;
+  pdf_export: boolean;
+  share_analysis: boolean;
+  job_tracking: boolean;
+  priority_queue: boolean;
+  email_support: boolean;
+}
+
+// Updated AnalysisSubmitResponse
+interface AnalysisSubmitResponse {
+  id: number;
+  status: 'processing';
+  credits_used: number;
+  balance: number;
+}
+
+// Insufficient credits error (402)
+interface InsufficientCreditsError {
+  detail: string;
+  balance: number;
+  cost: number;
+}
+```
 
 ---
 
@@ -2702,6 +3078,12 @@ send_templated_email(
 | POST | `/api/auth/reset-password/` | ❌ | Auth (20/hr IP) | Set new password with reset token |
 | GET | `/api/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
 | PUT | `/api/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
+| **Wallet & Plans** |||||
+| GET | `/api/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
+| GET | `/api/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
+| POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | Buy credit packs (Pro only) |
+| GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
+| POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
 | GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (paginated) |

@@ -1,0 +1,36 @@
+"""
+Seed default credit costs for the platform.
+Idempotent — safe to run multiple times (uses update_or_create on action).
+
+Usage:
+    python manage.py seed_credit_costs
+"""
+from django.core.management.base import BaseCommand
+from accounts.models import CreditCost
+
+
+CREDIT_COSTS = [
+    {
+        'action': 'resume_analysis',
+        'cost': 1,
+        'description': 'Cost per resume analysis (including retries that succeed).',
+    },
+]
+
+
+class Command(BaseCommand):
+    help = 'Seed default credit costs. Idempotent.'
+
+    def handle(self, *args, **options):
+        for cost_data in CREDIT_COSTS:
+            action = cost_data.pop('action')
+            obj, created = CreditCost.objects.update_or_create(
+                action=action,
+                defaults={**cost_data, 'action': action},
+            )
+            # Restore action for re-runnability
+            cost_data['action'] = action
+            status = 'Created' if created else 'Updated'
+            self.stdout.write(self.style.SUCCESS(f'{status}: {obj.action} = {obj.cost} credits'))
+
+        self.stdout.write(self.style.SUCCESS('\nDone — credit costs seeded.'))

@@ -254,6 +254,10 @@ class ResumeAnalysis(models.Model):
         null=True, blank=True, unique=True,
         help_text='Public share token — when set, analysis is viewable at /api/shared/<token>/',
     )
+    credits_deducted = models.BooleanField(
+        default=False,
+        help_text='Whether credits were deducted for this analysis. Prevents double-deduction on Celery redelivery.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

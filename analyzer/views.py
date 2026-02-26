@@ -48,9 +48,30 @@ class AnalyzeResumeView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        # ── Credit check — deduct upfront, refund on failure ──
+        from accounts.services import deduct_credits, InsufficientCreditsError
+        try:
+            credit_result = deduct_credits(
+                request.user,
+                'resume_analysis',
+                description='Resume analysis',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {
+                    'detail': 'Insufficient credits.',
+                    'balance': e.balance,
+                    'cost': e.cost,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
         # Idempotency guard: prevent double-click / duplicate submissions
         lock_key = f'analyze_lock:{request.user.id}'
         if not cache.add(lock_key, 1, self.IDEMPOTENCY_LOCK_TTL):
+            # Refund since we deducted but can't proceed
+            from accounts.services import refund_credits
+            refund_credits(request.user, 'resume_analysis', description='Refund: duplicate submission blocked')
             return Response(
                 {'detail': 'An analysis is already being submitted. Please wait.'},
                 status=status.HTTP_409_CONFLICT,
@@ -58,19 +79,31 @@ class AnalyzeResumeView(APIView):
 
         try:
             analysis = serializer.save(user=request.user, status=ResumeAnalysis.STATUS_PROCESSING)
-            logger.info('Analysis record created (id=%s, status=processing)', analysis.id)
+
+            # Mark that credits were deducted for this analysis
+            analysis.credits_deducted = True
+            analysis.save(update_fields=['credits_deducted'])
+
+            logger.info('Analysis record created (id=%s, status=processing, credits_deducted=True)', analysis.id)
 
             # Dispatch to Celery worker — returns immediately
             run_analysis_task.delay(analysis.id, request.user.id)
 
             logger.info('Celery task dispatched for analysis id=%s', analysis.id)
             return Response(
-                {'id': analysis.id, 'status': analysis.status},
+                {
+                    'id': analysis.id,
+                    'status': analysis.status,
+                    'credits_used': credit_result['cost'],
+                    'balance': credit_result['balance_after'],
+                },
                 status=status.HTTP_202_ACCEPTED,
             )
         except Exception:
-            # Release lock on unexpected errors so user can retry
+            # Release lock and refund credits on unexpected errors
             cache.delete(lock_key)
+            from accounts.services import refund_credits
+            refund_credits(request.user, 'resume_analysis', description='Refund: analysis creation failed')
             raise
 
 
@@ -103,18 +136,44 @@ class RetryAnalysisView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # ── Credit check for retry — deduct upfront ──
+        from accounts.services import deduct_credits, InsufficientCreditsError
+        try:
+            credit_result = deduct_credits(
+                request.user,
+                'resume_analysis',
+                description=f'Retry analysis #{analysis.id}',
+                reference_id=str(analysis.id),
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {
+                    'detail': 'Insufficient credits.',
+                    'balance': e.balance,
+                    'cost': e.cost,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
         logger.info('Retrying analysis id=%s from step=%s', analysis.id, analysis.pipeline_step)
 
         # Reset status to processing but keep pipeline_step (so it resumes from there)
         analysis.status = ResumeAnalysis.STATUS_PROCESSING
         analysis.error_message = ''
-        analysis.save(update_fields=['status', 'error_message'])
+        analysis.credits_deducted = True
+        analysis.save(update_fields=['status', 'error_message', 'credits_deducted'])
 
         # Dispatch to Celery worker
         run_analysis_task.delay(analysis.id, request.user.id)
 
         return Response(
-            {'id': analysis.id, 'status': analysis.status, 'pipeline_step': analysis.pipeline_step},
+            {
+                'id': analysis.id,
+                'status': analysis.status,
+                'pipeline_step': analysis.pipeline_step,
+                'credits_used': credit_result['cost'],
+                'balance': credit_result['balance_after'],
+            },
             status=status.HTTP_202_ACCEPTED,
         )
 
