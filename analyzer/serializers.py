@@ -442,11 +442,7 @@ class JobAlertRunSerializer(serializers.ModelSerializer):
 
 class JobAlertSerializer(serializers.ModelSerializer):
     """List serializer — lightweight."""
-    last_run = JobAlertRunSerializer(
-        source='runs',
-        read_only=True,
-        default=None,
-    )
+    last_run = serializers.SerializerMethodField()
     resume_filename = serializers.CharField(source='resume.original_filename', read_only=True)
     search_profile = JobSearchProfileSerializer(
         source='resume.job_search_profile', read_only=True, default=None,
@@ -464,12 +460,9 @@ class JobAlertSerializer(serializers.ModelSerializer):
             'search_profile', 'last_run', 'created_at',
         )
 
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        # latest_run instead of the queryset
+    def get_last_run(self, instance):
         latest = instance.runs.order_by('-created_at').first()
-        data['last_run'] = JobAlertRunSerializer(latest).data if latest else None
-        return data
+        return JobAlertRunSerializer(latest).data if latest else None
 
 
 class JobAlertCreateSerializer(serializers.ModelSerializer):
@@ -482,6 +475,12 @@ class JobAlertCreateSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         if resume.user_id != user.id:
             raise serializers.ValidationError('Resume not found.')
+        # Prevent duplicate active alerts for the same resume
+        from .models import JobAlert
+        if JobAlert.objects.filter(user=user, resume=resume, is_active=True).exists():
+            raise serializers.ValidationError(
+                'An active job alert already exists for this resume.'
+            )
         return resume
 
     def validate_preferences(self, value):
@@ -495,4 +494,9 @@ class JobAlertUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobAlert
         fields = ('frequency', 'preferences', 'is_active')
+
+    def validate_preferences(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('preferences must be a JSON object.')
+        return value
 

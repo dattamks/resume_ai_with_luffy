@@ -104,15 +104,22 @@ def match_jobs(job_alert, discovered_jobs) -> list:
     batches = [jobs_list[i:i + 15] for i in range(0, len(jobs_list), 15)]
 
     for batch in batches:
-        batch_results = _score_batch(
-            batch=batch,
-            titles=titles,
-            skills=skills,
-            seniority=seniority,
-            industries=industries,
-            experience_years=experience_years,
-        )
-        results.extend(batch_results)
+        try:
+            batch_results = _score_batch(
+                batch=batch,
+                titles=titles,
+                skills=skills,
+                seniority=seniority,
+                industries=industries,
+                experience_years=experience_years,
+            )
+            results.extend(batch_results)
+        except (ValueError, Exception) as exc:
+            logger.warning(
+                'Job matcher batch failed (alert=%s, batch_size=%d): %s',
+                job_alert.id, len(batch), exc,
+            )
+            # Continue with other batches rather than failing the entire run
 
     logger.info(
         'Job matching: alert=%s total=%d above_threshold=%d',

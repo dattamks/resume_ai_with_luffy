@@ -155,8 +155,18 @@ def _validate_profile(data: dict) -> dict:
         'seniority': seniority,
         'industries': _ensure_list(data.get('industries'))[:4],
         'locations': _ensure_list(data.get('locations'))[:5],
-        'experience_years': int(data['experience_years']) if str(data.get('experience_years', '')).isdigit() else None,
+        'experience_years': _parse_experience_years(data.get('experience_years')),
     }
+
+
+def _parse_experience_years(val) -> int | None:
+    """Robustly parse experience_years from LLM output (handles int, float, str)."""
+    if val is None:
+        return None
+    try:
+        return max(0, int(float(val)))
+    except (TypeError, ValueError):
+        return None
 
 
 def _get_resume_text(resume) -> str:

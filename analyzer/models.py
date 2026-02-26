@@ -505,7 +505,7 @@ class JobAlert(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='job_alerts')
     resume = models.ForeignKey(
-        Resume, on_delete=models.CASCADE,
+        Resume, on_delete=models.PROTECT,
         related_name='job_alerts',
         help_text='Resume used for job matching',
     )
@@ -664,6 +664,10 @@ class JobAlertRun(models.Model):
     jobs_matched = models.PositiveIntegerField(default=0)
     notification_sent = models.BooleanField(default=False)
     credits_used = models.PositiveSmallIntegerField(default=0)
+    credits_deducted = models.BooleanField(
+        default=False,
+        help_text='Whether credits were deducted for this run (for idempotent refund)',
+    )
     error_message = models.TextField(blank=True)
     duration_seconds = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

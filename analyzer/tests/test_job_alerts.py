@@ -304,14 +304,14 @@ class JobAlertMatchTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
-    @patch('analyzer.tasks.discover_jobs_task')
+    @patch('analyzer.tasks.discover_jobs_for_alert_task')
     def test_manual_run_trigger(self, mock_discover):
         mock_discover.delay.return_value = MagicMock()
         resp = self.client.post(f'/api/job-alerts/{self.alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
-        mock_discover.delay.assert_called_once()
+        mock_discover.delay.assert_called_once_with(str(self.alert.id))
 
-    @patch('analyzer.tasks.discover_jobs_task')
+    @patch('analyzer.tasks.discover_jobs_for_alert_task')
     def test_manual_run_inactive_alert(self, mock_discover):
         self.alert.is_active = False
         self.alert.save(update_fields=['is_active'])
@@ -606,3 +606,116 @@ class DiscoverJobsTaskTest(TestCase):
         # Alert should still be updated
         self.alert.refresh_from_db()
         self.assertIsNotNone(self.alert.next_run_at)
+
+
+class EdgeCaseTests(TestCase):
+    """Test edge cases identified during audit."""
+
+    def setUp(self):
+        _ensure_plans()
+        self.client = APIClient()
+        self.client, self.user = _auth(self.client, username='edgeuser')
+        _give_credits(self.user)
+        _set_plan(self.user, 'pro')
+        self.resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
+
+    def test_invalid_page_param(self):
+        """?page=abc should not crash — defaults to page 1."""
+        alert = JobAlert.objects.create(
+            user=self.user, resume=self.resume, frequency='daily',
+            is_active=True, next_run_at=timezone.now() + timedelta(days=1),
+        )
+        resp = self.client.get(f'/api/job-alerts/{alert.id}/matches/?page=abc')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['page'], 1)
+
+    def test_invalid_feedback_filter_rejected(self):
+        """?feedback=xyz should return 400."""
+        alert = JobAlert.objects.create(
+            user=self.user, resume=self.resume, frequency='daily',
+            is_active=True, next_run_at=timezone.now() + timedelta(days=1),
+        )
+        resp = self.client.get(f'/api/job-alerts/{alert.id}/matches/?feedback=xyz')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch('analyzer.views.extract_job_search_profile_task')
+    def test_duplicate_resume_alert_rejected(self, mock_task):
+        """Cannot create two active alerts for the same resume."""
+        mock_task.delay.return_value = MagicMock()
+
+        # First alert succeeds
+        resp = self.client.post('/api/job-alerts/', {
+            'resume': str(self.resume.id), 'frequency': 'daily',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+        # Second alert for same resume fails
+        resp = self.client.post('/api/job-alerts/', {
+            'resume': str(self.resume.id), 'frequency': 'weekly',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('already exists', str(resp.data))
+
+    def test_resume_delete_blocked_by_active_alert(self):
+        """Cannot delete a resume that has active job alerts."""
+        JobAlert.objects.create(
+            user=self.user, resume=self.resume, frequency='daily',
+            is_active=True, next_run_at=timezone.now() + timedelta(days=1),
+        )
+        resp = self.client.delete(f'/api/resumes/{self.resume.id}/')
+        self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn('job alert', resp.data['detail'].lower())
+
+    def test_update_preferences_must_be_dict(self):
+        """PUT with non-dict preferences should be rejected."""
+        alert = JobAlert.objects.create(
+            user=self.user, resume=self.resume, frequency='daily',
+            is_active=True, next_run_at=timezone.now() + timedelta(days=1),
+        )
+        resp = self.client.put(f'/api/job-alerts/{alert.id}/', {
+            'preferences': 'not-a-dict',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch('analyzer.tasks.discover_jobs_for_alert_task')
+    def test_manual_run_insufficient_credits(self, mock_discover):
+        """Manual run with 0 credits should return 402."""
+        from accounts.models import Wallet
+        wallet = Wallet.objects.get(user=self.user)
+        wallet.balance = 0
+        wallet.save(update_fields=['balance'])
+
+        alert = JobAlert.objects.create(
+            user=self.user, resume=self.resume, frequency='daily',
+            is_active=True, next_run_at=timezone.now() + timedelta(days=1),
+        )
+        JobSearchProfile.objects.create(
+            resume=self.resume,
+            titles=['Dev'],
+            skills=['Python'],
+            seniority='mid',
+        )
+        resp = self.client.post(f'/api/job-alerts/{alert.id}/run/')
+        self.assertEqual(resp.status_code, status.HTTP_402_PAYMENT_REQUIRED)
+        mock_discover.delay.assert_not_called()
+
+    def test_create_alert_for_other_users_resume(self):
+        """Cannot create alert for another user's resume."""
+        _set_plan(self.user, 'pro')
+        other_user = User.objects.create_user(username='otheruser', password='StrongPass123!')
+        other_resume, _ = Resume.get_or_create_from_upload(
+            other_user, _make_pdf(b'%PDF-1.4 other content'),
+        )
+        resp = self.client.post('/api/job-alerts/', {
+            'resume': str(other_resume.id), 'frequency': 'daily',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_experience_years_float_parsing(self):
+        """LLM returning '5.5' for experience_years should parse to 5."""
+        from analyzer.services.job_search_profile import _parse_experience_years
+        self.assertEqual(_parse_experience_years(5.5), 5)
+        self.assertEqual(_parse_experience_years('7'), 7)
+        self.assertIsNone(_parse_experience_years('N/A'))
+        self.assertIsNone(_parse_experience_years(None))
+        self.assertEqual(_parse_experience_years(0), 0)

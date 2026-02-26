@@ -439,18 +439,38 @@ def discover_jobs_task():
     2. Call all configured job source APIs
     3. Dedup and save new DiscoveredJob records
     4. Chain match_jobs_task for each alert
+
+    Uses select_for_update(skip_locked=True) to prevent race conditions
+    when multiple workers pick up the same periodic schedule.
     """
+    from django.db import transaction
     from django.utils import timezone
+    from django.utils.dateparse import parse_datetime  # noqa: E402
     from .models import JobAlert, DiscoveredJob
     from .services.job_sources.factory import get_job_sources
 
     now = timezone.now()
-    due_alerts = JobAlert.objects.filter(
-        is_active=True,
-        next_run_at__lte=now,
-    ).select_related('resume', 'resume__job_search_profile')
 
-    logger.info('discover_jobs_task: found %d due alerts', due_alerts.count())
+    # Lock rows to prevent concurrent processing by multiple workers
+    with transaction.atomic():
+        due_alert_ids = list(
+            JobAlert.objects
+            .select_for_update(skip_locked=True)
+            .filter(is_active=True, next_run_at__lte=now)
+            .values_list('id', flat=True)
+        )
+
+    if not due_alert_ids:
+        logger.info('discover_jobs_task: no due alerts')
+        return
+
+    due_alerts = (
+        JobAlert.objects
+        .filter(id__in=due_alert_ids)
+        .select_related('resume', 'resume__job_search_profile')
+    )
+
+    logger.info('discover_jobs_task: found %d due alerts', len(due_alert_ids))
 
     for alert in due_alerts:
         try:
@@ -498,7 +518,10 @@ def discover_jobs_task():
                 ):
                     continue
 
-                from django.utils.dateparse import parse_datetime
+                # Skip listings with no URL
+                if not listing.url:
+                    continue
+
                 posted_at = None
                 if listing.posted_at:
                     try:
@@ -537,6 +560,103 @@ def discover_jobs_task():
             logger.exception('discover_jobs_task failed for alert %s: %s', alert.id, exc)
 
 
+@shared_task(ignore_result=True)
+def discover_jobs_for_alert_task(alert_id):
+    """
+    Run job discovery for a single alert (used by manual run endpoint).
+    Unlike discover_jobs_task(), this processes only the specified alert.
+    """
+    from django.utils import timezone
+    from django.utils.dateparse import parse_datetime  # noqa: E402
+    from .models import JobAlert, DiscoveredJob
+    from .services.job_sources.factory import get_job_sources
+
+    try:
+        alert = JobAlert.objects.select_related(
+            'resume', 'resume__job_search_profile',
+        ).get(id=alert_id, is_active=True)
+    except JobAlert.DoesNotExist:
+        logger.warning('discover_jobs_for_alert_task: alert %s not found or inactive', alert_id)
+        return
+
+    now = timezone.now()
+    resume = alert.resume
+    try:
+        profile = resume.job_search_profile
+    except Exception:
+        logger.warning('Alert %s has no JobSearchProfile — skipping', alert.id)
+        alert.set_next_run()
+        alert.save(update_fields=['next_run_at'])
+        return
+
+    queries = profile.titles[:3] if profile.titles else []
+    if not queries:
+        logger.warning('Alert %s profile has no titles — skipping', alert.id)
+        alert.set_next_run()
+        alert.save(update_fields=['next_run_at'])
+        return
+
+    preferences = alert.preferences or {}
+    location = preferences.get('location', '')
+    if not location and profile.locations:
+        location = profile.locations[0]
+
+    sources = get_job_sources()
+    all_listings = []
+    for source in sources:
+        try:
+            listings = source.search(queries=queries, location=location)
+            all_listings.extend(listings)
+        except Exception as exc:
+            logger.warning('Source %s failed for alert %s: %s', source.name(), alert.id, exc)
+
+    logger.info('Alert %s (manual): found %d raw listings', alert.id, len(all_listings))
+
+    new_job_ids = []
+    for listing in all_listings:
+        excluded = preferences.get('excluded_companies', [])
+        if listing.company and any(
+            ex.lower() in listing.company.lower() for ex in excluded
+        ):
+            continue
+
+        # Skip listings with no URL
+        if not listing.url:
+            continue
+
+        posted_at = None
+        if listing.posted_at:
+            try:
+                posted_at = parse_datetime(listing.posted_at)
+            except Exception:
+                pass
+
+        job, created = DiscoveredJob.objects.get_or_create(
+            source=listing.source,
+            external_id=listing.external_id,
+            defaults={
+                'url': listing.url,
+                'title': listing.title,
+                'company': listing.company,
+                'location': listing.location,
+                'salary_range': listing.salary_range,
+                'description_snippet': listing.description_snippet,
+                'posted_at': posted_at,
+                'raw_data': listing.raw_data,
+            },
+        )
+        new_job_ids.append(str(job.id))
+
+    logger.info('Alert %s (manual): %d unique jobs saved', alert.id, len(new_job_ids))
+
+    alert.last_run_at = now
+    alert.set_next_run()
+    alert.save(update_fields=['last_run_at', 'next_run_at'])
+
+    if new_job_ids:
+        match_jobs_task.delay(str(alert.id), new_job_ids)
+
+
 @shared_task(
     bind=True,
     max_retries=1,
@@ -568,23 +688,28 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
     start = _time.monotonic()
     run = JobAlertRun.objects.create(job_alert=alert)
 
-    # Deduct 1 credit for this run
+    # Only deduct credits on the first attempt (not on retries)
     credits_used = 0
-    credit_deducted = False
-    try:
-        deduct_credits(
-            alert.user,
-            'job_alert_run',
-            description=f'Job alert run #{run.id}',
-            reference_id=str(run.id),
-        )
-        credits_used = 1
-        credit_deducted = True
-    except InsufficientCreditsError as e:
-        logger.warning('Insufficient credits for alert %s (balance=%d) — skipping run', job_alert_id, e.balance)
-        run.error_message = f'Insufficient credits (balance={e.balance})'
-        run.save(update_fields=['error_message'])
-        return
+    if self.request.retries == 0:
+        try:
+            deduct_credits(
+                alert.user,
+                'job_alert_run',
+                description=f'Job alert run #{run.id}',
+                reference_id=str(run.id),
+            )
+            credits_used = 1
+            run.credits_deducted = True
+            run.save(update_fields=['credits_deducted'])
+        except InsufficientCreditsError as e:
+            logger.warning('Insufficient credits for alert %s (balance=%d) — skipping run', job_alert_id, e.balance)
+            run.error_message = f'Insufficient credits (balance={e.balance})'
+            run.save(update_fields=['error_message'])
+            return
+    else:
+        # On retry, check if credits were already deducted for this run
+        run.refresh_from_db()
+        credits_used = 1 if run.credits_deducted else 0
 
     try:
         discovered_jobs = DiscoveredJob.objects.filter(id__in=discovered_job_ids)
@@ -634,7 +759,7 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
         run.duration_seconds = round(duration, 2)
         run.save(update_fields=['error_message', 'duration_seconds'])
         # Refund credits on failure
-        if credit_deducted:
+        if run.credits_deducted:
             try:
                 refund_credits(
                     alert.user,

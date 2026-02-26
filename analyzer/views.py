@@ -369,6 +369,16 @@ class ResumeDeleteView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # Check for active job alerts referencing this resume
+        from .models import JobAlert
+        alert_count = JobAlert.objects.filter(resume=resume, is_active=True).count()
+        if alert_count > 0:
+            return Response(
+                {'detail': f'Cannot delete: {alert_count} active job alert(s) still reference this resume. '
+                           'Deactivate them first.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
         logger.info('Deleting resume id=%s file=%s user=%s', pk, resume.file.name, request.user.id)
         resume.delete()  # post_delete signal cleans up R2 file
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -901,11 +911,22 @@ class JobAlertMatchListView(APIView):
 
         feedback_filter = request.query_params.get('feedback')
         if feedback_filter:
+            valid_feedback = {c[0] for c in JobMatch.FEEDBACK_CHOICES}
+            if feedback_filter not in valid_feedback:
+                return Response(
+                    {'detail': f'Invalid feedback filter. Choose from: {" ,".join(sorted(valid_feedback))}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             qs = qs.filter(user_feedback=feedback_filter)
 
         # Basic pagination (20 per page)
         from django.core.paginator import Paginator
-        page_num = int(request.query_params.get('page', 1))
+        try:
+            page_num = int(request.query_params.get('page', 1))
+            if page_num < 1:
+                page_num = 1
+        except (TypeError, ValueError):
+            page_num = 1
         paginator = Paginator(qs, 20)
         page = paginator.get_page(page_num)
 
@@ -979,18 +1000,22 @@ class JobAlertManualRunView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Import here to avoid circular; trigger the full discover pipeline
-        from .tasks import discover_jobs_task as _discover
+        # Check credits upfront so we don't waste API calls
+        from accounts.services import check_balance
+        credit_info = check_balance(request.user, 'job_alert_run')
+        if not credit_info['has_enough']:
+            return Response(
+                {
+                    'detail': 'Insufficient credits.',
+                    'balance': credit_info['balance'],
+                    'cost': credit_info['cost'],
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
-        # We'll run a targeted discover just for this alert by chaining
-        # discover then match.  For manual runs we trigger the whole task
-        # (it will pick up this alert since we set next_run_at = past).
-        from django.utils import timezone as _tz
-        alert.next_run_at = _tz.now() - _tz.timedelta(seconds=1)
-        alert.save(update_fields=['next_run_at'])
-
-        # Fire the periodic discover task (it will pick this alert up)
-        _discover.delay()
+        # Fire dedicated single-alert discovery task
+        from .tasks import discover_jobs_for_alert_task
+        discover_jobs_for_alert_task.delay(str(alert.id))
 
         logger.info('Manual job alert run triggered: alert=%s user=%s', alert.id, request.user.id)
 

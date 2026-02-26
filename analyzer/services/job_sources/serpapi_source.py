@@ -6,6 +6,7 @@ Env var required: SERPAPI_API_KEY
 
 Uses raw `requests` — no extra pypi package required.
 """
+import hashlib
 import logging
 from typing import List
 
@@ -66,7 +67,11 @@ class SerpAPIJobSource(BaseJobSource):
                 continue
 
             for job in data.get('jobs_results', []):
-                job_id = job.get('job_id') or job.get('title', '') + job.get('company_name', '')
+                job_id = job.get('job_id', '')
+                if not job_id:
+                    # Generate a deterministic hash from title + company + location
+                    raw_key = f"{job.get('title', '')}|{job.get('company_name', '')}|{job.get('location', '')}"
+                    job_id = hashlib.sha256(raw_key.encode()).hexdigest()[:32]
                 url = ''
                 # Try to get apply link
                 for link in job.get('related_links', []):
@@ -75,6 +80,10 @@ class SerpAPIJobSource(BaseJobSource):
                         break
                 if not url:
                     url = job.get('share_link', '') or ''
+
+                # Skip jobs with no URL — can't link user to anything useful
+                if not url:
+                    continue
 
                 salary = ''
                 detected_ext = job.get('detected_extensions', {})
