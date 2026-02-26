@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.13.0] — 2026-02-26
+
+### Phase 13: Razorpay Payment Gateway Integration
+
+### Added
+- **Razorpay SDK** (`razorpay==2.0.0`) — Official Python SDK for Razorpay API.
+- **`RazorpayPayment` model** — Tracks every payment attempt (subscription & top-up). Stores `razorpay_order_id`, `razorpay_payment_id` (unique), `razorpay_signature`, `razorpay_subscription_id`, amount in paise, status lifecycle (created → captured/failed/refunded), `credits_granted` flag for idempotency, `webhook_verified` flag.
+- **`RazorpaySubscription` model** — OneToOne per user. Tracks active Razorpay subscription with `razorpay_subscription_id`, `razorpay_plan_id`, status (created/authenticated/active/pending/halted/cancelled/completed/expired), `current_start`/`current_end` billing cycle, `short_url`.
+- **`accounts/razorpay_service.py`** — Complete payment service layer:
+  - `create_subscription(user, plan_slug)` — Creates Razorpay subscription via Subscriptions API for Pro plan auto-renewal. Validates no duplicate active subscription.
+  - `verify_subscription_payment()` — HMAC-SHA256 signature verification + plan upgrade + bonus credit provisioning.
+  - `cancel_subscription(user)` — Calls Razorpay cancel API (at cycle end) + schedules downgrade to Free.
+  - `get_subscription_status(user)` — Returns current subscription state.
+  - `create_topup_order(user, quantity)` — Creates Razorpay order via Orders API for one-time credit top-up packs.
+  - `verify_topup_payment()` — Signature verification + wallet credit addition.
+  - `verify_webhook_signature()` — HMAC-SHA256 webhook body verification.
+  - `handle_webhook_event()` — Dispatches 7 Razorpay event types: `payment.captured`, `payment.failed`, `subscription.activated`, `subscription.charged`, `subscription.cancelled`, `subscription.completed`, `subscription.halted`.
+  - Full **idempotency** — duplicate payment_id checks prevent double-provisioning of credits/plan upgrades.
+- **8 REST API endpoints** (under `/api/auth/payments/`):
+  - `POST /payments/subscribe/` — Create subscription (returns checkout params).
+  - `POST /payments/subscribe/verify/` — Verify subscription payment.
+  - `POST /payments/subscribe/cancel/` — Cancel subscription (at cycle end).
+  - `GET  /payments/subscribe/status/` — Current subscription status.
+  - `POST /payments/topup/` — Create top-up order (returns checkout params).
+  - `POST /payments/topup/verify/` — Verify top-up payment.
+  - `POST /payments/webhook/` — Razorpay webhook (no JWT auth, signature-verified).
+  - `GET  /payments/history/` — Paginated payment history.
+- **6 serializers** — `CreateSubscriptionSerializer`, `VerifySubscriptionSerializer`, `CreateTopUpOrderSerializer`, `VerifyTopUpSerializer`, `PaymentHistorySerializer`, `SubscriptionStatusSerializer`.
+- **2 admin classes** — `RazorpayPaymentAdmin` (read-only, no add/delete) and `RazorpaySubscriptionAdmin` with full filtering/search.
+- **Razorpay settings** — `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `RAZORPAY_CURRENCY` (placeholder defaults for dev).
+- **36 tests** — Comprehensive test suite covering:
+  - Model creation & unique constraints
+  - Subscription flow (create, verify, cancel, status, duplicate rejection)
+  - Top-up flow (create order, verify, free plan rejection, default quantity)
+  - Webhook handling (signature verification, payment.captured, payment.failed, subscription.cancelled)
+  - Idempotency (double-verify for both subscriptions and top-ups)
+  - Payment history (filtering, isolation, limit param)
+  - Authentication enforcement on all endpoints
+- **FRONTEND_API_GUIDE.md § 22** — Full integration guide with TypeScript types, checkout code samples, and step-by-step recipes.
+
+---
+
 ## [0.12.0] — 2026-02-26
 
 ### Phase 12: Smart Job Alerts (Job Discovery & Matching Pipeline)

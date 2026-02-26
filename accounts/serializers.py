@@ -238,3 +238,82 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         data['user'] = UserSerializer(self.user).data
         return data
+
+
+# ── Razorpay Payment Serializers ────────────────────────────────────────────
+
+class CreateSubscriptionSerializer(serializers.Serializer):
+    """Input for creating a Razorpay subscription."""
+    plan_slug = serializers.SlugField(
+        max_length=50,
+        help_text='Slug of the plan to subscribe to (e.g., "pro").',
+    )
+
+
+class VerifySubscriptionSerializer(serializers.Serializer):
+    """Input for verifying a Razorpay subscription payment."""
+    razorpay_subscription_id = serializers.CharField(
+        max_length=100,
+        help_text='Razorpay subscription ID from checkout response.',
+    )
+    razorpay_payment_id = serializers.CharField(
+        max_length=100,
+        help_text='Razorpay payment ID from checkout response.',
+    )
+    razorpay_signature = serializers.CharField(
+        max_length=255,
+        help_text='Razorpay signature from checkout response.',
+    )
+
+
+class CreateTopUpOrderSerializer(serializers.Serializer):
+    """Input for creating a top-up order."""
+    quantity = serializers.IntegerField(
+        default=1,
+        min_value=1,
+        max_value=50,
+        help_text='Number of credit packs to buy (default: 1).',
+    )
+
+
+class VerifyTopUpSerializer(serializers.Serializer):
+    """Input for verifying a top-up payment."""
+    razorpay_order_id = serializers.CharField(
+        max_length=100,
+        help_text='Razorpay order ID from checkout response.',
+    )
+    razorpay_payment_id = serializers.CharField(
+        max_length=100,
+        help_text='Razorpay payment ID from checkout response.',
+    )
+    razorpay_signature = serializers.CharField(
+        max_length=255,
+        help_text='Razorpay signature from checkout response.',
+    )
+
+
+class PaymentHistorySerializer(serializers.Serializer):
+    """Read-only serializer for payment history entries."""
+    id = serializers.IntegerField()
+    payment_type = serializers.CharField()
+    razorpay_order_id = serializers.CharField()
+    razorpay_payment_id = serializers.CharField()
+    amount = serializers.IntegerField()
+    amount_display = serializers.CharField()
+    currency = serializers.CharField()
+    status = serializers.CharField()
+    notes = serializers.JSONField()
+    created_at = serializers.CharField()
+
+
+class SubscriptionStatusSerializer(serializers.Serializer):
+    """Read-only serializer for subscription status."""
+    has_subscription = serializers.BooleanField()
+    subscription_id = serializers.CharField(required=False)
+    plan = serializers.CharField(required=False)
+    plan_name = serializers.CharField(required=False)
+    status = serializers.CharField(required=False, allow_null=True)
+    is_active = serializers.BooleanField()
+    current_start = serializers.DateTimeField(required=False, allow_null=True)
+    current_end = serializers.DateTimeField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField(required=False, allow_null=True)

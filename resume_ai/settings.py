@@ -315,6 +315,12 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@resumeai.app'
 # Frontend URL — used for constructing password reset links etc.
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
 
+# ── Razorpay Payment Gateway ────────────────────────────────────────────────
+RAZORPAY_KEY_ID = config('RAZORPAY_KEY_ID', default='rzp_test_placeholder')
+RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default='placeholder_secret')
+RAZORPAY_WEBHOOK_SECRET = config('RAZORPAY_WEBHOOK_SECRET', default='webhook_placeholder_secret')
+RAZORPAY_CURRENCY = 'INR'
+
 # Password reset token expiry (seconds) — default 1 hour
 PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int)
 

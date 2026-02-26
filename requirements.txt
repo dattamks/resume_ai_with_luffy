@@ -29,6 +29,7 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 openai==1.57.2
 Pillow==10.4.0
+razorpay==2.0.0
 
 # Transitive dependencies pinned to avoid installation issues
 urllib3==2.6.3

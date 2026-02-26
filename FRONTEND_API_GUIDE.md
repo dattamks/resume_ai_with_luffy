@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-26 &nbsp;|&nbsp; **API version:** v0.11.0
+> **Last updated:** 2026-02-26 &nbsp;|&nbsp; **API version:** v0.12.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -27,7 +27,8 @@
 18. [Plans & Wallet (Credits System)](#18-plans--wallet-credits-system)
 19. [Email Templates (Admin)](#19-email-templates-admin)
 20. [Resume Generation](#20-resume-generation)
-21. [Quick Reference — All Endpoints](#21-quick-reference--all-endpoints)
+21. [Razorpay Payments](#22-razorpay-payments)
+22. [Quick Reference — All Endpoints](#23-quick-reference--all-endpoints)
 
 ---
 
@@ -3549,7 +3550,369 @@ const triggerRun = async (alertId: string) => {
 
 ---
 
-## 22. Quick Reference — All Endpoints
+## 22. Razorpay Payments
+
+Full Razorpay payment gateway integration for **plan subscriptions** (recurring) and **credit top-ups** (one-time).
+
+> **Currency:** INR &nbsp;|&nbsp; **Amounts:** All amounts from the API are in **paise** (₹499 = 49900 paise).
+
+### 22.1 Subscribe to a Plan
+
+**Step 1 — Create subscription:**
+
+```
+POST /api/auth/payments/subscribe/
+Auth: Bearer token
+Body: { "plan_slug": "pro" }
+```
+
+**Response (201):**
+```json
+{
+  "subscription_id": "sub_Abc123",
+  "razorpay_plan_id": "plan_pro_monthly",
+  "short_url": "https://rzp.io/i/xyz",
+  "status": "created",
+  "key_id": "rzp_test_xxx",
+  "plan_name": "Pro",
+  "amount": 49900,
+  "currency": "INR"
+}
+```
+
+**Step 2 — Open Razorpay Checkout (frontend):**
+
+```typescript
+const options = {
+  key: data.key_id,
+  subscription_id: data.subscription_id,
+  name: 'i-Luffy',
+  description: `${data.plan_name} Plan Subscription`,
+  handler: (response: RazorpayResponse) => {
+    // Step 3: Verify payment
+    verifySubscription(response);
+  },
+};
+const rzp = new (window as any).Razorpay(options);
+rzp.open();
+```
+
+**Step 3 — Verify subscription payment:**
+
+```
+POST /api/auth/payments/subscribe/verify/
+Auth: Bearer token
+Body: {
+  "razorpay_subscription_id": "sub_Abc123",
+  "razorpay_payment_id": "pay_Xyz789",
+  "razorpay_signature": "hex_signature_from_checkout"
+}
+```
+
+**Response (200):**
+```json
+{
+  "status": "activated",
+  "message": "Subscription activated. Upgraded to Pro. 25 bonus credits added.",
+  "plan": "pro",
+  "payment_id": "pay_Xyz789",
+  "subscription_id": "sub_Abc123"
+}
+```
+
+### 22.2 Cancel Subscription
+
+```
+POST /api/auth/payments/subscribe/cancel/
+Auth: Bearer token
+```
+
+**Response (200):**
+```json
+{
+  "status": "cancelled",
+  "message": "Subscription cancelled. You will retain Pro access until the end of the billing cycle.",
+  "effective_date": "2026-03-26T12:00:00Z",
+  "downgrade_info": { "action": "downgrade_scheduled", "pending_plan": "free" }
+}
+```
+
+### 22.3 Subscription Status
+
+```
+GET /api/auth/payments/subscribe/status/
+Auth: Bearer token
+```
+
+**Response (200):**
+```json
+{
+  "has_subscription": true,
+  "subscription_id": "sub_Abc123",
+  "plan": "pro",
+  "plan_name": "Pro",
+  "status": "active",
+  "is_active": true,
+  "current_start": "2026-02-26T12:00:00Z",
+  "current_end": "2026-03-26T12:00:00Z",
+  "created_at": "2026-02-26T12:00:00Z"
+}
+```
+
+### 22.4 Credit Top-Up (One-Time Purchase)
+
+**Step 1 — Create top-up order:**
+
+```
+POST /api/auth/payments/topup/
+Auth: Bearer token
+Body: { "quantity": 2 }   // default: 1
+```
+
+**Response (201):**
+```json
+{
+  "order_id": "order_Abc123",
+  "amount": 9800,
+  "currency": "INR",
+  "key_id": "rzp_test_xxx",
+  "quantity": 2,
+  "credits": 10,
+  "total_price": 98.0
+}
+```
+
+**Step 2 — Open Razorpay Checkout:**
+
+```typescript
+const options = {
+  key: data.key_id,
+  amount: data.amount,
+  currency: data.currency,
+  order_id: data.order_id,
+  name: 'i-Luffy',
+  description: `${data.credits} Credits Top-Up`,
+  handler: (response: RazorpayResponse) => {
+    verifyTopUp(response);
+  },
+};
+const rzp = new (window as any).Razorpay(options);
+rzp.open();
+```
+
+**Step 3 — Verify top-up payment:**
+
+```
+POST /api/auth/payments/topup/verify/
+Auth: Bearer token
+Body: {
+  "razorpay_order_id": "order_Abc123",
+  "razorpay_payment_id": "pay_Xyz789",
+  "razorpay_signature": "hex_signature_from_checkout"
+}
+```
+
+**Response (200):**
+```json
+{
+  "status": "success",
+  "message": "10 credits added to your wallet.",
+  "credits_added": 10,
+  "balance": 35,
+  "payment_id": "pay_Xyz789"
+}
+```
+
+### 22.5 Payment History
+
+```
+GET /api/auth/payments/history/?limit=20
+Auth: Bearer token
+```
+
+**Response (200):**
+```json
+{
+  "count": 3,
+  "payments": [
+    {
+      "id": 1,
+      "payment_type": "subscription",
+      "razorpay_order_id": "",
+      "razorpay_payment_id": "pay_Abc123",
+      "amount": 49900,
+      "amount_display": "₹499.00",
+      "currency": "INR",
+      "status": "captured",
+      "notes": {},
+      "created_at": "2026-02-26T12:00:00Z"
+    }
+  ]
+}
+```
+
+### 22.6 Webhook Endpoint (Backend-Only)
+
+```
+POST /api/auth/payments/webhook/
+Auth: None (signature verification via X-Razorpay-Signature header)
+```
+
+> Configure this URL in your Razorpay Dashboard → Webhooks.
+> Events handled: `payment.captured`, `payment.failed`, `subscription.activated`,
+> `subscription.charged`, `subscription.cancelled`, `subscription.completed`, `subscription.halted`.
+
+### 22.7 TypeScript Types
+
+```typescript
+interface RazorpayResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id?: string;
+  razorpay_subscription_id?: string;
+  razorpay_signature: string;
+}
+
+interface CreateSubscriptionResponse {
+  subscription_id: string;
+  razorpay_plan_id: string;
+  short_url: string;
+  status: string;
+  key_id: string;
+  plan_name: string;
+  amount: number;       // paise
+  currency: string;
+}
+
+interface VerifySubscriptionResponse {
+  status: 'activated' | 'already_processed';
+  message: string;
+  plan?: string;
+  payment_id: string;
+  subscription_id?: string;
+}
+
+interface SubscriptionStatus {
+  has_subscription: boolean;
+  subscription_id?: string;
+  plan?: string;
+  plan_name?: string;
+  status?: 'created' | 'authenticated' | 'active' | 'pending' | 'halted' | 'cancelled' | 'completed' | 'expired';
+  is_active: boolean;
+  current_start?: string;
+  current_end?: string;
+  created_at?: string;
+}
+
+interface CreateTopUpResponse {
+  order_id: string;
+  amount: number;       // paise
+  currency: string;
+  key_id: string;
+  quantity: number;
+  credits: number;
+  total_price: number;  // INR
+}
+
+interface VerifyTopUpResponse {
+  status: 'success' | 'already_processed';
+  message: string;
+  credits_added?: number;
+  balance?: number;
+  payment_id: string;
+}
+
+interface PaymentHistoryEntry {
+  id: number;
+  payment_type: 'subscription' | 'topup';
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  amount: number;         // paise
+  amount_display: string; // e.g. "₹499.00"
+  currency: string;
+  status: 'created' | 'authorized' | 'captured' | 'failed' | 'refunded';
+  notes: Record<string, unknown>;
+  created_at: string;
+}
+```
+
+### 22.8 Integration Recipe — Payment Flow
+
+```typescript
+import { loadScript } from './utils'; // loads Razorpay checkout.js
+
+// 1. Load Razorpay script once
+await loadScript('https://checkout.razorpay.com/v1/checkout.js');
+
+// 2. Subscribe to Pro plan
+const subscribeToPro = async () => {
+  const { data } = await api.post('/api/auth/payments/subscribe/', {
+    plan_slug: 'pro',
+  });
+
+  const options = {
+    key: data.key_id,
+    subscription_id: data.subscription_id,
+    name: 'i-Luffy',
+    description: `${data.plan_name} Plan`,
+    handler: async (response: RazorpayResponse) => {
+      const result = await api.post('/api/auth/payments/subscribe/verify/', {
+        razorpay_subscription_id: response.razorpay_subscription_id,
+        razorpay_payment_id: response.razorpay_payment_id,
+        razorpay_signature: response.razorpay_signature,
+      });
+      // Refresh user profile to reflect Pro plan
+      await fetchMe();
+      toast.success(result.data.message);
+    },
+  };
+
+  const rzp = new (window as any).Razorpay(options);
+  rzp.open();
+};
+
+// 3. Top up credits
+const topUpCredits = async (quantity = 1) => {
+  const { data } = await api.post('/api/auth/payments/topup/', { quantity });
+
+  const options = {
+    key: data.key_id,
+    amount: data.amount,
+    currency: data.currency,
+    order_id: data.order_id,
+    name: 'i-Luffy',
+    description: `${data.credits} Credits`,
+    handler: async (response: RazorpayResponse) => {
+      const result = await api.post('/api/auth/payments/topup/verify/', {
+        razorpay_order_id: response.razorpay_order_id,
+        razorpay_payment_id: response.razorpay_payment_id,
+        razorpay_signature: response.razorpay_signature,
+      });
+      await fetchWallet();
+      toast.success(result.data.message);
+    },
+  };
+
+  const rzp = new (window as any).Razorpay(options);
+  rzp.open();
+};
+
+// 4. Check subscription status
+const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
+  const { data } = await api.get('/api/auth/payments/subscribe/status/');
+  return data;
+};
+
+// 5. Cancel subscription
+const cancelSubscription = async () => {
+  const { data } = await api.post('/api/auth/payments/subscribe/cancel/');
+  await fetchMe();
+  toast.info(data.message);
+};
+```
+
+---
+
+## 23. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -3572,6 +3935,15 @@ const triggerRun = async (alertId: string) => {
 | POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | Buy credit packs (Pro only) |
 | GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
 | POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
+| **Razorpay Payments** |||||
+| POST | `/api/auth/payments/subscribe/` | ✅ | User (200/hr) | Create Razorpay subscription |
+| POST | `/api/auth/payments/subscribe/verify/` | ✅ | User (200/hr) | Verify subscription payment |
+| POST | `/api/auth/payments/subscribe/cancel/` | ✅ | User (200/hr) | Cancel subscription |
+| GET | `/api/auth/payments/subscribe/status/` | ✅ | User (200/hr) | Subscription status |
+| POST | `/api/auth/payments/topup/` | ✅ | User (200/hr) | Create top-up order |
+| POST | `/api/auth/payments/topup/verify/` | ✅ | User (200/hr) | Verify top-up payment |
+| POST | `/api/auth/payments/webhook/` | ❌ | None (signature) | Razorpay webhook receiver |
+| GET | `/api/auth/payments/history/` | ✅ | User (200/hr) | Payment history |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
 | GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (paginated) |

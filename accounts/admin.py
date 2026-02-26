@@ -2,6 +2,7 @@ from django.contrib import admin
 from .models import (
     UserProfile, NotificationPreference, EmailTemplate, Plan,
     Wallet, WalletTransaction, CreditCost,
+    RazorpayPayment, RazorpaySubscription,
 )
 
 
@@ -110,3 +111,42 @@ class WalletTransactionAdmin(admin.ModelAdmin):
 class CreditCostAdmin(admin.ModelAdmin):
     list_display = ('action', 'cost', 'description')
     search_fields = ('action',)
+
+
+@admin.register(RazorpayPayment)
+class RazorpayPaymentAdmin(admin.ModelAdmin):
+    list_display = (
+        'user', 'payment_type', 'razorpay_order_id', 'razorpay_payment_id',
+        'amount', 'status', 'credits_granted', 'webhook_verified', 'created_at',
+    )
+    list_filter = ('payment_type', 'status', 'credits_granted', 'webhook_verified')
+    search_fields = ('user__username', 'razorpay_order_id', 'razorpay_payment_id', 'razorpay_subscription_id')
+    raw_id_fields = ('user',)
+    readonly_fields = (
+        'user', 'payment_type', 'razorpay_order_id', 'razorpay_payment_id',
+        'razorpay_signature', 'razorpay_subscription_id', 'amount', 'currency',
+        'status', 'notes', 'webhook_verified', 'credits_granted', 'created_at', 'updated_at',
+    )
+    ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(RazorpaySubscription)
+class RazorpaySubscriptionAdmin(admin.ModelAdmin):
+    list_display = (
+        'user', 'plan', 'razorpay_subscription_id', 'status',
+        'current_start', 'current_end', 'created_at',
+    )
+    list_filter = ('status', 'plan')
+    search_fields = ('user__username', 'razorpay_subscription_id')
+    raw_id_fields = ('user',)
+    readonly_fields = (
+        'user', 'plan', 'razorpay_subscription_id', 'razorpay_plan_id',
+        'status', 'current_start', 'current_end', 'short_url',
+        'created_at', 'updated_at',
+    )

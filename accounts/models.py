@@ -373,6 +373,172 @@ class CreditCost(models.Model):
         return f"{self.action} = {self.cost} credits"
 
 
+# ── Razorpay Payment Models ─────────────────────────────────────────────────
+
+class RazorpayPayment(models.Model):
+    """
+    Tracks every payment attempt through Razorpay (subscriptions & one-time top-ups).
+    Serves as the single source of truth for payment verification & idempotency.
+    """
+    PAYMENT_TYPE_SUBSCRIPTION = 'subscription'
+    PAYMENT_TYPE_TOPUP = 'topup'
+    PAYMENT_TYPE_CHOICES = [
+        (PAYMENT_TYPE_SUBSCRIPTION, 'Subscription'),
+        (PAYMENT_TYPE_TOPUP, 'Top-Up'),
+    ]
+
+    STATUS_CREATED = 'created'
+    STATUS_AUTHORIZED = 'authorized'
+    STATUS_CAPTURED = 'captured'
+    STATUS_FAILED = 'failed'
+    STATUS_REFUNDED = 'refunded'
+    STATUS_CHOICES = [
+        (STATUS_CREATED, 'Created'),
+        (STATUS_AUTHORIZED, 'Authorized'),
+        (STATUS_CAPTURED, 'Captured'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_REFUNDED, 'Refunded'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='razorpay_payments')
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES)
+
+    # Razorpay identifiers
+    razorpay_order_id = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text='Razorpay order_id (for one-time top-ups).',
+    )
+    razorpay_payment_id = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        unique=True,
+        null=True,
+        help_text='Razorpay payment_id (set after payment completes).',
+    )
+    razorpay_signature = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Razorpay signature for verification.',
+    )
+    razorpay_subscription_id = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text='Razorpay subscription_id (for subscription payments).',
+    )
+
+    # Payment details
+    amount = models.PositiveIntegerField(
+        help_text='Amount in paise (₹499 = 49900 paise).',
+    )
+    currency = models.CharField(max_length=3, default='INR')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_CREATED)
+
+    # Metadata
+    notes = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Additional context (plan_slug, quantity, etc.).',
+    )
+    webhook_verified = models.BooleanField(
+        default=False,
+        help_text='True if this payment was confirmed via webhook.',
+    )
+    credits_granted = models.BooleanField(
+        default=False,
+        help_text='True if credits/plan have been applied for this payment.',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Razorpay Payment'
+        verbose_name_plural = 'Razorpay Payments'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Payment({self.razorpay_payment_id or self.razorpay_order_id}, {self.status}, ₹{self.amount / 100})"
+
+
+class RazorpaySubscription(models.Model):
+    """
+    Tracks the active Razorpay subscription for each user.
+    OneToOne — each user can have at most one active subscription.
+    """
+    STATUS_CREATED = 'created'
+    STATUS_AUTHENTICATED = 'authenticated'
+    STATUS_ACTIVE = 'active'
+    STATUS_PENDING = 'pending'
+    STATUS_HALTED = 'halted'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_COMPLETED = 'completed'
+    STATUS_EXPIRED = 'expired'
+    STATUS_CHOICES = [
+        (STATUS_CREATED, 'Created'),
+        (STATUS_AUTHENTICATED, 'Authenticated'),
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_HALTED, 'Halted'),
+        (STATUS_CANCELLED, 'Cancelled'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_EXPIRED, 'Expired'),
+    ]
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='razorpay_subscription')
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name='razorpay_subscriptions')
+
+    # Razorpay identifiers
+    razorpay_subscription_id = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text='Razorpay subscription_id.',
+    )
+    razorpay_plan_id = models.CharField(
+        max_length=100,
+        help_text='Razorpay plan_id used to create this subscription.',
+    )
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_CREATED)
+
+    # Billing cycle info
+    current_start = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Start of current billing period.',
+    )
+    current_end = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='End of current billing period.',
+    )
+    short_url = models.URLField(
+        blank=True,
+        help_text='Short URL for payment (provided by Razorpay).',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Razorpay Subscription'
+        verbose_name_plural = 'Razorpay Subscriptions'
+
+    def __str__(self):
+        return f"Subscription({self.user.username}, {self.plan.slug}, {self.status})"
+
+    @property
+    def is_active(self):
+        return self.status in (self.STATUS_ACTIVE, self.STATUS_AUTHENTICATED)
+
+
 # ── Signals — auto-create profile + notification prefs + wallet on user creation ──
 
 @receiver(post_save, sender=User)
