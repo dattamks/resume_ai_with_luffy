@@ -54,3 +54,48 @@ class GeneratedResumeAdmin(admin.ModelAdmin):
     list_filter = ('status', 'template', 'format')
     search_fields = ('user__username',)
     readonly_fields = ('id', 'resume_content', 'created_at')
+
+
+# ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
+
+from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun  # noqa: E402
+
+
+@admin.register(JobSearchProfile)
+class JobSearchProfileAdmin(admin.ModelAdmin):
+    list_display = ('id', 'resume', 'seniority', 'experience_years', 'updated_at')
+    list_filter = ('seniority',)
+    search_fields = ('resume__user__username', 'resume__original_filename')
+    readonly_fields = ('resume', 'raw_extraction', 'created_at', 'updated_at')
+
+
+@admin.register(JobAlert)
+class JobAlertAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'resume', 'frequency', 'is_active', 'last_run_at', 'next_run_at', 'created_at')
+    list_filter = ('frequency', 'is_active')
+    search_fields = ('user__username',)
+    readonly_fields = ('id', 'created_at', 'updated_at')
+
+
+@admin.register(DiscoveredJob)
+class DiscoveredJobAdmin(admin.ModelAdmin):
+    list_display = ('id', 'source', 'title', 'company', 'location', 'posted_at', 'created_at')
+    list_filter = ('source',)
+    search_fields = ('title', 'company', 'location')
+    readonly_fields = ('id', 'raw_data', 'created_at')
+
+
+@admin.register(JobMatch)
+class JobMatchAdmin(admin.ModelAdmin):
+    list_display = ('id', 'job_alert', 'discovered_job', 'relevance_score', 'user_feedback', 'created_at')
+    list_filter = ('user_feedback',)
+    search_fields = ('job_alert__user__username',)
+    readonly_fields = ('id', 'created_at')
+
+
+@admin.register(JobAlertRun)
+class JobAlertRunAdmin(admin.ModelAdmin):
+    list_display = ('id', 'job_alert', 'jobs_discovered', 'jobs_matched', 'notification_sent', 'credits_used', 'duration_seconds', 'created_at')
+    list_filter = ('notification_sent',)
+    readonly_fields = ('id', 'created_at')
+

@@ -3249,7 +3249,307 @@ const poll = setInterval(async () => {
 
 ---
 
-## 21. Quick Reference — All Endpoints
+## 21. Smart Job Alerts
+
+Smart Job Alerts automatically discover job opportunities that match a user's resume. The system uses LLM-powered profile extraction and multi-source job searching with relevance scoring.
+
+### Feature Gating
+
+- **Plan requirement**: User must be on a plan with `job_notifications = true` (e.g. Pro)
+- **Quota**: Each plan defines `max_job_alerts` (Free=0, Pro=3)
+- **Credits**: Each alert run costs **1 credit** (`job_alert_run` action)
+- Periodic task runs every 6 hours to process due alerts
+
+### 21.1 List / Create Job Alerts
+
+```
+GET  /api/job-alerts/
+POST /api/job-alerts/
+```
+
+**GET** returns all active alerts for the authenticated user.
+
+**POST** creates a new job alert. Triggers async LLM profile extraction from the linked resume.
+
+**Request body:**
+```json
+{
+  "resume_id": "uuid",
+  "frequency": "daily",           // "daily" | "weekly"
+  "preferences": {                // optional
+    "excluded_companies": ["Evil Corp"],
+    "location_filter": "Remote",
+    "date_filter": "week"         // "day" | "week" | "month" | null
+  }
+}
+```
+
+**Response (201):**
+```json
+{
+  "id": "uuid",
+  "resume_id": "uuid",
+  "frequency": "daily",
+  "is_active": true,
+  "preferences": { ... },
+  "search_profile": null,         // populated async after LLM extraction
+  "last_run": null,
+  "next_run_at": "2025-01-01T06:00:00Z",
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+**Errors:**
+| Status | Reason |
+|--------|--------|
+| 403 | Plan doesn't support job alerts |
+| 400 | `"Job alert quota reached (max N)"` |
+| 400 | Validation error (invalid resume_id, etc.) |
+
+### 21.2 Job Alert Detail
+
+```
+GET    /api/job-alerts/<uuid:id>/
+PUT    /api/job-alerts/<uuid:id>/
+DELETE /api/job-alerts/<uuid:id>/
+```
+
+**GET** returns the alert detail including nested `search_profile` and `last_run`.
+
+**PUT** updates frequency, is_active, or preferences.
+
+**Request body (PUT):**
+```json
+{
+  "frequency": "weekly",
+  "is_active": true,
+  "preferences": {
+    "excluded_companies": ["Acme"],
+    "location_filter": "New York",
+    "date_filter": "day"
+  }
+}
+```
+
+**DELETE** soft-deactivates the alert (`is_active = false`). Returns `204`.
+
+### 21.3 List Matches
+
+```
+GET /api/job-alerts/<uuid:id>/matches/
+```
+
+Returns paginated job matches for an alert, ordered by relevance score (highest first).
+
+**Query params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `feedback` | string | Filter by feedback: `pending`, `relevant`, `irrelevant`, `applied`, `dismissed` |
+| `page` | int | Page number (default 1) |
+
+**Response (200):**
+```json
+{
+  "count": 42,
+  "next": "...?page=2",
+  "previous": null,
+  "results": [
+    {
+      "id": "uuid",
+      "discovered_job": {
+        "id": "uuid",
+        "source": "serpapi",
+        "title": "Senior Python Developer",
+        "company": "TechCorp",
+        "location": "Remote",
+        "url": "https://...",
+        "salary_range": "$120k-$160k",
+        "description_snippet": "We're looking for...",
+        "posted_at": "2025-01-01T00:00:00Z"
+      },
+      "relevance_score": 85,
+      "match_reason": "Strong match on Python, Django skills...",
+      "user_feedback": "pending",
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+### 21.4 Submit Match Feedback
+
+```
+POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
+```
+
+**Request body:**
+```json
+{
+  "feedback": "relevant"    // "relevant" | "irrelevant" | "applied" | "dismissed"
+}
+```
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "user_feedback": "relevant",
+  "relevance_score": 85,
+  "match_reason": "...",
+  ...
+}
+```
+
+### 21.5 Manual Run
+
+```
+POST /api/job-alerts/<uuid:id>/run/
+```
+
+Triggers an immediate job discovery + matching run for the alert. Costs 1 credit.
+
+**Response (202):**
+```json
+{
+  "detail": "Job alert run triggered."
+}
+```
+
+**Errors:**
+| Status | Reason |
+|--------|--------|
+| 400 | Alert is not active |
+
+### 21.6 Search Profile (read-only)
+
+The `search_profile` object is nested inside the alert detail response. It is extracted automatically by an LLM from the linked resume.
+
+```json
+{
+  "titles": ["Senior Python Developer", "Backend Engineer"],
+  "skills": ["Python", "Django", "PostgreSQL", "Docker"],
+  "seniority": "senior",        // "intern"|"junior"|"mid"|"senior"|"lead"|"executive"
+  "industries": ["Technology", "SaaS"],
+  "locations": ["Remote", "San Francisco"],
+  "experience_years": 8,
+  "updated_at": "..."
+}
+```
+
+### 21.7 TypeScript Types
+
+```typescript
+// ── Job Alerts ──────────────────────────────────────────
+interface JobAlertPreferences {
+  excluded_companies?: string[];
+  location_filter?: string;
+  date_filter?: 'day' | 'week' | 'month' | null;
+}
+
+interface JobSearchProfile {
+  titles: string[];
+  skills: string[];
+  seniority: 'intern' | 'junior' | 'mid' | 'senior' | 'lead' | 'executive';
+  industries: string[];
+  locations: string[];
+  experience_years: number | null;
+  updated_at: string;
+}
+
+interface JobAlertRun {
+  id: string;
+  jobs_discovered: number;
+  jobs_matched: number;
+  notification_sent: boolean;
+  credits_used: number;
+  error_message: string | null;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
+interface JobAlert {
+  id: string;
+  resume_id: string;
+  frequency: 'daily' | 'weekly';
+  is_active: boolean;
+  preferences: JobAlertPreferences;
+  search_profile: JobSearchProfile | null;
+  last_run: JobAlertRun | null;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DiscoveredJob {
+  id: string;
+  source: 'serpapi' | 'adzuna';
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  salary_range: string;
+  description_snippet: string;
+  posted_at: string | null;
+}
+
+type MatchFeedback = 'pending' | 'relevant' | 'irrelevant' | 'applied' | 'dismissed';
+
+interface JobMatch {
+  id: string;
+  discovered_job: DiscoveredJob;
+  relevance_score: number;       // 0–100
+  match_reason: string;
+  user_feedback: MatchFeedback;
+  created_at: string;
+}
+```
+
+### 21.8 Integration Recipe — Job Alerts Screen
+
+```typescript
+// Fetch user's job alerts
+const fetchAlerts = async (): Promise<JobAlert[]> => {
+  const { data } = await api.get('/api/job-alerts/');
+  return data;  // list, not paginated
+};
+
+// Create a new alert
+const createAlert = async (resumeId: string, frequency: 'daily' | 'weekly') => {
+  const { data } = await api.post('/api/job-alerts/', {
+    resume_id: resumeId,
+    frequency,
+  });
+  return data;
+};
+
+// Fetch matches for an alert
+const fetchMatches = async (alertId: string, page = 1, feedback?: string) => {
+  const params: Record<string, string> = { page: String(page) };
+  if (feedback) params.feedback = feedback;
+  const { data } = await api.get(`/api/job-alerts/${alertId}/matches/`, { params });
+  return data;  // paginated { count, next, previous, results }
+};
+
+// Submit feedback on a match
+const submitFeedback = async (alertId: string, matchId: string, feedback: MatchFeedback) => {
+  const { data } = await api.post(
+    `/api/job-alerts/${alertId}/matches/${matchId}/feedback/`,
+    { feedback }
+  );
+  return data;
+};
+
+// Trigger manual run
+const triggerRun = async (alertId: string) => {
+  const { data } = await api.post(`/api/job-alerts/${alertId}/run/`);
+  return data;
+};
+```
+
+---
+
+## 22. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -3297,6 +3597,15 @@ const poll = setInterval(async () => {
 | GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
 | GET | `/api/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
 | GET | `/api/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes |
+| **Job Alerts** |||||
+| GET | `/api/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts |
+| POST | `/api/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
+| GET | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Job alert detail |
+| PUT | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Update job alert |
+| DELETE | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Deactivate job alert |
+| GET | `/api/job-alerts/<uuid:id>/matches/` | ✅ | Readonly (120/hr) | List matches (paginated) |
+| POST | `/api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
+| POST | `/api/job-alerts/<uuid:id>/run/` | ✅ | Readonly (120/hr) | Trigger manual alert run |
 | **Dashboard** |||||
 | GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends |
 | **Share** |||||

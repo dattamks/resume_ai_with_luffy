@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle
-from .models import ResumeAnalysis, Resume, Job, GeneratedResume
+from .models import ResumeAnalysis, Resume, Job, GeneratedResume, JobAlert, JobMatch, DiscoveredJob
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
@@ -24,8 +24,14 @@ from .serializers import (
     JobCreateSerializer,
     GeneratedResumeSerializer,
     GeneratedResumeCreateSerializer,
+    JobAlertSerializer,
+    JobAlertCreateSerializer,
+    JobAlertUpdateSerializer,
+    JobMatchSerializer,
+    JobMatchFeedbackSerializer,
+    JobAlertRunSerializer,
 )
-from .tasks import run_analysis_task, generate_improved_resume_task
+from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task
 
 logger = logging.getLogger('analyzer')
 
@@ -759,3 +765,240 @@ class GeneratedResumeListView(APIView):
         ).select_related('analysis').order_by('-created_at')
         serializer = GeneratedResumeSerializer(qs, many=True)
         return Response(serializer.data)
+
+
+# ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
+
+
+class JobAlertListCreateView(APIView):
+    """
+    GET  /api/job-alerts/  — List the authenticated user's job alerts.
+    POST /api/job-alerts/  — Create a new job alert (Pro plan required).
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request):
+        alerts = (
+            JobAlert.objects
+            .filter(user=request.user)
+            .select_related('resume', 'resume__job_search_profile')
+            .order_by('-created_at')
+        )
+        return Response(JobAlertSerializer(alerts, many=True).data)
+
+    def post(self, request):
+        # ── Plan gating: Pro only ──
+        from accounts.services import can_use_feature
+        if not can_use_feature(request.user, 'job_notifications'):
+            return Response(
+                {'detail': 'Job alerts require a Pro plan.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ── Max active alerts quota ──
+        profile = getattr(request.user, 'profile', None)
+        plan = getattr(profile, 'plan', None) if profile else None
+        max_alerts = getattr(plan, 'max_job_alerts', 0) if plan else 0
+        if max_alerts > 0:
+            active_count = JobAlert.objects.filter(
+                user=request.user, is_active=True,
+            ).count()
+            if active_count >= max_alerts:
+                return Response(
+                    {
+                        'detail': f'You have reached the maximum of {max_alerts} active job alerts for your plan.',
+                        'max_job_alerts': max_alerts,
+                        'active_count': active_count,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        serializer = JobAlertCreateSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        alert = serializer.save(user=request.user)
+        # Set next_run_at immediately
+        alert.set_next_run()
+        alert.save(update_fields=['next_run_at'])
+
+        # Trigger LLM extraction of the resume search profile
+        extract_job_search_profile_task.delay(str(alert.resume_id))
+
+        logger.info('JobAlert created: id=%s user=%s resume=%s', alert.id, request.user.id, alert.resume_id)
+
+        return Response(
+            JobAlertSerializer(alert).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class JobAlertDetailView(APIView):
+    """
+    GET    /api/job-alerts/<id>/  — Alert detail + latest run stats.
+    PUT    /api/job-alerts/<id>/  — Update frequency/preferences/is_active.
+    DELETE /api/job-alerts/<id>/  — Deactivate the alert.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def _get_alert(self, request, pk):
+        try:
+            return JobAlert.objects.select_related(
+                'resume', 'resume__job_search_profile',
+            ).get(id=pk, user=request.user)
+        except (JobAlert.DoesNotExist, ValueError):
+            return None
+
+    def get(self, request, pk):
+        alert = self._get_alert(request, pk)
+        if not alert:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(JobAlertSerializer(alert).data)
+
+    def put(self, request, pk):
+        alert = self._get_alert(request, pk)
+        if not alert:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = JobAlertUpdateSerializer(alert, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(JobAlertSerializer(alert).data)
+
+    def delete(self, request, pk):
+        alert = self._get_alert(request, pk)
+        if not alert:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        alert.is_active = False
+        alert.save(update_fields=['is_active'])
+        logger.info('JobAlert deactivated: id=%s user=%s', alert.id, request.user.id)
+        return Response({'detail': 'Job alert deactivated.'}, status=status.HTTP_200_OK)
+
+
+class JobAlertMatchListView(APIView):
+    """
+    GET /api/job-alerts/<id>/matches/
+    Paginated matched jobs with scores and reasons.
+    Supports ?feedback= filter (pending/relevant/irrelevant/applied/dismissed).
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        try:
+            alert = JobAlert.objects.get(id=pk, user=request.user)
+        except (JobAlert.DoesNotExist, ValueError):
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        qs = (
+            JobMatch.objects
+            .filter(job_alert=alert)
+            .select_related('discovered_job')
+            .order_by('-relevance_score', '-created_at')
+        )
+
+        feedback_filter = request.query_params.get('feedback')
+        if feedback_filter:
+            qs = qs.filter(user_feedback=feedback_filter)
+
+        # Basic pagination (20 per page)
+        from django.core.paginator import Paginator
+        page_num = int(request.query_params.get('page', 1))
+        paginator = Paginator(qs, 20)
+        page = paginator.get_page(page_num)
+
+        return Response({
+            'count': paginator.count,
+            'num_pages': paginator.num_pages,
+            'page': page_num,
+            'results': JobMatchSerializer(page.object_list, many=True).data,
+        })
+
+
+class JobAlertMatchFeedbackView(APIView):
+    """
+    POST /api/job-alerts/<id>/matches/<match_id>/feedback/
+    Update user feedback on a matched job (relevant/irrelevant/applied/dismissed).
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def post(self, request, pk, match_pk):
+        try:
+            alert = JobAlert.objects.get(id=pk, user=request.user)
+        except (JobAlert.DoesNotExist, ValueError):
+            return Response({'detail': 'Alert not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            match = JobMatch.objects.get(id=match_pk, job_alert=alert)
+        except (JobMatch.DoesNotExist, ValueError):
+            return Response({'detail': 'Match not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = JobMatchFeedbackSerializer(match, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(JobMatchSerializer(match).data)
+
+
+class JobAlertManualRunView(APIView):
+    """
+    POST /api/job-alerts/<id>/run/
+    Trigger an on-demand manual job discovery + matching run (costs 1 credit).
+    Returns 202 Accepted immediately; results appear in matches when done.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [AnalyzeThrottle]
+
+    def post(self, request, pk):
+        try:
+            alert = JobAlert.objects.select_related(
+                'user', 'resume', 'resume__job_search_profile',
+            ).get(id=pk, user=request.user)
+        except (JobAlert.DoesNotExist, ValueError):
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not alert.is_active:
+            return Response(
+                {'detail': 'This job alert is deactivated.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if a search profile exists (needed to build queries)
+        try:
+            profile = alert.resume.job_search_profile
+            if not profile.titles:
+                raise AttributeError
+        except Exception:
+            return Response(
+                {
+                    'detail': 'Job search profile not yet extracted for this resume. '
+                    'Please wait a moment and try again.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Import here to avoid circular; trigger the full discover pipeline
+        from .tasks import discover_jobs_task as _discover
+
+        # We'll run a targeted discover just for this alert by chaining
+        # discover then match.  For manual runs we trigger the whole task
+        # (it will pick up this alert since we set next_run_at = past).
+        from django.utils import timezone as _tz
+        alert.next_run_at = _tz.now() - _tz.timedelta(seconds=1)
+        alert.save(update_fields=['next_run_at'])
+
+        # Fire the periodic discover task (it will pick this alert up)
+        _discover.delay()
+
+        logger.info('Manual job alert run triggered: alert=%s user=%s', alert.id, request.user.id)
+
+        return Response(
+            {
+                'detail': 'Job discovery started. Check matches in a few minutes.',
+                'alert_id': str(alert.id),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+

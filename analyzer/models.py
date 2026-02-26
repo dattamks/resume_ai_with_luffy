@@ -439,3 +439,240 @@ class GeneratedResume(models.Model):
 
     def __str__(self):
         return f"Generated resume for analysis #{self.analysis_id} ({self.template}, {self.format})"
+
+
+# ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
+
+
+class JobSearchProfile(models.Model):
+    """
+    LLM-extracted job search criteria from a resume.
+    One profile per resume — updated when the user edits and re-triggers extraction.
+    """
+
+    resume = models.OneToOneField(
+        Resume, on_delete=models.CASCADE,
+        related_name='job_search_profile',
+        help_text='Resume this profile was extracted from',
+    )
+    titles = models.JSONField(default=list, help_text='List of target job titles')
+    skills = models.JSONField(default=list, help_text='Key skills extracted from resume')
+    seniority = models.CharField(
+        max_length=20,
+        blank=True,
+        choices=[
+            ('junior', 'Junior'),
+            ('mid', 'Mid'),
+            ('senior', 'Senior'),
+            ('lead', 'Lead'),
+            ('executive', 'Executive'),
+        ],
+        help_text='Seniority level inferred from resume',
+    )
+    industries = models.JSONField(default=list, help_text='Target industries')
+    locations = models.JSONField(default=list, help_text='Preferred work locations')
+    experience_years = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Years of experience inferred from resume',
+    )
+    raw_extraction = models.JSONField(
+        null=True, blank=True,
+        help_text='Full LLM output for debugging / re-processing',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"JobSearchProfile for {self.resume.original_filename} ({self.resume.user.username})"
+
+
+class JobAlert(models.Model):
+    """
+    A user's job alert subscription linked to a specific resume.
+    The system periodically discovers matching jobs and notifies the user.
+    """
+
+    FREQUENCY_DAILY = 'daily'
+    FREQUENCY_WEEKLY = 'weekly'
+    FREQUENCY_CHOICES = [
+        (FREQUENCY_DAILY, 'Daily'),
+        (FREQUENCY_WEEKLY, 'Weekly'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='job_alerts')
+    resume = models.ForeignKey(
+        Resume, on_delete=models.CASCADE,
+        related_name='job_alerts',
+        help_text='Resume used for job matching',
+    )
+    frequency = models.CharField(
+        max_length=10, choices=FREQUENCY_CHOICES, default=FREQUENCY_WEEKLY,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    preferences = models.JSONField(
+        default=dict,
+        help_text=(
+            'Alert preferences: remote_ok (bool), location (str), '
+            'salary_min (int), excluded_companies (list)'
+        ),
+    )
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    next_run_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['is_active', 'next_run_at']),
+        ]
+
+    def __str__(self):
+        return f"JobAlert {self.id} ({self.user.username}, {self.frequency})"
+
+    def set_next_run(self):
+        """Update next_run_at based on frequency, starting from now."""
+        now = timezone.now()
+        if self.frequency == self.FREQUENCY_DAILY:
+            self.next_run_at = now + timezone.timedelta(days=1)
+        else:
+            self.next_run_at = now + timezone.timedelta(weeks=1)
+
+
+class DiscoveredJob(models.Model):
+    """
+    A job posting discovered from an external source (SerpAPI, Adzuna, etc.).
+    Global — not per-user. Deduplicated by (source, external_id).
+    """
+
+    SOURCE_SERPAPI = 'serpapi'
+    SOURCE_ADZUNA = 'adzuna'
+    SOURCE_CHOICES = [
+        (SOURCE_SERPAPI, 'SerpAPI (Google Jobs)'),
+        (SOURCE_ADZUNA, 'Adzuna'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source = models.CharField(max_length=30, choices=SOURCE_CHOICES, db_index=True)
+    external_id = models.CharField(
+        max_length=255,
+        help_text='Unique job ID from the source API',
+    )
+    url = models.URLField(max_length=2048)
+    title = models.CharField(max_length=500, blank=True)
+    company = models.CharField(max_length=255, blank=True)
+    location = models.CharField(max_length=255, blank=True)
+    salary_range = models.CharField(max_length=255, blank=True)
+    description_snippet = models.TextField(blank=True, help_text='Short job description excerpt')
+    posted_at = models.DateTimeField(null=True, blank=True)
+    raw_data = models.JSONField(null=True, blank=True, help_text='Full raw API response for this job')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['source', 'external_id'],
+                name='unique_discovered_job_per_source',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['source', 'external_id']),
+            models.Index(fields=['-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.title or self.url[:60]} @ {self.company} [{self.source}]"
+
+
+class JobMatch(models.Model):
+    """
+    Junction between a JobAlert and a DiscoveredJob.
+    Stores the LLM relevance score and user feedback.
+    """
+
+    FEEDBACK_PENDING = 'pending'
+    FEEDBACK_RELEVANT = 'relevant'
+    FEEDBACK_IRRELEVANT = 'irrelevant'
+    FEEDBACK_APPLIED = 'applied'
+    FEEDBACK_DISMISSED = 'dismissed'
+    FEEDBACK_CHOICES = [
+        (FEEDBACK_PENDING, 'Pending'),
+        (FEEDBACK_RELEVANT, 'Relevant'),
+        (FEEDBACK_IRRELEVANT, 'Irrelevant'),
+        (FEEDBACK_APPLIED, 'Applied'),
+        (FEEDBACK_DISMISSED, 'Dismissed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_alert = models.ForeignKey(
+        JobAlert, on_delete=models.CASCADE,
+        related_name='matches',
+    )
+    discovered_job = models.ForeignKey(
+        DiscoveredJob, on_delete=models.CASCADE,
+        related_name='matches',
+    )
+    relevance_score = models.PositiveSmallIntegerField(
+        help_text='LLM relevance score 0-100',
+    )
+    match_reason = models.TextField(
+        blank=True,
+        help_text='LLM-generated reason why this job matches the resume',
+    )
+    user_feedback = models.CharField(
+        max_length=15,
+        choices=FEEDBACK_CHOICES,
+        default=FEEDBACK_PENDING,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-relevance_score', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['job_alert', 'discovered_job'],
+                name='unique_match_per_alert',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['job_alert', '-relevance_score']),
+            models.Index(fields=['job_alert', 'user_feedback']),
+        ]
+
+    def __str__(self):
+        return f"Match: {self.discovered_job.title[:40]} → alert {self.job_alert_id} (score={self.relevance_score})"
+
+
+class JobAlertRun(models.Model):
+    """
+    Audit log entry for each discovery + matching pipeline run for a JobAlert.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_alert = models.ForeignKey(
+        JobAlert, on_delete=models.CASCADE,
+        related_name='runs',
+    )
+    jobs_discovered = models.PositiveIntegerField(default=0)
+    jobs_matched = models.PositiveIntegerField(default=0)
+    notification_sent = models.BooleanField(default=False)
+    credits_used = models.PositiveSmallIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    duration_seconds = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['job_alert', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Run {self.id} for alert {self.job_alert_id} ({self.jobs_matched}/{self.jobs_discovered} matched)"

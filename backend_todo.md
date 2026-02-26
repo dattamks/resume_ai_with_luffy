@@ -158,76 +158,77 @@
 
 ---
 
-## Phase 11 — Smart Job Alerts (Job Discovery & Matching Pipeline)
+## Phase 11 — Smart Job Alerts (Job Discovery & Matching Pipeline) ✅
 
 > **Goal:** Users subscribe to job alerts linked to a resume. System periodically discovers matching jobs from external APIs, scores relevance via LLM, and sends email digests. Pro plan only.
+> **Status:** Completed in v0.12.0
 
 ### Models
 
-- [ ] **`JobSearchProfile` model** — OneToOne with `Resume`. LLM-extracted search criteria: `titles` (JSONField — list of target job titles), `skills` (JSONField), `seniority` (CharField: junior/mid/senior/lead/executive), `industries` (JSONField), `locations` (JSONField), `experience_years` (int), `raw_extraction` (JSONField — full LLM output), `created_at`, `updated_at`
-- [ ] **`JobAlert` model** — FK to User + Resume. Config: `frequency` (daily/weekly), `is_active` (bool), `preferences` (JSONField: remote_ok, location, salary_min, excluded_companies), `last_run_at`, `next_run_at`, `created_at`
-- [ ] **`DiscoveredJob` model** — Global (not per-user). Fields: `source` (serpapi/adzuna/remotive), `external_id` (unique with source), `url`, `title`, `company`, `location`, `salary_range`, `description_snippet`, `posted_at`, `raw_data` (JSONField), `created_at`. Unique constraint on (source, external_id).
-- [ ] **`JobMatch` model** — Junction: FK to `JobAlert` + `DiscoveredJob`. Fields: `relevance_score` (0-100), `match_reason` (TextField — LLM-generated), `user_feedback` (pending/relevant/irrelevant/applied/dismissed), `created_at`
-- [ ] **`JobAlertRun` model** — Audit log: FK to `JobAlert`. Fields: `jobs_discovered`, `jobs_matched`, `notification_sent` (bool), `credits_used`, `error_message`, `duration_seconds`, `created_at`
+- [x] **`JobSearchProfile` model** — OneToOne with `Resume`. LLM-extracted search criteria: `titles` (JSONField — list of target job titles), `skills` (JSONField), `seniority` (CharField: junior/mid/senior/lead/executive), `industries` (JSONField), `locations` (JSONField), `experience_years` (int), `raw_extraction` (JSONField — full LLM output), `created_at`, `updated_at`
+- [x] **`JobAlert` model** — FK to User + Resume. Config: `frequency` (daily/weekly), `is_active` (bool), `preferences` (JSONField: remote_ok, location, salary_min, excluded_companies), `last_run_at`, `next_run_at`, `created_at`
+- [x] **`DiscoveredJob` model** — Global (not per-user). Fields: `source` (serpapi/adzuna/remotive), `external_id` (unique with source), `url`, `title`, `company`, `location`, `salary_range`, `description_snippet`, `posted_at`, `raw_data` (JSONField), `created_at`. Unique constraint on (source, external_id).
+- [x] **`JobMatch` model** — Junction: FK to `JobAlert` + `DiscoveredJob`. Fields: `relevance_score` (0-100), `match_reason` (TextField — LLM-generated), `user_feedback` (pending/relevant/irrelevant/applied/dismissed), `created_at`
+- [x] **`JobAlertRun` model** — Audit log: FK to `JobAlert`. Fields: `jobs_discovered`, `jobs_matched`, `notification_sent` (bool), `credits_used`, `error_message`, `duration_seconds`, `created_at`
 
 ### Service Layer
 
-- [ ] **`analyzer/services/job_search_profile.py`** — `extract_search_profile(resume)` → LLM call to extract titles, skills, seniority, industries, locations from resume text. Saves to `JobSearchProfile`.
-- [ ] **`analyzer/services/job_sources/`** — Provider pattern (like `ai_providers/`):
+- [x] **`analyzer/services/job_search_profile.py`** — `extract_search_profile(resume)` → LLM call to extract titles, skills, seniority, industries, locations from resume text. Saves to `JobSearchProfile`.
+- [x] **`analyzer/services/job_sources/`** — Provider pattern (like `ai_providers/`):
   - `base.py` — `BaseJobSource` abstract class with `search(queries, location, date_filter) → [DiscoveredJob]`
   - `serpapi_source.py` — Google Jobs via SerpAPI
   - `adzuna_source.py` — Adzuna free API
   - `factory.py` — Source selection based on config
-- [ ] **`analyzer/services/job_matcher.py`** — `match_jobs(job_alert, discovered_jobs)` → Batch LLM call: "Score these jobs 0-100 for this resume. Return [{id, score, reason}]". Filters by threshold (≥60), creates `JobMatch` records.
+- [x] **`analyzer/services/job_matcher.py`** — `match_jobs(job_alert, discovered_jobs)` → Batch LLM call: "Score these jobs 0-100 for this resume. Return [{id, score, reason}]". Filters by threshold (≥60), creates `JobMatch` records.
 
 ### Celery Tasks
 
-- [ ] **`extract_job_search_profile_task(resume_id)`** — Runs on alert creation. Extracts search profile from resume via LLM.
-- [ ] **`discover_jobs_task()`** — Periodic (Celery Beat, every 6h). For each active JobAlert where `next_run_at ≤ now`: build search queries from profile, call job source APIs, dedup via `external_id`, insert new `DiscoveredJob` records, chain `match_jobs_task`.
-- [ ] **`match_jobs_task(job_alert_id, discovered_job_ids)`** — Batch LLM relevance scoring. Create `JobMatch` records for score ≥ threshold. Chain `send_job_alert_notification_task`.
-- [ ] **`send_job_alert_notification_task(job_alert_id, run_id)`** — If new matches found + user has `job_alerts_email` enabled: render email digest via `EmailTemplate` (top 5-10 matches with title, company, score, reason, apply URL). Update `last_run_at`, log to `JobAlertRun`.
+- [x] **`extract_job_search_profile_task(resume_id)`** — Runs on alert creation. Extracts search profile from resume via LLM.
+- [x] **`discover_jobs_task()`** — Periodic (Celery Beat, every 6h). For each active JobAlert where `next_run_at ≤ now`: build search queries from profile, call job source APIs, dedup via `external_id`, insert new `DiscoveredJob` records, chain `match_jobs_task`.
+- [x] **`match_jobs_task(job_alert_id, discovered_job_ids)`** — Batch LLM relevance scoring. Create `JobMatch` records for score ≥ threshold. Chain `send_job_alert_notification_task`.
+- [x] **`send_job_alert_notification_task(job_alert_id, run_id)`** — If new matches found + user has `job_alerts_email` enabled: render email digest via `EmailTemplate` (top 5-10 matches with title, company, score, reason, apply URL). Update `last_run_at`, log to `JobAlertRun`.
 
 ### API Endpoints
 
-- [ ] **`GET /api/job-alerts/`** — List user's alert subscriptions
-- [ ] **`POST /api/job-alerts/`** — Create alert (link to resume, set frequency + preferences). Pro only. Triggers profile extraction.
-- [ ] **`GET /api/job-alerts/<id>/`** — Alert detail + latest run stats
-- [ ] **`PUT /api/job-alerts/<id>/`** — Update preferences (frequency, location, etc.)
-- [ ] **`DELETE /api/job-alerts/<id>/`** — Deactivate alert
-- [ ] **`GET /api/job-alerts/<id>/matches/`** — Paginated matched jobs with scores + reasons
-- [ ] **`POST /api/job-alerts/<id>/matches/<id>/feedback/`** — User marks relevant/irrelevant/applied/dismissed
-- [ ] **`POST /api/job-alerts/<id>/run/`** — On-demand manual run (costs 1 credit)
+- [x] **`GET /api/job-alerts/`** — List user's alert subscriptions
+- [x] **`POST /api/job-alerts/`** — Create alert (link to resume, set frequency + preferences). Pro only. Triggers profile extraction.
+- [x] **`GET /api/job-alerts/<id>/`** — Alert detail + latest run stats
+- [x] **`PUT /api/job-alerts/<id>/`** — Update preferences (frequency, location, etc.)
+- [x] **`DELETE /api/job-alerts/<id>/`** — Deactivate alert
+- [x] **`GET /api/job-alerts/<id>/matches/`** — Paginated matched jobs with scores + reasons
+- [x] **`POST /api/job-alerts/<id>/matches/<id>/feedback/`** — User marks relevant/irrelevant/applied/dismissed
+- [x] **`POST /api/job-alerts/<id>/run/`** — On-demand manual run (costs 1 credit)
 
 ### Credits & Plan Gating
 
-- [ ] `job_alert_run = 1` credit cost in `seed_credit_costs`
-- [ ] Create alert: Pro only (`plan.job_notifications` check)
-- [ ] Max active alerts: Plan-configurable (add `max_job_alerts` field to Plan, Pro = 3)
-- [ ] Automated runs: 1 credit per run
-- [ ] Manual runs: 1 credit per run
+- [x] `job_alert_run = 1` credit cost in `seed_credit_costs`
+- [x] Create alert: Pro only (`plan.job_notifications` check)
+- [x] Max active alerts: Plan-configurable (add `max_job_alerts` field to Plan, Pro = 3)
+- [x] Automated runs: 1 credit per run
+- [x] Manual runs: 1 credit per run
 
 ### External API Integration
 
-- [ ] **SerpAPI** — Google Jobs endpoint. Env var: `SERPAPI_API_KEY`. Package: `google-search-results` or raw `requests`.
-- [ ] **Adzuna** — Free tier (250 req/day). Env var: `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`. Raw `requests`.
+- [x] **SerpAPI** — Google Jobs endpoint. Env var: `SERPAPI_API_KEY`. Package: `google-search-results` or raw `requests`.
+- [x] **Adzuna** — Free tier (250 req/day). Env var: `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`. Raw `requests`.
 
 ### Migration from Existing Job Model
 
-- [ ] Existing `Job` model stays as "manually tracked jobs" (user-created via POST /api/jobs/)
-- [ ] `DiscoveredJob` + `JobMatch` = system-discovered pipeline
-- [ ] Frontend shows tabs: "My Jobs" vs "Discovered Jobs"
+- [x] Existing `Job` model stays as "manually tracked jobs" (user-created via POST /api/jobs/)
+- [x] `DiscoveredJob` + `JobMatch` = system-discovered pipeline
+- [ ] Frontend shows tabs: "My Jobs" vs "Discovered Jobs" *(frontend task)*
 
 ### Tests
 
-- [ ] Unit tests for search profile extraction prompt
-- [ ] Unit tests for job source providers (mock API responses)
-- [ ] Unit tests for LLM batch matching
-- [ ] API endpoint tests (CRUD, plan gating, credit deduction)
-- [ ] Integration test for full pipeline (discover → match → notify)
+- [x] Unit tests for search profile extraction prompt
+- [x] Unit tests for job source providers (mock API responses)
+- [x] Unit tests for LLM batch matching
+- [x] API endpoint tests (CRUD, plan gating, credit deduction)
+- [x] Integration test for full pipeline (discover → match → notify)
 
 ### Dependencies
 
-- [ ] Add `google-search-results` (SerpAPI) or use raw `requests`
+- [x] Add `google-search-results` (SerpAPI) or use raw `requests` *(used raw requests — no extra dependency)*
 - [ ] Env vars: `SERPAPI_API_KEY`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`
 
 ### Documentation

@@ -8,6 +8,9 @@ from .views import (
     JobListCreateView, JobDetailView, JobRelevanceView,
     GenerateResumeView, GeneratedResumeStatusView,
     GeneratedResumeDownloadView, GeneratedResumeListView,
+    # Phase 11 — Smart Job Alerts
+    JobAlertListCreateView, JobAlertDetailView,
+    JobAlertMatchListView, JobAlertMatchFeedbackView, JobAlertManualRunView,
 )
 
 urlpatterns = [
@@ -26,7 +29,7 @@ urlpatterns = [
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
-    # Jobs
+    # Manually tracked jobs (pre-existing)
     path('jobs/', JobListCreateView.as_view(), name='job-list-create'),
     path('jobs/<uuid:pk>/', JobDetailView.as_view(), name='job-detail'),
     path('jobs/<uuid:pk>/relevant/', JobRelevanceView.as_view(), name='job-relevant',
@@ -35,4 +38,10 @@ urlpatterns = [
          kwargs={'relevance': 'irrelevant'}),
     # Generated resumes
     path('generated-resumes/', GeneratedResumeListView.as_view(), name='generated-resume-list'),
+    # Phase 11 — Smart Job Alerts
+    path('job-alerts/', JobAlertListCreateView.as_view(), name='job-alert-list-create'),
+    path('job-alerts/<uuid:pk>/', JobAlertDetailView.as_view(), name='job-alert-detail'),
+    path('job-alerts/<uuid:pk>/matches/', JobAlertMatchListView.as_view(), name='job-alert-matches'),
+    path('job-alerts/<uuid:pk>/matches/<uuid:match_pk>/feedback/', JobAlertMatchFeedbackView.as_view(), name='job-alert-match-feedback'),
+    path('job-alerts/<uuid:pk>/run/', JobAlertManualRunView.as_view(), name='job-alert-run'),
 ]

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job, GeneratedResume
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -374,3 +374,125 @@ class GeneratedResumeCreateSerializer(serializers.Serializer):
                 f'Template "{value}" is not supported. Available: {", ".join(supported)}'
             )
         return value
+
+
+# ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
+
+
+class JobSearchProfileSerializer(serializers.ModelSerializer):
+    """Read-only — returned nested inside JobAlertDetailSerializer."""
+    class Meta:
+        model = JobSearchProfile
+        fields = (
+            'titles', 'skills', 'seniority', 'industries',
+            'locations', 'experience_years', 'updated_at',
+        )
+        read_only_fields = fields
+
+
+class DiscoveredJobSerializer(serializers.ModelSerializer):
+    """Read-only serializer for a discovered job."""
+    class Meta:
+        model = DiscoveredJob
+        fields = (
+            'id', 'source', 'title', 'company', 'location',
+            'salary_range', 'description_snippet', 'url', 'posted_at', 'created_at',
+        )
+        read_only_fields = fields
+
+
+class JobMatchSerializer(serializers.ModelSerializer):
+    """Serializer for a job match result (includes nested DiscoveredJob)."""
+    job = DiscoveredJobSerializer(source='discovered_job', read_only=True)
+
+    class Meta:
+        model = JobMatch
+        fields = (
+            'id', 'job', 'relevance_score', 'match_reason',
+            'user_feedback', 'created_at',
+        )
+        read_only_fields = ('id', 'job', 'relevance_score', 'match_reason', 'created_at')
+
+
+class JobMatchFeedbackSerializer(serializers.ModelSerializer):
+    """Write-only — update user_feedback on a match."""
+    class Meta:
+        model = JobMatch
+        fields = ('user_feedback',)
+
+    def validate_user_feedback(self, value):
+        valid = {c[0] for c in JobMatch.FEEDBACK_CHOICES} - {JobMatch.FEEDBACK_PENDING}
+        if value not in valid:
+            raise serializers.ValidationError(
+                f'Invalid feedback. Choose from: {", ".join(sorted(valid))}.'
+            )
+        return value
+
+
+class JobAlertRunSerializer(serializers.ModelSerializer):
+    """Read-only run stats."""
+    class Meta:
+        model = JobAlertRun
+        fields = (
+            'id', 'jobs_discovered', 'jobs_matched', 'notification_sent',
+            'credits_used', 'error_message', 'duration_seconds', 'created_at',
+        )
+        read_only_fields = fields
+
+
+class JobAlertSerializer(serializers.ModelSerializer):
+    """List serializer — lightweight."""
+    last_run = JobAlertRunSerializer(
+        source='runs',
+        read_only=True,
+        default=None,
+    )
+    resume_filename = serializers.CharField(source='resume.original_filename', read_only=True)
+    search_profile = JobSearchProfileSerializer(
+        source='resume.job_search_profile', read_only=True, default=None,
+    )
+
+    class Meta:
+        model = JobAlert
+        fields = (
+            'id', 'resume', 'resume_filename', 'frequency', 'is_active',
+            'preferences', 'last_run_at', 'next_run_at',
+            'search_profile', 'last_run', 'created_at',
+        )
+        read_only_fields = (
+            'id', 'resume_filename', 'last_run_at', 'next_run_at',
+            'search_profile', 'last_run', 'created_at',
+        )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # latest_run instead of the queryset
+        latest = instance.runs.order_by('-created_at').first()
+        data['last_run'] = JobAlertRunSerializer(latest).data if latest else None
+        return data
+
+
+class JobAlertCreateSerializer(serializers.ModelSerializer):
+    """Create a new job alert."""
+    class Meta:
+        model = JobAlert
+        fields = ('resume', 'frequency', 'preferences')
+
+    def validate_resume(self, resume):
+        user = self.context['request'].user
+        if resume.user_id != user.id:
+            raise serializers.ValidationError('Resume not found.')
+        return resume
+
+    def validate_preferences(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('preferences must be a JSON object.')
+        return value
+
+
+class JobAlertUpdateSerializer(serializers.ModelSerializer):
+    """Update frequency and preferences on an existing alert."""
+    class Meta:
+        model = JobAlert
+        fields = ('frequency', 'preferences', 'is_active')
+

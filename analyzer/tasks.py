@@ -368,3 +368,360 @@ def _refund_generation_credits(gen):
         logger.info('Credits refunded for failed resume generation id=%s', gen.id)
     except Exception:
         logger.exception('Failed to refund credits for resume generation id=%s', gen.id)
+
+
+# ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    acks_late=True,
+)
+def extract_job_search_profile_task(self, resume_id):
+    """
+    Extract a job search profile from a resume using the LLM.
+    Triggered automatically when a JobAlert is created.
+
+    Saves (or updates) the JobSearchProfile OneToOne record for the resume.
+    """
+    from .models import Resume, JobSearchProfile
+    from .services.job_search_profile import extract_search_profile
+
+    logger.info('Job search profile extraction started: resume_id=%s', resume_id)
+
+    try:
+        resume = Resume.objects.get(id=resume_id)
+    except Resume.DoesNotExist:
+        logger.error('Resume %s not found — aborting profile extraction', resume_id)
+        return
+
+    try:
+        result = extract_search_profile(resume)
+
+        # Upsert JobSearchProfile
+        profile, _ = JobSearchProfile.objects.update_or_create(
+            resume=resume,
+            defaults={
+                'titles': result['titles'],
+                'skills': result['skills'],
+                'seniority': result['seniority'],
+                'industries': result['industries'],
+                'locations': result['locations'],
+                'experience_years': result['experience_years'],
+                'raw_extraction': result['raw_extraction'],
+            },
+        )
+        logger.info(
+            'JobSearchProfile saved: resume=%s seniority=%s titles=%s',
+            resume_id, profile.seniority, profile.titles[:2],
+        )
+
+    except ValueError as exc:
+        logger.warning('Profile extraction failed (resume=%s): %s', resume_id, exc)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+
+    except Exception as exc:
+        logger.exception('Unexpected error in profile extraction (resume=%s)', resume_id)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+
+
+@shared_task(ignore_result=True)
+def discover_jobs_task():
+    """
+    Periodic task (every 6 hours via Celery Beat).
+
+    For each active JobAlert where next_run_at ≤ now:
+    1. Build search queries from the resume's JobSearchProfile
+    2. Call all configured job source APIs
+    3. Dedup and save new DiscoveredJob records
+    4. Chain match_jobs_task for each alert
+    """
+    from django.utils import timezone
+    from .models import JobAlert, DiscoveredJob
+    from .services.job_sources.factory import get_job_sources
+
+    now = timezone.now()
+    due_alerts = JobAlert.objects.filter(
+        is_active=True,
+        next_run_at__lte=now,
+    ).select_related('resume', 'resume__job_search_profile')
+
+    logger.info('discover_jobs_task: found %d due alerts', due_alerts.count())
+
+    for alert in due_alerts:
+        try:
+            resume = alert.resume
+            try:
+                profile = resume.job_search_profile
+            except Exception:
+                logger.warning('Alert %s has no JobSearchProfile — skipping', alert.id)
+                # Still update next_run_at to avoid re-running immediately
+                alert.set_next_run()
+                alert.save(update_fields=['next_run_at'])
+                continue
+
+            # Build search queries from profile titles
+            queries = profile.titles[:3] if profile.titles else []
+            if not queries:
+                logger.warning('Alert %s profile has no titles — skipping', alert.id)
+                alert.set_next_run()
+                alert.save(update_fields=['next_run_at'])
+                continue
+
+            preferences = alert.preferences or {}
+            location = preferences.get('location', '')
+            if not location and profile.locations:
+                location = profile.locations[0]
+
+            # Fetch from all configured sources
+            sources = get_job_sources()
+            all_listings = []
+            for source in sources:
+                try:
+                    listings = source.search(queries=queries, location=location)
+                    all_listings.extend(listings)
+                except Exception as exc:
+                    logger.warning('Source %s failed for alert %s: %s', source.name(), alert.id, exc)
+
+            logger.info('Alert %s: found %d raw listings', alert.id, len(all_listings))
+
+            # Dedup and insert new DiscoveredJob records
+            new_job_ids = []
+            for listing in all_listings:
+                excluded = preferences.get('excluded_companies', [])
+                if listing.company and any(
+                    ex.lower() in listing.company.lower() for ex in excluded
+                ):
+                    continue
+
+                from django.utils.dateparse import parse_datetime
+                posted_at = None
+                if listing.posted_at:
+                    try:
+                        posted_at = parse_datetime(listing.posted_at)
+                    except Exception:
+                        pass
+
+                job, created = DiscoveredJob.objects.get_or_create(
+                    source=listing.source,
+                    external_id=listing.external_id,
+                    defaults={
+                        'url': listing.url,
+                        'title': listing.title,
+                        'company': listing.company,
+                        'location': listing.location,
+                        'salary_range': listing.salary_range,
+                        'description_snippet': listing.description_snippet,
+                        'posted_at': posted_at,
+                        'raw_data': listing.raw_data,
+                    },
+                )
+                new_job_ids.append(str(job.id))
+
+            logger.info('Alert %s: %d unique jobs saved', alert.id, len(new_job_ids))
+
+            # Update alert timestamps
+            alert.last_run_at = now
+            alert.set_next_run()
+            alert.save(update_fields=['last_run_at', 'next_run_at'])
+
+            # Chain matching task
+            if new_job_ids:
+                match_jobs_task.delay(str(alert.id), new_job_ids)
+
+        except Exception as exc:
+            logger.exception('discover_jobs_task failed for alert %s: %s', alert.id, exc)
+
+
+@shared_task(
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def match_jobs_task(self, job_alert_id, discovered_job_ids):
+    """
+    Score a set of DiscoveredJob objects for relevance to a JobAlert.
+    Creates JobMatch records for jobs scoring ≥ MATCH_THRESHOLD.
+    Chains send_job_alert_notification_task on completion.
+    """
+    import time as _time
+    from django.utils import timezone
+    from .models import JobAlert, DiscoveredJob, JobMatch, JobAlertRun
+    from .services.job_matcher import match_jobs, MATCH_THRESHOLD
+    from accounts.services import deduct_credits, refund_credits, InsufficientCreditsError
+
+    logger.info('match_jobs_task: alert=%s jobs=%d', job_alert_id, len(discovered_job_ids))
+
+    try:
+        alert = JobAlert.objects.select_related(
+            'user', 'resume', 'resume__job_search_profile',
+        ).get(id=job_alert_id)
+    except JobAlert.DoesNotExist:
+        logger.error('JobAlert %s not found — aborting match task', job_alert_id)
+        return
+
+    start = _time.monotonic()
+    run = JobAlertRun.objects.create(job_alert=alert)
+
+    # Deduct 1 credit for this run
+    credits_used = 0
+    credit_deducted = False
+    try:
+        deduct_credits(
+            alert.user,
+            'job_alert_run',
+            description=f'Job alert run #{run.id}',
+            reference_id=str(run.id),
+        )
+        credits_used = 1
+        credit_deducted = True
+    except InsufficientCreditsError as e:
+        logger.warning('Insufficient credits for alert %s (balance=%d) — skipping run', job_alert_id, e.balance)
+        run.error_message = f'Insufficient credits (balance={e.balance})'
+        run.save(update_fields=['error_message'])
+        return
+
+    try:
+        discovered_jobs = DiscoveredJob.objects.filter(id__in=discovered_job_ids)
+        run.jobs_discovered = discovered_jobs.count()
+
+        scored = match_jobs(alert, discovered_jobs)
+
+        # Build a map: DiscoveredJob.id → DiscoveredJob
+        job_map = {str(j.id): j for j in discovered_jobs}
+
+        matches_created = 0
+        for item in scored:
+            if item['score'] < MATCH_THRESHOLD:
+                continue
+            dj = job_map.get(item['discovered_job_id'])
+            if not dj:
+                continue
+            _, created = JobMatch.objects.get_or_create(
+                job_alert=alert,
+                discovered_job=dj,
+                defaults={
+                    'relevance_score': item['score'],
+                    'match_reason': item['reason'],
+                },
+            )
+            if created:
+                matches_created += 1
+
+        duration = _time.monotonic() - start
+        run.jobs_matched = matches_created
+        run.credits_used = credits_used
+        run.duration_seconds = round(duration, 2)
+        run.save(update_fields=['jobs_discovered', 'jobs_matched', 'credits_used', 'duration_seconds'])
+
+        logger.info(
+            'match_jobs_task done: alert=%s discovered=%d matched=%d (%.2fs)',
+            job_alert_id, run.jobs_discovered, matches_created, duration,
+        )
+
+        # Chain notification task
+        send_job_alert_notification_task.delay(str(alert.id), str(run.id))
+
+    except Exception as exc:
+        logger.exception('match_jobs_task failed for alert %s', job_alert_id)
+        duration = _time.monotonic() - start
+        run.error_message = str(exc)
+        run.duration_seconds = round(duration, 2)
+        run.save(update_fields=['error_message', 'duration_seconds'])
+        # Refund credits on failure
+        if credit_deducted:
+            try:
+                refund_credits(
+                    alert.user,
+                    'job_alert_run',
+                    description=f'Refund: job alert run #{run.id} failed',
+                    reference_id=str(run.id),
+                )
+            except Exception:
+                logger.exception('Failed to refund credits for run %s', run.id)
+        raise self.retry(exc=exc)
+
+
+@shared_task(ignore_result=True)
+def send_job_alert_notification_task(job_alert_id, run_id):
+    """
+    Send an email digest if new job matches were found for a JobAlert.
+
+    Checks:
+    - matches_created > 0
+    - User has job_alerts_email notification preference enabled
+    - Alert is still active
+    """
+    from .models import JobAlert, JobAlertRun, JobMatch
+
+    logger.info('send_job_alert_notification_task: alert=%s run=%s', job_alert_id, run_id)
+
+    try:
+        alert = JobAlert.objects.select_related('user').get(id=job_alert_id)
+        run = JobAlertRun.objects.get(id=run_id)
+    except (JobAlert.DoesNotExist, JobAlertRun.DoesNotExist) as exc:
+        logger.error('send_job_alert_notification_task: alert or run not found: %s', exc)
+        return
+
+    if run.jobs_matched == 0:
+        logger.info('No new matches for alert %s — skipping notification', job_alert_id)
+        return
+
+    # Check notification preference
+    user = alert.user
+    notif_prefs = getattr(user, 'notification_preferences', None)
+    job_alerts_email = getattr(notif_prefs, 'job_alerts_email', True) if notif_prefs else True
+
+    if not job_alerts_email:
+        logger.info('User %s has job_alerts_email disabled — skipping notification', user.id)
+        return
+
+    # Fetch top matches (up to 10) sorted by relevance score
+    top_matches = (
+        JobMatch.objects
+        .filter(job_alert=alert, user_feedback=JobMatch.FEEDBACK_PENDING)
+        .select_related('discovered_job')
+        .order_by('-relevance_score')[:10]
+    )
+
+    matches_data = [
+        {
+            'title': m.discovered_job.title,
+            'company': m.discovered_job.company,
+            'location': m.discovered_job.location,
+            'url': m.discovered_job.url,
+            'score': m.relevance_score,
+            'reason': m.match_reason,
+            'salary': m.discovered_job.salary_range,
+        }
+        for m in top_matches
+    ]
+
+    try:
+        from accounts.email_utils import send_templated_email
+        sent = send_templated_email(
+            slug='job-alert-digest',
+            recipient=user.email,
+            context={
+                'username': user.first_name or user.username,
+                'alert_id': str(alert.id),
+                'frequency': alert.frequency,
+                'matches_count': run.jobs_matched,
+                'matches': matches_data,
+                'manage_url': f'/job-alerts/{alert.id}/',
+            },
+            fail_silently=True,
+        )
+        if sent:
+            run.notification_sent = True
+            run.save(update_fields=['notification_sent'])
+            logger.info('Job alert digest sent: user=%s alert=%s matches=%d', user.id, alert.id, run.jobs_matched)
+        else:
+            logger.warning('Email template job-alert-digest not found or failed for user=%s', user.id)
+    except Exception:
+        logger.exception('Failed to send job alert notification: alert=%s', job_alert_id)

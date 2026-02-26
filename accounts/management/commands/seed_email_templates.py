@@ -232,6 +232,102 @@ If you did not make this change, please reset your password immediately or conta
 
 — {{ app_name }}''',
     },
+    # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────
+    {
+        'slug': 'job-alert-digest',
+        'name': 'Job Alert Digest',
+        'subject': '{{ matches_count }} new job match{% if matches_count != 1 %}es{% endif %} for your {{ frequency }} alert',
+        'is_active': True,
+        'html_body': '''\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:Helvetica Neue,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td align="center" style="padding:40px 0;">
+        <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1a1a4e 0%,#3d3d9e 100%);padding:32px 40px;">
+              <h1 style="margin:0;color:#fff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+              <p style="margin:8px 0 0;color:#c8c8f0;font-size:14px;">Smart Job Alerts</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 40px;">
+              <p style="margin:0 0 16px;color:#4a4a68;font-size:15px;line-height:1.6;">
+                Hi <strong>{{ username }}</strong>,
+              </p>
+              <p style="margin:0 0 24px;color:#4a4a68;font-size:15px;line-height:1.6;">
+                We found <strong>{{ matches_count }} new job match{% if matches_count != 1 %}es{% endif %}</strong> for your {{ frequency }} alert. Here are the top results:
+              </p>
+              {% for job in matches %}
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;border:1px solid #e8e8f0;border-radius:6px;overflow:hidden;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <p style="margin:0 0 4px;font-size:16px;font-weight:700;color:#1a1a4e;">
+                      <a href="{{ job.url }}" style="color:#1a1a4e;text-decoration:none;">{{ job.title }}</a>
+                    </p>
+                    <p style="margin:0 0 8px;font-size:14px;color:#6b6b8e;">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}{% if job.salary %} · {{ job.salary }}{% endif %}</p>
+                    <p style="margin:0 0 12px;font-size:13px;color:#4a4a68;line-height:1.5;">{{ job.reason }}</p>
+                    <table cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="background:#e8f5e9;border-radius:12px;padding:4px 12px;">
+                          <span style="font-size:13px;font-weight:700;color:#2e7d32;">{{ job.score }}% match</span>
+                        </td>
+                        <td style="padding-left:12px;">
+                          <a href="{{ job.url }}" style="font-size:13px;color:#3d3d9e;text-decoration:none;font-weight:600;">View job →</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              {% endfor %}
+              <p style="margin:24px 0 0;text-align:center;">
+                <a href="{{ frontend_url }}/job-alerts/{{ alert_id }}/"
+                   style="display:inline-block;background:#1a1a4e;color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;">
+                  View All Matches
+                </a>
+              </p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;">
+                <a href="{{ frontend_url }}/job-alerts/{{ alert_id }}/" style="color:#9a9ab0;">Manage alert preferences</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>''',
+        'plain_text_body': '''\
+{{ app_name }} — Job Alert Digest
+
+Hi {{ username }},
+
+We found {{ matches_count }} new job match{% if matches_count != 1 %}es{% endif %} for your {{ frequency }} alert.
+
+{% for job in matches %}
+{{ job.title }} @ {{ job.company }}{% if job.location %} ({{ job.location }}){% endif %}
+Match score: {{ job.score }}%
+Why: {{ job.reason }}
+Apply: {{ job.url }}
+
+{% endfor %}
+
+View all matches: {{ frontend_url }}/job-alerts/{{ alert_id }}/
+
+— {{ app_name }}''',
+    },
 ]
 
 

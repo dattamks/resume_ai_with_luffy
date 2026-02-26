@@ -20,6 +20,11 @@ CREDIT_COSTS = [
         'cost': 1,
         'description': 'Cost per AI-generated improved resume from analysis report.',
     },
+    {
+        'action': 'job_alert_run',
+        'cost': 1,
+        'description': 'Cost per job alert discovery + matching run (automated or manual).',
+    },
 ]
 
 

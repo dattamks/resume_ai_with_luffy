@@ -211,6 +211,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'analyzer.tasks.flush_expired_tokens',
         'schedule': 86400.0,  # once per day
     },
+    # Phase 11 — Smart Job Alerts
+    'discover-jobs': {
+        'task': 'analyzer.tasks.discover_jobs_task',
+        'schedule': 21600.0,  # every 6 hours
+    },
 }
 
 # DRF

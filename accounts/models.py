@@ -230,6 +230,10 @@ class Plan(models.Model):
         default=False,
         help_text='Can receive job alert notifications.',
     )
+    max_job_alerts = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='Max active job alerts allowed (0 = not permitted, Pro = 3).',
+    )
     pdf_export = models.BooleanField(
         default=True,
         help_text='Can export analysis as PDF report.',

@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.12.0] — 2026-02-26
+
+### Phase 12: Smart Job Alerts (Job Discovery & Matching Pipeline)
+
+### Added
+- **JobSearchProfile model** — OneToOne with `Resume`. LLM-extracted profile containing `titles`, `skills`, `seniority`, `industries`, `locations`, `experience_years`, and `raw_extraction`. Populated asynchronously when a job alert is created.
+- **JobAlert model** — UUID PK, FK to User + Resume. Supports `daily` / `weekly` frequency. Stores JSON `preferences` (excluded_companies, location_filter, date_filter). Auto-computes `next_run_at` based on frequency. Soft-delete via `is_active = False`.
+- **DiscoveredJob model** — Canonical job listing from external sources. Unique on `(source, external_id)`. Stores title, company, location, salary_range, description_snippet, posted_at, and raw_data JSON.
+- **JobMatch model** — Links DiscoveredJob to JobAlert with `relevance_score` (0–100), `match_reason`, and `user_feedback` (pending/relevant/irrelevant/applied/dismissed). Unique on `(job_alert, discovered_job)`.
+- **JobAlertRun model** — Audit record per alert execution. Tracks `jobs_discovered`, `jobs_matched`, `notification_sent`, `credits_used`, `error_message`, and `duration_seconds`.
+- **`max_job_alerts` field on Plan** — Quota for job alerts per plan (Free=0, Pro=3).
+- **Job source provider pattern** — Abstract `BaseJobSource` with `RawJobListing` dataclass; `SerpAPIJobSource` (Google Jobs via SerpAPI) and `AdzunaJobSource` (Adzuna free API) implementations with graceful degradation when API keys are missing.
+- **`job_search_profile.py` service** — LLM-powered extraction of job search criteria from resume text. Validates and normalizes seniority, caps list lengths, handles fallbacks.
+- **`job_matcher.py` service** — Batch LLM scoring (≤15 jobs/batch) of discovered jobs against resume profile. Returns relevance scores + match reasons. Threshold of 60 to filter weak matches.
+- **4 Celery tasks:**
+  - `extract_job_search_profile_task(resume_id)` — Async profile extraction with retry (max 2).
+  - `discover_jobs_task()` — Periodic (every 6 hours). Finds due alerts, fetches from all configured sources, deduplicates, respects excluded_companies, chains matcher.
+  - `match_jobs_task(job_alert_id, discovered_job_ids)` — Deducts 1 credit, runs LLM scoring, creates JobMatch records, creates JobAlertRun audit, refunds on failure.
+  - `send_job_alert_notification_task(job_alert_id, run_id)` — Sends email digest with top 10 matches via `job-alert-digest` email template.
+- **5 REST API endpoints:**
+  - `GET/POST /api/job-alerts/` — List/create alerts (plan-gated, quota-checked).
+  - `GET/PUT/DELETE /api/job-alerts/<uuid:id>/` — Detail/update/deactivate.
+  - `GET /api/job-alerts/<uuid:id>/matches/` — Paginated matches with `?feedback=` filter.
+  - `POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` — Submit user feedback.
+  - `POST /api/job-alerts/<uuid:id>/run/` — Trigger manual discovery run (202 Accepted).
+- **8 serializers** — `JobSearchProfileSerializer`, `DiscoveredJobSerializer`, `JobMatchSerializer`, `JobMatchFeedbackSerializer`, `JobAlertRunSerializer`, `JobAlertSerializer` (nested), `JobAlertCreateSerializer`, `JobAlertUpdateSerializer`.
+- **5 admin classes** — Full Django admin for all new models with filters, search, and readonly fields.
+- **Seed data:**
+  - `job_alert_run` credit cost (1 credit) in `seed_credit_costs`.
+  - `max_job_alerts` in `seed_plans` (Free=0, Pro=3).
+  - `job-alert-digest` email template in `seed_email_templates`.
+- **Celery Beat schedule** — `discover-jobs` task runs every 6 hours.
+- **25 tests** — Comprehensive test suite covering CRUD, plan gating, quota, match listing/filtering, feedback, manual run, LLM extraction, job source providers (SerpAPI + Adzuna), and matcher service.
+- **FRONTEND_API_GUIDE.md Section 21** — Full documentation with endpoints, request/response schemas, TypeScript types, and integration recipes.
+
+---
+
 ## [0.11.0] — 2026-02-26
 
 ### Phase 11: AI Resume Generation
