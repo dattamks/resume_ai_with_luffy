@@ -367,3 +367,75 @@ class Job(models.Model):
 
     def __str__(self):
         return f"{self.title or self.job_url[:60]} ({self.user.username})"
+
+
+class GeneratedResume(models.Model):
+    """
+    AI-generated improved resume based on analysis findings.
+
+    The LLM rewrites the user's resume incorporating all improvements
+    identified in the analysis report (missing keywords, sentence rewrites,
+    section feedback, quick wins). Output is rendered as ATS-optimized PDF/DOCX.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_PROCESSING = 'processing'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PROCESSING, 'Processing'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    FORMAT_PDF = 'pdf'
+    FORMAT_DOCX = 'docx'
+    FORMAT_CHOICES = [
+        (FORMAT_PDF, 'PDF'),
+        (FORMAT_DOCX, 'DOCX'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    analysis = models.ForeignKey(
+        ResumeAnalysis, on_delete=models.CASCADE,
+        related_name='generated_resumes',
+        help_text='The analysis whose findings drive the resume rewrite',
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='generated_resumes')
+    template = models.SlugField(
+        max_length=50, default='ats_classic',
+        help_text='Template slug (e.g. ats_classic, modern_clean)',
+    )
+    format = models.CharField(max_length=10, choices=FORMAT_CHOICES, default=FORMAT_PDF)
+    file = models.FileField(
+        upload_to='generated_resumes/', blank=True,
+        help_text='Generated resume file (stored in R2)',
+    )
+    llm_response = models.ForeignKey(
+        LLMResponse, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='generated_resumes',
+        help_text='LLM response for the rewrite call',
+    )
+    resume_content = models.JSONField(
+        null=True, blank=True,
+        help_text='Structured resume JSON (contact, summary, experience, education, skills, etc.)',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    error_message = models.TextField(blank=True)
+    celery_task_id = models.CharField(max_length=255, blank=True)
+    credits_deducted = models.BooleanField(
+        default=False,
+        help_text='Whether credits were deducted. Prevents double-deduction on retry.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['analysis', '-created_at']),
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Generated resume for analysis #{self.analysis_id} ({self.template}, {self.format})"

@@ -234,3 +234,137 @@ def flush_expired_tokens():
     logger.info('Flushing expired JWT tokens...')
     call_command('flushexpiredtokens')
     logger.info('Expired JWT tokens flushed')
+
+
+# ── Resume generation task ───────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    acks_late=True,
+)
+def generate_improved_resume_task(self, generated_resume_id):
+    """
+    Generate an improved resume from analysis findings.
+
+    Pipeline:
+    1. Build rewrite prompt from analysis report
+    2. Call LLM to get structured resume JSON
+    3. Render to PDF or DOCX
+    4. Upload to R2 (or local storage)
+    5. Update GeneratedResume record
+    """
+    from .models import GeneratedResume, LLMResponse
+    from .services.resume_generator import call_llm_for_rewrite
+    from .services.resume_pdf_renderer import render_resume_pdf
+    from .services.resume_docx_renderer import render_resume_docx
+
+    logger.info('Resume generation task started: id=%s', generated_resume_id)
+
+    try:
+        gen = GeneratedResume.objects.select_related('analysis', 'analysis__user').get(
+            id=generated_resume_id,
+        )
+    except GeneratedResume.DoesNotExist:
+        logger.error('GeneratedResume %s not found — aborting', generated_resume_id)
+        return
+
+    analysis = gen.analysis
+
+    # Mark as processing
+    gen.status = GeneratedResume.STATUS_PROCESSING
+    gen.celery_task_id = self.request.id or ''
+    gen.save(update_fields=['status', 'celery_task_id'])
+
+    try:
+        # Step 1+2: Call LLM for rewrite
+        result = call_llm_for_rewrite(analysis)
+
+        # Step 3: Save LLM response record
+        llm_record = LLMResponse.objects.create(
+            user=analysis.user,
+            prompt_sent=result['prompt'],
+            raw_response=result['raw'],
+            parsed_response=result['parsed'],
+            model_used=result['model'],
+            status=LLMResponse.STATUS_DONE,
+            duration_seconds=result['duration'],
+        )
+
+        gen.llm_response = llm_record
+        gen.resume_content = result['parsed']
+
+        # Step 4: Render to file
+        if gen.format == GeneratedResume.FORMAT_DOCX:
+            file_bytes = render_resume_docx(result['parsed'])
+            ext = 'docx'
+            content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        else:
+            file_bytes = render_resume_pdf(result['parsed'])
+            ext = 'pdf'
+            content_type = 'application/pdf'
+
+        # Build filename
+        name = result['parsed'].get('contact', {}).get('name', 'resume')
+        name_slug = name.replace(' ', '_')[:30]
+        role_slug = (analysis.jd_role or 'general').replace(' ', '_')[:30]
+        filename = f'generated_resumes/{name_slug}_{role_slug}_{gen.pk}.{ext}'
+
+        # Step 5: Save file to storage (R2 or local)
+        gen.file.save(filename, ContentFile(file_bytes), save=False)
+        gen.status = GeneratedResume.STATUS_DONE
+        gen.save(update_fields=[
+            'llm_response', 'resume_content', 'file', 'status',
+        ])
+
+        logger.info(
+            'Resume generated: id=%s analysis=%s format=%s file=%s (%.2fs LLM)',
+            gen.id, analysis.id, gen.format, filename, result['duration'],
+        )
+
+    except ValueError as exc:
+        logger.warning('Resume generation failed: id=%s error=%s', gen.id, exc)
+        gen.status = GeneratedResume.STATUS_FAILED
+        gen.error_message = str(exc)
+        gen.save(update_fields=['status', 'error_message'])
+        _refund_generation_credits(gen)
+
+    except Exception as exc:
+        logger.exception('Unexpected error in resume generation: id=%s', gen.id)
+        gen.status = GeneratedResume.STATUS_FAILED
+        gen.error_message = str(exc)
+        gen.save(update_fields=['status', 'error_message'])
+        _refund_generation_credits(gen)
+        # Retry on transient errors
+        if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+
+
+def _refund_generation_credits(gen):
+    """
+    Refund credits for a failed resume generation.
+    Only refunds if credits were actually deducted.
+    """
+    try:
+        gen.refresh_from_db()
+        if not gen.credits_deducted:
+            return
+
+        from accounts.services import refund_credits
+        from django.contrib.auth.models import User
+
+        user = User.objects.get(id=gen.user_id)
+        refund_credits(
+            user,
+            'resume_generation',
+            description=f'Refund: resume generation #{gen.id} failed',
+            reference_id=str(gen.id),
+        )
+
+        gen.credits_deducted = False
+        gen.save(update_fields=['credits_deducted'])
+        logger.info('Credits refunded for failed resume generation id=%s', gen.id)
+    except Exception:
+        logger.exception('Failed to refund credits for resume generation id=%s', gen.id)

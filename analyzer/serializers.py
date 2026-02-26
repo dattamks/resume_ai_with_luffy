@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job, GeneratedResume
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -338,3 +338,39 @@ class JobCreateSerializer(serializers.ModelSerializer):
 
         validated_data['user'] = user
         return super().create(validated_data)
+
+
+class GeneratedResumeSerializer(serializers.ModelSerializer):
+    """Read-only serializer for generated resume status and download."""
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GeneratedResume
+        fields = (
+            'id', 'analysis', 'template', 'format',
+            'status', 'error_message', 'file_url', 'created_at',
+        )
+        read_only_fields = fields
+
+    def get_file_url(self, obj):
+        if obj.file:
+            return obj.file.url
+        return None
+
+
+class GeneratedResumeCreateSerializer(serializers.Serializer):
+    """Serializer for requesting a resume generation."""
+    template = serializers.SlugField(max_length=50, default='ats_classic')
+    format = serializers.ChoiceField(
+        choices=[('pdf', 'PDF'), ('docx', 'DOCX')],
+        default='pdf',
+    )
+
+    def validate_template(self, value):
+        # Currently only ats_classic is supported
+        supported = ('ats_classic',)
+        if value not in supported:
+            raise serializers.ValidationError(
+                f'Template "{value}" is not supported. Available: {", ".join(supported)}'
+            )
+        return value

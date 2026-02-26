@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.11.0] — 2026-02-26
+
+### Phase 11: AI Resume Generation
+
+### Added
+- **GeneratedResume model** — UUID PK, FK to `ResumeAnalysis`, stores template/format/status/resume_content JSON, file (R2), LLM response reference, `credits_deducted` flag for idempotent refunds. Indexed on `(analysis, -created_at)` and `(user, -created_at)`.
+- **`resume_generator.py` service** — LLM-powered resume rewrite using analysis findings as improvement spec. Extracts missing keywords with recommended placements, sentence-level rewrites for weak sections (<70 score), quick wins, and formatting guidance. Strict "no fabrication" prompt ensures only real candidate data is used.
+- **`resume_pdf_renderer.py`** — ReportLab-based ATS-optimized PDF renderer. Single-column A4 layout, Helvetica fonts, clean section dividers, KeepTogether for page-break control. Renders contact, summary, experience, education, skills (grouped), certifications, and projects.
+- **`resume_docx_renderer.py`** — python-docx based ATS-optimized DOCX renderer. Calibri font, narrow margins, parallel structure to PDF. Compatible with MS Word, Google Docs, and ATS parsers.
+- **`generate_improved_resume_task` Celery task** — Async pipeline: LLM rewrite → render PDF/DOCX → upload to R2 → mark done. On failure: marks failed + auto-refunds credits via `_refund_generation_credits()`.
+- **Resume generation endpoints:**
+  - `POST /api/analyses/<id>/generate-resume/` — Trigger generation (1 credit). Validates analysis is done. Returns 202 with `{id, status, template, format, credits_used, balance}`. Returns 402 on insufficient credits.
+  - `GET /api/analyses/<id>/generated-resume/` — Poll latest generation status.
+  - `GET /api/analyses/<id>/generated-resume/download/` — 302 redirect to signed R2 URL.
+  - `GET /api/generated-resumes/` — List all user's generated resumes (paginated).
+- **`GeneratedResumeSerializer` / `GeneratedResumeCreateSerializer`** — Read-only serializer with `file_url` computed field; create serializer validates template slug and format choice.
+- **`GeneratedResumeAdmin`** — Django admin with list display, filters, search, and read-only computed fields.
+- **`resume_generation` credit cost** — Seeded at 1 credit via `seed_credit_costs`. Added to `_DEFAULT_COSTS` fallback.
+- **`python-docx==1.1.2`** — New dependency for DOCX rendering.
+
+---
+
 ## [0.10.0] — 2026-02-26
 
 ### Phase 10: Plans & Wallet (Credits System)

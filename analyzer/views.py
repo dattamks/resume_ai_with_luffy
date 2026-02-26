@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle
-from .models import ResumeAnalysis, Resume, Job
+from .models import ResumeAnalysis, Resume, Job, GeneratedResume
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
@@ -22,8 +22,10 @@ from .serializers import (
     SharedAnalysisSerializer,
     JobSerializer,
     JobCreateSerializer,
+    GeneratedResumeSerializer,
+    GeneratedResumeCreateSerializer,
 )
-from .tasks import run_analysis_task
+from .tasks import run_analysis_task, generate_improved_resume_task
 
 logger = logging.getLogger('analyzer')
 
@@ -595,3 +597,165 @@ class JobRelevanceView(APIView):
         job.relevance = relevance
         job.save(update_fields=['relevance', 'updated_at'])
         return Response(JobSerializer(job).data)
+
+
+# ── Resume Generation ────────────────────────────────────────────────────
+
+class GenerateResumeView(APIView):
+    """
+    POST /api/analyses/<id>/generate-resume/
+    Generate an improved resume from analysis findings.
+    Costs 1 credit (resume_generation). Requires analysis status == done.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [AnalyzeThrottle]
+
+    def post(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if analysis.status != ResumeAnalysis.STATUS_DONE:
+            return Response(
+                {'detail': 'Analysis must be complete before generating a resume.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate request body
+        serializer = GeneratedResumeCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        template = serializer.validated_data['template']
+        fmt = serializer.validated_data['format']
+
+        # ── Credit check — deduct upfront, refund on failure ──
+        from accounts.services import deduct_credits, InsufficientCreditsError
+        try:
+            credit_result = deduct_credits(
+                request.user,
+                'resume_generation',
+                description=f'Resume generation (analysis #{analysis.id})',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {
+                    'detail': 'Insufficient credits.',
+                    'balance': e.balance,
+                    'cost': e.cost,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        try:
+            # Create GeneratedResume record
+            gen = GeneratedResume.objects.create(
+                analysis=analysis,
+                user=request.user,
+                template=template,
+                format=fmt,
+                status=GeneratedResume.STATUS_PENDING,
+                credits_deducted=True,
+            )
+
+            # Dispatch Celery task
+            generate_improved_resume_task.delay(str(gen.id))
+
+            logger.info(
+                'Resume generation dispatched: gen_id=%s analysis_id=%s template=%s format=%s',
+                gen.id, analysis.id, template, fmt,
+            )
+
+            return Response(
+                {
+                    'id': str(gen.id),
+                    'status': gen.status,
+                    'template': gen.template,
+                    'format': gen.format,
+                    'credits_used': credit_result['cost'],
+                    'balance': credit_result['balance_after'],
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except Exception:
+            from accounts.services import refund_credits
+            refund_credits(
+                request.user, 'resume_generation',
+                description='Refund: resume generation creation failed',
+            )
+            raise
+
+
+class GeneratedResumeStatusView(APIView):
+    """
+    GET /api/analyses/<id>/generated-resume/
+    Poll the latest generated resume status for an analysis.
+    Returns status + file URL when done.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get the latest generated resume for this analysis
+        gen = GeneratedResume.objects.filter(
+            analysis=analysis, user=request.user,
+        ).order_by('-created_at').first()
+
+        if not gen:
+            return Response(
+                {'detail': 'No generated resume found for this analysis.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(GeneratedResumeSerializer(gen).data)
+
+
+class GeneratedResumeDownloadView(APIView):
+    """
+    GET /api/analyses/<id>/generated-resume/download/
+    Redirect to R2 signed URL for the generated resume file.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        gen = GeneratedResume.objects.filter(
+            analysis=analysis, user=request.user,
+            status=GeneratedResume.STATUS_DONE,
+        ).order_by('-created_at').first()
+
+        if not gen or not gen.file:
+            return Response(
+                {'detail': 'No generated resume file available.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from django.shortcuts import redirect
+        return redirect(gen.file.url)
+
+
+class GeneratedResumeListView(APIView):
+    """
+    GET /api/generated-resumes/
+    List all generated resumes for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request):
+        qs = GeneratedResume.objects.filter(
+            user=request.user,
+        ).select_related('analysis').order_by('-created_at')
+        serializer = GeneratedResumeSerializer(qs, many=True)
+        return Response(serializer.data)

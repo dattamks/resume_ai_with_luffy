@@ -6,6 +6,8 @@ from .views import (
     AnalysisStatusView, ResumeListView, ResumeDeleteView,
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
     JobListCreateView, JobDetailView, JobRelevanceView,
+    GenerateResumeView, GeneratedResumeStatusView,
+    GeneratedResumeDownloadView, GeneratedResumeListView,
 )
 
 urlpatterns = [
@@ -17,6 +19,9 @@ urlpatterns = [
     path('analyses/<int:pk>/delete/', AnalysisDeleteView.as_view(), name='analysis-delete'),
     path('analyses/<int:pk>/export-pdf/', AnalysisPDFExportView.as_view(), name='analysis-export-pdf'),
     path('analyses/<int:pk>/share/', AnalysisShareView.as_view(), name='analysis-share'),
+    path('analyses/<int:pk>/generate-resume/', GenerateResumeView.as_view(), name='generate-resume'),
+    path('analyses/<int:pk>/generated-resume/', GeneratedResumeStatusView.as_view(), name='generated-resume-status'),
+    path('analyses/<int:pk>/generated-resume/download/', GeneratedResumeDownloadView.as_view(), name='generated-resume-download'),
     path('shared/<uuid:token>/', SharedAnalysisView.as_view(), name='shared-analysis'),
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
@@ -28,4 +33,6 @@ urlpatterns = [
          kwargs={'relevance': 'relevant'}),
     path('jobs/<uuid:pk>/irrelevant/', JobRelevanceView.as_view(), name='job-irrelevant',
          kwargs={'relevance': 'irrelevant'}),
+    # Generated resumes
+    path('generated-resumes/', GeneratedResumeListView.as_view(), name='generated-resume-list'),
 ]

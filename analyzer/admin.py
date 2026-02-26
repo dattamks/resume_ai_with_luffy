@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, Job
+from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, Job, GeneratedResume
 
 
 @admin.register(Resume)
@@ -46,3 +46,11 @@ class JobAdmin(admin.ModelAdmin):
     list_filter = ('relevance', 'source')
     search_fields = ('user__username', 'title', 'company', 'job_url')
     readonly_fields = ('id', 'created_at', 'updated_at')
+
+
+@admin.register(GeneratedResume)
+class GeneratedResumeAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'analysis', 'template', 'format', 'status', 'created_at')
+    list_filter = ('status', 'template', 'format')
+    search_fields = ('user__username',)
+    readonly_fields = ('id', 'resume_content', 'created_at')

@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-24 &nbsp;|&nbsp; **API version:** v0.10.0
+> **Last updated:** 2026-02-26 &nbsp;|&nbsp; **API version:** v0.11.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -26,7 +26,8 @@
 17. [Frontend Integration Recipes](#17-frontend-integration-recipes)
 18. [Plans & Wallet (Credits System)](#18-plans--wallet-credits-system)
 19. [Email Templates (Admin)](#19-email-templates-admin)
-20. [Quick Reference — All Endpoints](#20-quick-reference--all-endpoints)
+20. [Resume Generation](#20-resume-generation)
+21. [Quick Reference — All Endpoints](#21-quick-reference--all-endpoints)
 
 ---
 
@@ -3061,7 +3062,194 @@ send_templated_email(
 
 ---
 
-## 20. Quick Reference — All Endpoints
+## 20. Resume Generation
+
+Generate an AI-improved resume directly from a completed analysis report. The system uses the analysis findings (missing keywords, section scores, quick wins) as an improvement spec and rewrites the resume via LLM, then renders it to PDF or DOCX.
+
+**Cost:** 1 credit per generation.
+
+### 20.1 Trigger Generation
+
+```
+POST /api/analyses/<id>/generate-resume/
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Request body (all fields optional):**
+
+```json
+{
+  "template": "ats_classic",
+  "format": "pdf"
+}
+```
+
+| Field | Type | Default | Options | Description |
+|-------|------|---------|---------|-------------|
+| `template` | `string` | `"ats_classic"` | `ats_classic` | Resume layout template |
+| `format` | `string` | `"pdf"` | `pdf`, `docx` | Output file format |
+
+**Response — 202 Accepted:**
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "status": "pending",
+  "template": "ats_classic",
+  "format": "pdf",
+  "credits_used": 1,
+  "balance": 97
+}
+```
+
+**Error responses:**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 400 | Analysis not in `done` status | `{"detail": "Analysis is not complete yet."}` |
+| 400 | Invalid template/format | `{"template": ["..."], ...}` |
+| 402 | Insufficient credits | `{"detail": "...", "balance": 0, "cost": 1}` |
+| 404 | Analysis not found / not owned | Standard 404 |
+
+### 20.2 Poll Generation Status
+
+```
+GET /api/analyses/<id>/generated-resume/
+Authorization: Bearer <token>
+```
+
+**Response — 200 OK:**
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "analysis": 42,
+  "template": "ats_classic",
+  "format": "pdf",
+  "status": "done",
+  "error_message": null,
+  "file_url": "https://r2.example.com/generated_resumes/...",
+  "created_at": "2026-02-26T12:00:00Z"
+}
+```
+
+| `status` | Meaning |
+|----------|---------|
+| `pending` | Queued, not yet picked up by worker |
+| `processing` | LLM rewrite + render in progress |
+| `done` | File ready for download via `file_url` |
+| `failed` | Generation failed — check `error_message`. Credits refunded automatically. |
+
+**Polling recommendation:** Same pattern as analysis polling — start at 2s, back off to 5s.
+
+### 20.3 Download Generated Resume
+
+```
+GET /api/analyses/<id>/generated-resume/download/
+Authorization: Bearer <token>
+```
+
+**Response — 302 Redirect** to signed R2 download URL (1-hour TTL).
+
+| Status | Condition |
+|--------|-----------|
+| 302 | File ready — `Location` header contains signed URL |
+| 404 | No generated resume, or generation not done yet |
+
+### 20.4 List All Generated Resumes
+
+```
+GET /api/generated-resumes/
+Authorization: Bearer <token>
+```
+
+Returns paginated list of all generated resumes for the authenticated user.
+
+**Response — 200 OK:**
+
+```json
+{
+  "count": 3,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-...",
+      "analysis": 42,
+      "template": "ats_classic",
+      "format": "pdf",
+      "status": "done",
+      "error_message": null,
+      "file_url": "https://r2.example.com/generated_resumes/...",
+      "created_at": "2026-02-26T12:00:00Z"
+    }
+  ]
+}
+```
+
+### 20.5 TypeScript Types
+
+```typescript
+type ResumeTemplate = 'ats_classic';
+type ResumeFormat = 'pdf' | 'docx';
+type GeneratedResumeStatus = 'pending' | 'processing' | 'done' | 'failed';
+
+interface GenerateResumeRequest {
+  template?: ResumeTemplate;
+  format?: ResumeFormat;
+}
+
+interface GenerateResumeResponse {
+  id: string;
+  status: GeneratedResumeStatus;
+  template: ResumeTemplate;
+  format: ResumeFormat;
+  credits_used: number;
+  balance: number;
+}
+
+interface GeneratedResume {
+  id: string;
+  analysis: number;
+  template: ResumeTemplate;
+  format: ResumeFormat;
+  status: GeneratedResumeStatus;
+  error_message: string | null;
+  file_url: string | null;
+  created_at: string;
+}
+```
+
+### 20.6 Frontend Integration Recipe
+
+```typescript
+// 1. Trigger generation
+const { data } = await api.post(`/analyses/${analysisId}/generate-resume/`, {
+  template: 'ats_classic',
+  format: 'pdf',
+});
+const generatedId = data.id;
+
+// 2. Poll until done
+const poll = setInterval(async () => {
+  const { data: status } = await api.get(
+    `/analyses/${analysisId}/generated-resume/`
+  );
+  if (status.status === 'done') {
+    clearInterval(poll);
+    // 3. Download
+    window.open(status.file_url, '_blank');
+  } else if (status.status === 'failed') {
+    clearInterval(poll);
+    showError(status.error_message);
+  }
+}, 3000);
+```
+
+---
+
+## 21. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -3104,6 +3292,11 @@ send_templated_email(
 | DELETE | `/api/jobs/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete tracked job |
 | POST | `/api/jobs/<uuid:id>/relevant/` | ✅ | Readonly (120/hr) | Mark job as relevant |
 | POST | `/api/jobs/<uuid:id>/irrelevant/` | ✅ | Readonly (120/hr) | Mark job as irrelevant |
+| **Resume Generation** |||||
+| POST | `/api/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
+| GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
+| GET | `/api/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
+| GET | `/api/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes |
 | **Dashboard** |||||
 | GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends |
 | **Share** |||||

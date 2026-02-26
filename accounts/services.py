@@ -17,6 +17,7 @@ logger = logging.getLogger('accounts')
 # Default cost when CreditCost row is missing from DB
 _DEFAULT_COSTS = {
     'resume_analysis': 1,
+    'resume_generation': 1,
 }
 
 

@@ -15,6 +15,11 @@ CREDIT_COSTS = [
         'cost': 1,
         'description': 'Cost per resume analysis (including retries that succeed).',
     },
+    {
+        'action': 'resume_generation',
+        'cost': 1,
+        'description': 'Cost per AI-generated improved resume from analysis report.',
+    },
 ]
 
 
