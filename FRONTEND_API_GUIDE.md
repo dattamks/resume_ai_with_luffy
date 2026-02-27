@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-26 &nbsp;|&nbsp; **API version:** v0.12.0
+> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.13.1
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -27,7 +27,8 @@
 18. [Plans & Wallet (Credits System)](#18-plans--wallet-credits-system)
 19. [Email Templates (Admin)](#19-email-templates-admin)
 20. [Resume Generation](#20-resume-generation)
-21. [Razorpay Payments](#22-razorpay-payments)
+21. [Smart Job Alerts](#21-smart-job-alerts)
+22. [Razorpay Payments](#22-razorpay-payments)
 22. [Quick Reference — All Endpoints](#23-quick-reference--all-endpoints)
 
 ---
@@ -218,16 +219,28 @@ Creates a new user account and returns tokens immediately (auto-login).
       "description": "Get started with basic resume analysis.",
       "billing_cycle": "free",
       "price": "0.00",
+      "credits_per_month": 2,
+      "max_credits_balance": 10,
+      "topup_credits_per_pack": 0,
+      "topup_price": "0.00",
       "analyses_per_month": 0,
       "api_rate_per_hour": 200,
       "max_resume_size_mb": 5,
       "max_resumes_stored": 5,
+      "job_notifications": false,
+      "max_job_alerts": 0,
       "pdf_export": true,
       "share_analysis": true,
       "job_tracking": true,
       "priority_queue": false,
       "email_support": false
-    }
+    },
+    "wallet": {
+      "balance": 2,
+      "updated_at": "2026-02-22T10:00:00Z"
+    },
+    "plan_valid_until": null,
+    "pending_plan": null
   },
   "access": "<jwt_access_token>",
   "refresh": "<jwt_refresh_token>"
@@ -271,7 +284,10 @@ Creates a new user account and returns tokens immediately (auto-login).
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
     "mobile_number": "",
-    "plan": { "id": 1, "name": "Free", "slug": "free", "...":  "..." }
+    "plan": { "id": 1, "name": "Free", "slug": "free", "...":  "..." },
+    "wallet": { "balance": 2, "updated_at": "..." },
+    "plan_valid_until": null,
+    "pending_plan": null
   }
 }
 ```
@@ -327,20 +343,38 @@ Creates a new user account and returns tokens immediately (auto-login).
     "description": "Get started with basic resume analysis.",
     "billing_cycle": "free",
     "price": "0.00",
+    "credits_per_month": 2,
+    "max_credits_balance": 10,
+    "topup_credits_per_pack": 0,
+    "topup_price": "0.00",
     "analyses_per_month": 0,
     "api_rate_per_hour": 200,
     "max_resume_size_mb": 5,
     "max_resumes_stored": 5,
+    "job_notifications": false,
+    "max_job_alerts": 0,
     "pdf_export": true,
     "share_analysis": true,
     "job_tracking": true,
     "priority_queue": false,
     "email_support": false
-  }
+  },
+  "wallet": {
+    "balance": 2,
+    "updated_at": "2026-02-22T10:00:00Z"
+  },
+  "plan_valid_until": null,
+  "pending_plan": null
 }
 ```
 
 > **`plan`** is `null` if the user has no plan assigned (shouldn't happen — new users auto-get the "Free" plan).
+>
+> **`wallet`** is `null` if wallet hasn't been created yet (edge case for pre-migration users). Treat as `{ balance: 0 }`.
+>
+> **`plan_valid_until`** is set when user is on a paid plan (e.g., Pro). `null` for free plan.
+>
+> **`pending_plan`** is set when a downgrade is scheduled. Shows the plan the user will switch to after `plan_valid_until` expires.
 
 Use this on app load to verify the stored token is still valid and hydrate user state.
 
@@ -369,7 +403,10 @@ Use this on app load to verify the stored token is still valid and hydrate user 
   "date_joined": "2026-02-22T10:00:00Z",
   "country_code": "+1",
   "mobile_number": "5551234567",
-  "plan": { "id": 1, "name": "Free", "slug": "free", "...": "..." }
+  "plan": { "id": 1, "name": "Free", "slug": "free", "...": "..." },
+  "wallet": { "balance": 2, "updated_at": "..." },
+  "plan_valid_until": null,
+  "pending_plan": null
 }
 ```
 
@@ -663,7 +700,7 @@ formData.append('jd_text', 'We need a senior Python developer...');
 const { data } = await api.post('/analyze/', formData, {
   headers: { 'Content-Type': 'multipart/form-data' },
 });
-// data = { id: 42, status: "processing" }
+// data = { id: 42, status: "processing", credits_used: 1, balance: 4 }
 ```
 
 **Example — Reuse existing resume (JSON):**
@@ -673,7 +710,7 @@ const { data } = await api.post('/analyze/', {
   jd_input_type: 'text',
   jd_text: 'We need a senior Python developer...',
 });
-// data = { id: 43, status: "processing" }
+// data = { id: 43, status: "processing", credits_used: 1, balance: 3 }
 ```
 
 ---
@@ -784,9 +821,16 @@ Retries a failed analysis from its last incomplete pipeline step. Does not requi
 {
   "id": 42,
   "status": "processing",
-  "pipeline_step": "llm_call"
+  "pipeline_step": "llm_call",
+  "credits_used": 1,
+  "balance": 3
 }
 ```
+
+| Field          | Type | Description                          |
+|----------------|------|--------------------------------------|
+| `credits_used` | int  | Credits consumed by the retry        |
+| `balance`      | int  | Remaining wallet balance after deduction |
 
 After receiving 202, begin [polling for status](#14-polling-for-analysis-status) again.
 
@@ -795,6 +839,7 @@ After receiving 202, begin [polling for status](#14-polling-for-analysis-status)
 | Code | Condition | Response |
 |------|-----------|----------|
 | 400  | Already complete | `{ "detail": "This analysis is already complete." }` |
+| 402  | Insufficient credits | `{ "detail": "Insufficient credits.", "balance": 0, "cost": 1 }` |
 | 404  | Not found / not owner | `{ "detail": "Analysis not found." }` |
 | 409  | Already processing | `{ "detail": "This analysis is already being processed." }` |
 
@@ -933,6 +978,7 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 |------|-----------|----------|
 | 404  | Not found / not owner | `{ "detail": "Not found." }` |
 | 409  | Active analyses exist | `{ "detail": "Cannot delete: 2 active analysis(es) still reference this resume." }` |
+| 409  | Active job alerts exist | `{ "detail": "Cannot delete: 1 active job alert(s) still reference this resume. Deactivate them first." }` |
 
 **Frontend recommendation:**
 ```jsx
@@ -1936,6 +1982,8 @@ const STEP_PROGRESS = {
 | 302  | Redirect             | PDF export → R2 signed URL                              |
 | 400  | Bad Request          | Validation error, invalid data, analysis already done   |
 | 401  | Unauthorized         | Missing/expired/invalid JWT token                       |
+| 402  | Payment Required     | Insufficient credits, or paid-plan upgrade required     |
+| 403  | Forbidden            | Feature not available on user's plan                    |
 | 404  | Not Found            | Resource doesn't exist, already soft-deleted, or not owned by user |
 | 409  | Conflict             | Duplicate submission / analysis already processing / resume in use |
 | 429  | Too Many Requests    | Rate limit exceeded                                     |
@@ -2033,6 +2081,39 @@ interface User {
   date_joined: string;    // ISO 8601
   country_code: string;   // e.g., "+91" (default)
   mobile_number: string;  // digits only, "" if not set
+  plan: Plan | null;      // null if no plan assigned (edge case)
+  wallet: Wallet | null;  // null if wallet not yet created
+  plan_valid_until: string | null;  // ISO 8601, null for free plan
+  pending_plan: Plan | null;        // set when downgrade is scheduled
+}
+
+interface Plan {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  billing_cycle: 'free' | 'monthly' | 'yearly' | 'lifetime';
+  price: string;          // decimal as string, e.g. "499.00"
+  credits_per_month: number;
+  max_credits_balance: number;
+  topup_credits_per_pack: number;
+  topup_price: string;    // decimal as string
+  analyses_per_month: number;
+  api_rate_per_hour: number;
+  max_resume_size_mb: number;
+  max_resumes_stored: number;
+  job_notifications: boolean;
+  max_job_alerts: number;
+  pdf_export: boolean;
+  share_analysis: boolean;
+  job_tracking: boolean;
+  priority_queue: boolean;
+  email_support: boolean;
+}
+
+interface Wallet {
+  balance: number;
+  updated_at: string;     // ISO 8601
 }
 
 interface NotificationPreferences {
@@ -2248,12 +2329,16 @@ interface AnalysisStatusResponse {
 interface AnalysisSubmitResponse {
   id: number;
   status: 'processing';
+  credits_used: number;
+  balance: number;
 }
 
 interface RetryResponse {
   id: number;
   status: 'processing';
   pipeline_step: PipelineStep;
+  credits_used: number;
+  balance: number;
 }
 
 interface ShareResponse {
@@ -2606,6 +2691,7 @@ POST /api/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
 | `max_resume_size_mb` | `int` | Max resume file size in MB |
 | `max_resumes_stored` | `int` | Max resumes stored at once (`0` = unlimited) |
 | `job_notifications` | `bool` | Can receive job alert notifications |
+| `max_job_alerts` | `int` | Maximum active job alerts (`0` = disabled) |
 | `pdf_export` | `bool` | Can export analysis as PDF |
 | `share_analysis` | `bool` | Can generate public share links |
 | `job_tracking` | `bool` | Can use job tracking features |
@@ -2651,6 +2737,7 @@ The `plan`, `wallet`, `plan_valid_until`, and `pending_plan` objects are include
     "max_resume_size_mb": 5,
     "max_resumes_stored": 5,
     "job_notifications": false,
+    "max_job_alerts": 0,
     "pdf_export": true,
     "share_analysis": true,
     "job_tracking": true,
@@ -3104,7 +3191,7 @@ Content-Type: application/json
 
 | Status | Condition | Body |
 |--------|-----------|------|
-| 400 | Analysis not in `done` status | `{"detail": "Analysis is not complete yet."}` |
+| 400 | Analysis not in `done` status | `{"detail": "Analysis must be complete before generating a resume."}` |
 | 400 | Invalid template/format | `{"template": ["..."], ...}` |
 | 402 | Insufficient credits | `{"detail": "...", "balance": 0, "cost": 1}` |
 | 404 | Analysis not found / not owned | Standard 404 |
@@ -3125,7 +3212,7 @@ Authorization: Bearer <token>
   "template": "ats_classic",
   "format": "pdf",
   "status": "done",
-  "error_message": null,
+  "error_message": "",
   "file_url": "https://r2.example.com/generated_resumes/...",
   "created_at": "2026-02-26T12:00:00Z"
 }
@@ -3161,28 +3248,23 @@ GET /api/generated-resumes/
 Authorization: Bearer <token>
 ```
 
-Returns paginated list of all generated resumes for the authenticated user.
+Returns a flat array (not paginated) of all generated resumes for the authenticated user.
 
 **Response — 200 OK:**
 
 ```json
-{
-  "count": 3,
-  "next": null,
-  "previous": null,
-  "results": [
-    {
-      "id": "a1b2c3d4-...",
-      "analysis": 42,
-      "template": "ats_classic",
-      "format": "pdf",
-      "status": "done",
-      "error_message": null,
-      "file_url": "https://r2.example.com/generated_resumes/...",
-      "created_at": "2026-02-26T12:00:00Z"
-    }
-  ]
-}
+[
+  {
+    "id": "a1b2c3d4-...",
+    "analysis": 42,
+    "template": "ats_classic",
+    "format": "pdf",
+    "status": "done",
+    "error_message": "",
+    "file_url": "https://r2.example.com/generated_resumes/...",
+    "created_at": "2026-02-26T12:00:00Z"
+  }
+]
 ```
 
 ### 20.5 TypeScript Types
@@ -3212,7 +3294,7 @@ interface GeneratedResume {
   template: ResumeTemplate;
   format: ResumeFormat;
   status: GeneratedResumeStatus;
-  error_message: string | null;
+  error_message: string;      // "" when no error, not null
   file_url: string | null;
   created_at: string;
 }
@@ -3271,7 +3353,7 @@ POST /api/job-alerts/
 **Request body:**
 ```json
 {
-  "resume_id": "uuid",
+  "resume": "uuid",
   "frequency": "daily",           // "daily" | "weekly"
   "preferences": {                // optional
     "excluded_companies": ["Evil Corp"],
@@ -3285,15 +3367,16 @@ POST /api/job-alerts/
 ```json
 {
   "id": "uuid",
-  "resume_id": "uuid",
+  "resume": "uuid",
+  "resume_filename": "my_resume_2026.pdf",
   "frequency": "daily",
   "is_active": true,
   "preferences": { ... },
   "search_profile": null,         // populated async after LLM extraction
   "last_run": null,
+  "last_run_at": null,
   "next_run_at": "2025-01-01T06:00:00Z",
-  "created_at": "...",
-  "updated_at": "..."
+  "created_at": "..."
 }
 ```
 
@@ -3301,8 +3384,8 @@ POST /api/job-alerts/
 | Status | Reason |
 |--------|--------|
 | 403 | Plan doesn't support job alerts |
-| 400 | `"Job alert quota reached (max N)"` |
-| 400 | Validation error (invalid resume_id, etc.) |
+| 403 | `{"detail": "You have reached the maximum of 3 active job alerts...", "max_job_alerts": 3, "active_count": 3}` |
+| 400 | Validation error (invalid resume, etc.) |
 
 ### 21.2 Job Alert Detail
 
@@ -3329,7 +3412,11 @@ DELETE /api/job-alerts/<uuid:id>/
 }
 ```
 
-**DELETE** soft-deactivates the alert (`is_active = false`). Returns `204`.
+**DELETE** soft-deactivates the alert (`is_active = false`). Returns `200` with body:
+
+```json
+{ "detail": "Job alert deactivated." }
+```
 
 ### 21.3 List Matches
 
@@ -3338,6 +3425,8 @@ GET /api/job-alerts/<uuid:id>/matches/
 ```
 
 Returns paginated job matches for an alert, ordered by relevance score (highest first).
+
+> **Pagination note:** This endpoint uses Django's built-in `Paginator` (NOT DRF pagination). The response shape differs from other paginated endpoints — it has `num_pages` and `page` instead of `next`/`previous`.
 
 **Query params:**
 | Param | Type | Description |
@@ -3349,12 +3438,12 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
 ```json
 {
   "count": 42,
-  "next": "...?page=2",
-  "previous": null,
+  "num_pages": 3,
+  "page": 1,
   "results": [
     {
       "id": "uuid",
-      "discovered_job": {
+      "job": {
         "id": "uuid",
         "source": "serpapi",
         "title": "Senior Python Developer",
@@ -3363,7 +3452,8 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
         "url": "https://...",
         "salary_range": "$120k-$160k",
         "description_snippet": "We're looking for...",
-        "posted_at": "2025-01-01T00:00:00Z"
+        "posted_at": "2025-01-01T00:00:00Z",
+        "created_at": "2025-01-01T00:00:00Z"
       },
       "relevance_score": 85,
       "match_reason": "Strong match on Python, Django skills...",
@@ -3383,7 +3473,7 @@ POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
 **Request body:**
 ```json
 {
-  "feedback": "relevant"    // "relevant" | "irrelevant" | "applied" | "dismissed"
+  "user_feedback": "relevant"    // "relevant" | "irrelevant" | "applied" | "dismissed"
 }
 ```
 
@@ -3406,10 +3496,13 @@ POST /api/job-alerts/<uuid:id>/run/
 
 Triggers an immediate job discovery + matching run for the alert. Costs 1 credit.
 
+> **Throttle:** `analyze` scope (10/hour per user) — same as analyze/retry.
+
 **Response (202):**
 ```json
 {
-  "detail": "Job alert run triggered."
+  "detail": "Job discovery started. Check matches in a few minutes.",
+  "alert_id": "uuid"
 }
 ```
 
@@ -3417,6 +3510,8 @@ Triggers an immediate job discovery + matching run for the alert. Costs 1 credit
 | Status | Reason |
 |--------|--------|
 | 400 | Alert is not active |
+| 400 | Job search profile not yet extracted |
+| 402 | Insufficient credits |
 
 ### 21.6 Search Profile (read-only)
 
@@ -3426,7 +3521,7 @@ The `search_profile` object is nested inside the alert detail response. It is ex
 {
   "titles": ["Senior Python Developer", "Backend Engineer"],
   "skills": ["Python", "Django", "PostgreSQL", "Docker"],
-  "seniority": "senior",        // "intern"|"junior"|"mid"|"senior"|"lead"|"executive"
+  "seniority": "senior",        // "junior"|"mid"|"senior"|"lead"|"executive"
   "industries": ["Technology", "SaaS"],
   "locations": ["Remote", "San Francisco"],
   "experience_years": 8,
@@ -3447,7 +3542,7 @@ interface JobAlertPreferences {
 interface JobSearchProfile {
   titles: string[];
   skills: string[];
-  seniority: 'intern' | 'junior' | 'mid' | 'senior' | 'lead' | 'executive';
+  seniority: 'junior' | 'mid' | 'senior' | 'lead' | 'executive';
   industries: string[];
   locations: string[];
   experience_years: number | null;
@@ -3467,15 +3562,16 @@ interface JobAlertRun {
 
 interface JobAlert {
   id: string;
-  resume_id: string;
+  resume: string;
+  resume_filename: string;
   frequency: 'daily' | 'weekly';
   is_active: boolean;
   preferences: JobAlertPreferences;
   search_profile: JobSearchProfile | null;
   last_run: JobAlertRun | null;
+  last_run_at: string | null;
   next_run_at: string | null;
   created_at: string;
-  updated_at: string;
 }
 
 interface DiscoveredJob {
@@ -3494,7 +3590,7 @@ type MatchFeedback = 'pending' | 'relevant' | 'irrelevant' | 'applied' | 'dismis
 
 interface JobMatch {
   id: string;
-  discovered_job: DiscoveredJob;
+  job: DiscoveredJob;
   relevance_score: number;       // 0–100
   match_reason: string;
   user_feedback: MatchFeedback;
@@ -3514,7 +3610,7 @@ const fetchAlerts = async (): Promise<JobAlert[]> => {
 // Create a new alert
 const createAlert = async (resumeId: string, frequency: 'daily' | 'weekly') => {
   const { data } = await api.post('/api/job-alerts/', {
-    resume_id: resumeId,
+    resume: resumeId,
     frequency,
   });
   return data;
@@ -3525,14 +3621,14 @@ const fetchMatches = async (alertId: string, page = 1, feedback?: string) => {
   const params: Record<string, string> = { page: String(page) };
   if (feedback) params.feedback = feedback;
   const { data } = await api.get(`/api/job-alerts/${alertId}/matches/`, { params });
-  return data;  // paginated { count, next, previous, results }
+  return data;  // paginated { count, num_pages, page, results }
 };
 
 // Submit feedback on a match
 const submitFeedback = async (alertId: string, matchId: string, feedback: MatchFeedback) => {
   const { data } = await api.post(
     `/api/job-alerts/${alertId}/matches/${matchId}/feedback/`,
-    { feedback }
+    { user_feedback: feedback }
   );
   return data;
 };
@@ -3928,7 +4024,7 @@ const cancelSubscription = async () => {
 | **Wallet & Plans** |||||
 | GET | `/api/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
 | GET | `/api/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
-| POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | Buy credit packs (Pro only) |
+| POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§22) |
 | GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
 | POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
 | **Razorpay Payments** |||||
@@ -3973,7 +4069,7 @@ const cancelSubscription = async () => {
 | DELETE | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Deactivate job alert |
 | GET | `/api/job-alerts/<uuid:id>/matches/` | ✅ | Readonly (120/hr) | List matches (paginated) |
 | POST | `/api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
-| POST | `/api/job-alerts/<uuid:id>/run/` | ✅ | Readonly (120/hr) | Trigger manual alert run |
+| POST | `/api/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
 | **Dashboard** |||||
 | GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends |
 | **Share** |||||
