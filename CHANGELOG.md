@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.1] — 2026-02-27
+
+### Fixed
+- **Migration `0016` fails on deploy** — `AddField` for `discoveredjob.embedding` and `jobsearchprofile.embedding` crashed with `DuplicateColumn` because those columns were already added via raw SQL in migration `0014`. Wrapped in `SeparateDatabaseAndState` (state-only, no DB changes).
+- **PDF renderer `Bullet` style collision** — `resume_pdf_renderer.py` `_build_styles()` tried to add a `'Bullet'` `ParagraphStyle` that already exists in ReportLab's `getSampleStyleSheet()`. Renamed to `'ResumeBullet'`.
+
+### Added
+- **Phase 10 test suite** — 81 new tests in `test_resume_generation.py` covering:
+  - `build_rewrite_prompt()` — all analysis fields included, empty field fallbacks, boundary sanitisation (15 tests)
+  - `validate_resume_output()` — schema validation, optional field defaults, all error cases (22 tests)
+  - `GenerateResumeView` — 202 success, 402 insufficient credits, 400 for non-done analysis, 404 isolation, invalid template/format, credit deduction (14 tests)
+  - `GeneratedResumeStatusView` — polling all statuses, file_url presence, 404 cases (8 tests)
+  - `GeneratedResumeDownloadView` — 302 redirect, 404 cases (4 tests)
+  - `GeneratedResumeListView` — list, isolation, ordering, auth (5 tests)
+  - PDF/DOCX rendering integration — valid output bytes, minimal/full content, special characters, multi-page (10 tests)
+- **Total tests: 264** (up from 183), all passing.
+
+---
+
 ## [0.16.0] — 2026-02-27
 
 ### Phase 12: Firecrawl + pgvector Job Alerts Redesign

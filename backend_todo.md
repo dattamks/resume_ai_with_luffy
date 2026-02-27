@@ -145,16 +145,15 @@
 ### Tests
 
 - [x] All 136 existing tests pass (no regressions)
-- [ ] Unit tests for prompt builder (verify all analysis fields included)
-- [ ] Unit tests for JSON schema validation
-- [ ] API endpoint tests (202, 402, 400 for non-done analysis, polling)
-- [ ] Integration test for PDF render from sample structured JSON
+- [x] Unit tests for prompt builder (verify all analysis fields included)
+- [x] Unit tests for JSON schema validation
+- [x] API endpoint tests (202, 402, 400 for non-done analysis, polling)
+- [x] Integration test for PDF render from sample structured JSON
 
 ### Documentation
 
 - [x] FRONTEND_API_GUIDE.md — Section 20 with full endpoints, TypeScript types, integration recipe
 - [x] CHANGELOG.md — v0.11.0 entry
-- [ ] CHANGELOG.md — v0.11.0 entry
 
 ---
 

@@ -72,7 +72,7 @@ def _build_styles():
         spaceAfter=3,
     ))
     ss.add(ParagraphStyle(
-        'Bullet', parent=ss['Normal'],
+        'ResumeBullet', parent=ss['Normal'],
         fontSize=9, leading=12, textColor=COLOR_BODY,
         leftIndent=12, spaceAfter=2,
         bulletIndent=0, bulletFontSize=9,
@@ -220,7 +220,7 @@ def _build_experience(content, styles):
         for bullet in exp.get('bullets', []):
             bullet_text = _safe(bullet)
             job_block.append(
-                Paragraph(f'• {bullet_text}', styles['Bullet'])
+                Paragraph(f'• {bullet_text}', styles['ResumeBullet'])
             )
 
         elements.append(KeepTogether(job_block))

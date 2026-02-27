@@ -84,16 +84,6 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.AddField(
-            model_name="discoveredjob",
-            name="embedding",
-            field=pgvector.django.vector.VectorField(
-                blank=True,
-                dimensions=1536,
-                help_text="Job listing embedding for similarity matching",
-                null=True,
-            ),
-        ),
-        migrations.AddField(
             model_name="jobmatch",
             name="feedback_reason",
             field=models.TextField(
@@ -101,15 +91,33 @@ class Migration(migrations.Migration):
                 help_text="User-provided reason for their feedback (used in learning loop)",
             ),
         ),
-        migrations.AddField(
-            model_name="jobsearchprofile",
-            name="embedding",
-            field=pgvector.django.vector.VectorField(
-                blank=True,
-                dimensions=1536,
-                help_text="Resume text embedding for similarity matching",
-                null=True,
-            ),
+        # Embedding columns already exist in the DB (added via raw SQL in 0014).
+        # Use SeparateDatabaseAndState to register them in Django's migration
+        # state without issuing ALTER TABLE (which would fail with DuplicateColumn).
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AddField(
+                    model_name="discoveredjob",
+                    name="embedding",
+                    field=pgvector.django.vector.VectorField(
+                        blank=True,
+                        dimensions=1536,
+                        help_text="Job listing embedding for similarity matching",
+                        null=True,
+                    ),
+                ),
+                migrations.AddField(
+                    model_name="jobsearchprofile",
+                    name="embedding",
+                    field=pgvector.django.vector.VectorField(
+                        blank=True,
+                        dimensions=1536,
+                        help_text="Resume text embedding for similarity matching",
+                        null=True,
+                    ),
+                ),
+            ],
+            database_operations=[],
         ),
         migrations.AlterField(
             model_name="discoveredjob",
