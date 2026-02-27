@@ -116,13 +116,13 @@ class JobAlertCRUDTests(TestCase):
         mock_task.delay.assert_called_once()
 
     @patch('analyzer.views.extract_job_search_profile_task')
-    def test_create_max_alerts_quota(self, mock_task):
-        """Pro users cannot exceed max_job_alerts."""
+    def test_create_unlimited_alerts_when_enabled(self, mock_task):
+        """Pro users can create unlimited job alerts (no quota)."""
         _set_plan(self.user, 'pro')
         mock_task.delay.return_value = MagicMock()
 
-        # Create 3 alerts (Pro max = 3)
-        for i in range(3):
+        # Create 5 alerts — all should succeed (no limit)
+        for i in range(5):
             resume, _ = Resume.get_or_create_from_upload(
                 self.user, _make_pdf(f'%PDF-1.4 fake content {i}'.encode()),
             )
@@ -131,17 +131,6 @@ class JobAlertCRUDTests(TestCase):
                 'frequency': 'daily',
             }, format='json')
             self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-
-        # 4th should fail
-        resume4, _ = Resume.get_or_create_from_upload(
-            self.user, _make_pdf(b'%PDF-1.4 fake content 4th'),
-        )
-        resp = self.client.post('/api/job-alerts/', {
-            'resume': str(resume4.id),
-            'frequency': 'daily',
-        }, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertIn('maximum', resp.data['detail'])
 
     @patch('analyzer.views.extract_job_search_profile_task')
     def test_detail_and_update(self, mock_task):

@@ -25,7 +25,7 @@ PLANS = [
         'topup_credits_per_pack': 0,  # Free users cannot top up
         'topup_price': 0,
         'job_notifications': False,
-        'max_job_alerts': 0,  # Free users cannot create job alerts
+        'max_job_alerts': 0,  # Deprecated — gated by job_notifications flag
         'pdf_export': True,
         'share_analysis': True,
         'job_tracking': True,
@@ -49,7 +49,7 @@ PLANS = [
         'topup_credits_per_pack': 5,
         'topup_price': 49,
         'job_notifications': True,
-        'max_job_alerts': 3,  # Pro users can have up to 3 active job alerts
+        'max_job_alerts': 0,  # Deprecated — no limit when job_notifications=True
         'pdf_export': True,
         'share_analysis': True,
         'job_tracking': True,

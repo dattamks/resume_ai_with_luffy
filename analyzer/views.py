@@ -949,24 +949,6 @@ class JobAlertListCreateView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # ── Max active alerts quota ──
-        profile = getattr(request.user, 'profile', None)
-        plan = getattr(profile, 'plan', None) if profile else None
-        max_alerts = getattr(plan, 'max_job_alerts', 0) if plan else 0
-        if max_alerts > 0:
-            active_count = JobAlert.objects.filter(
-                user=request.user, is_active=True,
-            ).count()
-            if active_count >= max_alerts:
-                return Response(
-                    {
-                        'detail': f'You have reached the maximum of {max_alerts} active job alerts for your plan.',
-                        'max_job_alerts': max_alerts,
-                        'active_count': active_count,
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
         serializer = JobAlertCreateSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
