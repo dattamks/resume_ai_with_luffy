@@ -5,7 +5,7 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import UserProfile, NotificationPreference, Plan, Wallet, WalletTransaction
+from .models import UserProfile, NotificationPreference, Plan, Wallet, WalletTransaction, ContactSubmission
 
 
 class PlanSerializer(serializers.ModelSerializer):
@@ -474,3 +474,10 @@ class GoogleCompleteSerializer(serializers.Serializer):
                 'agree_to_data_usage': 'You must acknowledge the Data Usage & AI Disclaimer.',
             })
         return attrs
+
+
+class ContactSubmissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactSubmission
+        fields = ['id', 'name', 'email', 'subject', 'message', 'created_at']
+        read_only_fields = ['id', 'created_at']

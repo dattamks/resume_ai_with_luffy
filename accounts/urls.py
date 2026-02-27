@@ -7,7 +7,7 @@ from .views import (
     WalletView, WalletTransactionListView, WalletTopUpView, WalletTransactionExportView,
     PlanListView, PlanSubscribeView,
     GoogleLoginView, GoogleCompleteView,
-    AvatarUploadView,
+    AvatarUploadView, ContactSubmissionView,
 )
 from .views_payments import (
     CreateSubscriptionView, VerifySubscriptionView, CancelSubscriptionView,
@@ -47,4 +47,6 @@ urlpatterns = [
     # Google OAuth
     path('google/', GoogleLoginView.as_view(), name='google-login'),
     path('google/complete/', GoogleCompleteView.as_view(), name='google-complete'),
+    # Landing page
+    path('contact/', ContactSubmissionView.as_view(), name='contact-submit'),
 ]

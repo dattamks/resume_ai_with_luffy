@@ -15,6 +15,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken, OutstandingToken
 from rest_framework_simplejwt.exceptions import TokenError
@@ -930,3 +931,19 @@ class AvatarUploadView(APIView):
         profile.save(update_fields=['avatar_url'])
         logger.info('Avatar removed: user=%s', request.user.username)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ContactSubmissionView(APIView):
+    """Public endpoint for landing-page contact form (no auth required)."""
+    permission_classes = [AllowAny]
+    throttle_classes = [AnonRateThrottle]
+
+    def post(self, request):
+        from .serializers import ContactSubmissionSerializer
+        serializer = ContactSubmissionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {'detail': 'Your message has been submitted successfully.'},
+            status=status.HTTP_201_CREATED,
+        )

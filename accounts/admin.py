@@ -4,7 +4,7 @@ from .models import (
     UserProfile, NotificationPreference, EmailTemplate, Plan,
     Wallet, WalletTransaction, CreditCost,
     RazorpayPayment, RazorpaySubscription, WebhookEvent,
-    ConsentLog,
+    ConsentLog, ContactSubmission,
 )
 
 
@@ -268,6 +268,22 @@ class WebhookEventAdmin(admin.ModelAdmin):
     search_fields = ('event_id',)
     readonly_fields = ('event_id', 'event_type', 'created_at')
     list_per_page = 50
+
+
+@admin.register(ContactSubmission)
+class ContactSubmissionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'email', 'subject', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('name', 'email', 'subject', 'message')
+    readonly_fields = ('name', 'email', 'subject', 'message', 'created_at')
+    ordering = ('-created_at',)
+    list_per_page = 50
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ConsentLog)
