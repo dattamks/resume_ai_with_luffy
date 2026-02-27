@@ -19,7 +19,7 @@ class PlanSerializer(serializers.ModelSerializer):
             'max_resume_size_mb', 'max_resumes_stored',
             'credits_per_month', 'max_credits_balance',
             'topup_credits_per_pack', 'topup_price',
-            'job_notifications',
+            'job_notifications', 'max_job_alerts',
             'pdf_export', 'share_analysis', 'job_tracking',
             'priority_queue', 'email_support',
         )

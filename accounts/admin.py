@@ -72,7 +72,7 @@ class PlanAdmin(admin.ModelAdmin):
             'fields': ('analyses_per_month', 'api_rate_per_hour', 'max_resume_size_mb', 'max_resumes_stored'),
         }),
         ('Feature Flags', {
-            'fields': ('job_notifications', 'pdf_export', 'share_analysis', 'job_tracking', 'priority_queue', 'email_support'),
+            'fields': ('job_notifications', 'max_job_alerts', 'pdf_export', 'share_analysis', 'job_tracking', 'priority_queue', 'email_support'),
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

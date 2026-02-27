@@ -416,6 +416,7 @@ class RazorpayPayment(models.Model):
         db_index=True,
         unique=True,
         null=True,
+        default=None,
         help_text='Razorpay payment_id (set after payment completes).',
     )
     razorpay_signature = models.CharField(

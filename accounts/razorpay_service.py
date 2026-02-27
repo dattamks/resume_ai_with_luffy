@@ -73,6 +73,18 @@ def create_subscription(user, plan_slug: str) -> dict:
             'Cancel it first before creating a new one.'
         )
 
+    # Remove old cancelled/completed/expired/halted subscriptions to allow re-subscribe
+    # (OneToOneField constraint: only one RazorpaySubscription per user)
+    RazorpaySubscription.objects.filter(
+        user=user,
+        status__in=[
+            RazorpaySubscription.STATUS_CANCELLED,
+            RazorpaySubscription.STATUS_COMPLETED,
+            RazorpaySubscription.STATUS_EXPIRED,
+            RazorpaySubscription.STATUS_HALTED,
+        ],
+    ).delete()
+
     # Razorpay plan_id mapping — in production, store this in the Plan model
     # or a separate config. For now, use a convention: plan_{slug}_monthly
     razorpay_plan_id = _get_razorpay_plan_id(plan)
@@ -185,8 +197,8 @@ def _activate_subscription(
     from .models import RazorpayPayment, RazorpaySubscription
     from .services import subscribe_plan
 
-    # Idempotency: check if we already processed this payment
-    existing_payment = RazorpayPayment.objects.filter(
+    # Idempotency: check if we already processed this payment (with lock to prevent race)
+    existing_payment = RazorpayPayment.objects.select_for_update().filter(
         razorpay_payment_id=razorpay_payment_id,
         credits_granted=True,
     ).first()
@@ -199,7 +211,7 @@ def _activate_subscription(
         }
 
     # Update payment record
-    payment = RazorpayPayment.objects.filter(
+    payment = RazorpayPayment.objects.select_for_update().filter(
         razorpay_subscription_id=razorpay_subscription_id,
         status=RazorpayPayment.STATUS_CREATED,
     ).first()
@@ -475,8 +487,8 @@ def _fulfill_topup(
     from .models import RazorpayPayment, WalletTransaction
     from .services import add_credits
 
-    # Idempotency check
-    existing = RazorpayPayment.objects.filter(
+    # Idempotency check (with lock to prevent race)
+    existing = RazorpayPayment.objects.select_for_update().filter(
         razorpay_payment_id=razorpay_payment_id,
         credits_granted=True,
     ).first()
@@ -488,8 +500,8 @@ def _fulfill_topup(
             'payment_id': razorpay_payment_id,
         }
 
-    # Find and update payment record
-    payment = RazorpayPayment.objects.filter(
+    # Find and update payment record (with lock)
+    payment = RazorpayPayment.objects.select_for_update().filter(
         razorpay_order_id=razorpay_order_id,
         status=RazorpayPayment.STATUS_CREATED,
     ).first()
@@ -497,11 +509,20 @@ def _fulfill_topup(
     if not payment:
         # Could be webhook arriving before frontend, or duplicate
         logger.warning('Payment record not found for order_id=%s, creating new', razorpay_order_id)
+        # Try to fetch the actual amount from Razorpay
+        fetched_amount = 0
+        try:
+            client = _get_client()
+            rz_order = client.order.fetch(razorpay_order_id)
+            fetched_amount = rz_order.get('amount', 0)
+        except Exception as e:
+            logger.warning('Could not fetch order amount from Razorpay: %s', str(e))
+
         payment = RazorpayPayment(
             user=user,
             payment_type=RazorpayPayment.PAYMENT_TYPE_TOPUP,
             razorpay_order_id=razorpay_order_id,
-            amount=0,  # We'll fetch from Razorpay
+            amount=fetched_amount,
             currency=settings.RAZORPAY_CURRENCY,
         )
 
@@ -655,7 +676,13 @@ def _handle_subscription_activated(payload: dict) -> dict:
     if payment_id:
         return _activate_subscription(user, sub_id, payment_id, via_webhook=True)
 
-    return {'status': 'processed', 'subscription_id': sub_id}
+    # No payment_id in payload — log warning but update subscription status
+    logger.warning(
+        'subscription.activated webhook missing payment_id: sub_id=%s user=%s. '
+        'Subscription will be activated upon payment verification.',
+        sub_id, user.username,
+    )
+    return {'status': 'processed', 'subscription_id': sub_id, 'note': 'no payment_id in webhook'}
 
 
 def _handle_subscription_charged(payload: dict) -> dict:
@@ -740,6 +767,15 @@ def _handle_subscription_status_change(payload: dict) -> dict:
     sub_id = sub_entity.get('id', '')
     new_status = sub_entity.get('status', '')
 
+    # Validate the status value against known choices
+    valid_statuses = {choice[0] for choice in RazorpaySubscription.STATUS_CHOICES}
+    if new_status not in valid_statuses:
+        logger.warning(
+            'Unknown subscription status from Razorpay: sub_id=%s status=%s (valid: %s)',
+            sub_id, new_status, ', '.join(sorted(valid_statuses)),
+        )
+        return {'status': 'skipped', 'reason': f'unknown status: {new_status}'}
+
     try:
         subscription = RazorpaySubscription.objects.get(razorpay_subscription_id=sub_id)
         subscription.status = new_status
@@ -809,6 +845,14 @@ def _get_razorpay_plan_id(plan) -> str:
         plan_id = config(env_key, default='')
 
     if not plan_id:
+        # Fail hard in production — placeholder plan IDs won't work
+        debug = getattr(settings, 'DEBUG', False)
+        testing = getattr(settings, 'TESTING', False)
+        if not debug and not testing:
+            raise ValueError(
+                f'Razorpay plan_id not configured for plan "{plan.slug}". '
+                f'Set the {env_key} environment variable.'
+            )
         # Development placeholder
         plan_id = f'plan_{plan.slug}_monthly'
         logger.warning(

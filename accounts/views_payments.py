@@ -24,8 +24,6 @@ from .serializers import (
     VerifySubscriptionSerializer,
     CreateTopUpOrderSerializer,
     VerifyTopUpSerializer,
-    PaymentHistorySerializer,
-    SubscriptionStatusSerializer,
 )
 
 logger = logging.getLogger('accounts')

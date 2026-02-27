@@ -112,6 +112,16 @@ class MeView(APIView):
         user = request.user
         logger.warning('Account deletion requested for user=%s (id=%s)', user.username, user.id)
 
+        # Cancel any active Razorpay subscription (stop billing on Razorpay side)
+        try:
+            from .razorpay_service import cancel_subscription
+            cancel_subscription(user)
+            logger.info('Razorpay subscription cancelled during account deletion: user=%s', user.username)
+        except (ValueError, Exception) as e:
+            # User may not have a subscription, or Razorpay API may fail — log but don't block deletion
+            logger.info('No active subscription to cancel (or API error) during account deletion: user=%s err=%s',
+                        user.username, str(e))
+
         # Blacklist all outstanding tokens for this user
         try:
             tokens = OutstandingToken.objects.filter(user=user)
@@ -317,32 +327,21 @@ class WalletTopUpView(APIView):
     POST /api/auth/wallet/topup/
     Buy credit packs. Pro users only.
     Body: { "quantity": 3 }  (default: 1)
+
+    DEPRECATED: This endpoint now redirects to the Razorpay payment flow.
+    Use POST /api/auth/payments/topup/ to create a paid order instead.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from .services import topup_credits
-
-        quantity = request.data.get('quantity', 1)
-        try:
-            quantity = int(quantity)
-        except (TypeError, ValueError):
-            return Response(
-                {'detail': 'Quantity must be a positive integer.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            result = topup_credits(request.user, quantity)
-        except ValueError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response({
-            'detail': f'{result["credits_added"]} credits added.',
-            'credits_added': result['credits_added'],
-            'balance': result['balance_after'],
-            'total_price': result['total_price'],
-        })
+        return Response(
+            {
+                'detail': 'Credit top-ups require payment. '
+                           'Use POST /api/auth/payments/topup/ instead.',
+                'payment_url': '/api/auth/payments/topup/',
+            },
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )
 
 
 class PlanListView(APIView):
@@ -363,17 +362,40 @@ class PlanSubscribeView(APIView):
     POST /api/auth/plans/subscribe/
     Switch to a different plan.
     Body: { "plan_slug": "pro" }
+
+    NOTE: Upgrading to a paid plan requires payment via /api/auth/payments/subscribe/.
+    This endpoint only allows downgrade to free plan (or same-plan no-op).
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from .services import subscribe_plan
+        from .models import Plan
 
         plan_slug = request.data.get('plan_slug')
         if not plan_slug:
             return Response(
                 {'detail': 'plan_slug is required.'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Block direct upgrade to paid plans — must go through Razorpay flow
+        try:
+            target_plan = Plan.objects.get(slug=plan_slug, is_active=True)
+        except Plan.DoesNotExist:
+            return Response(
+                {'detail': f'Plan "{plan_slug}" not found or inactive.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if target_plan.price > 0:
+            return Response(
+                {
+                    'detail': 'Upgrading to a paid plan requires payment. '
+                              'Use POST /api/auth/payments/subscribe/ instead.',
+                    'payment_url': '/api/auth/payments/subscribe/',
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
         try:
