@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.21.0
+> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.22.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -28,7 +28,8 @@
 19. [Resume Generation](#19-resume-generation)
 20. [Smart Job Alerts](#20-smart-job-alerts)
 21. [Razorpay Payments](#21-razorpay-payments)
-22. [Quick Reference — All Endpoints](#22-quick-reference--all-endpoints)
+22. [Landing Page Contact Form](#22-landing-page-contact-form)
+23. [Quick Reference — All Endpoints](#23-quick-reference--all-endpoints)
 
 ---
 
@@ -372,6 +373,7 @@ Creates a new user account and returns tokens immediately (auto-login).
     "description": "Get started with basic resume analysis.",
     "billing_cycle": "free",
     "price": "0.00",
+    "original_price": "0.00",
     "credits_per_month": 2,
     "max_credits_balance": 10,
     "topup_credits_per_pack": 0,
@@ -2632,7 +2634,8 @@ interface Plan {
   slug: string;
   description: string;
   billing_cycle: 'free' | 'monthly' | 'yearly' | 'lifetime';
-  price: string;          // decimal as string, e.g. "499.00"
+  price: string;          // decimal as string, e.g. "399.00"
+  original_price: string; // original price for strikethrough, e.g. "599.00" ("0.00" = no discount)
   credits_per_month: number;
   max_credits_balance: number;
   topup_credits_per_pack: number;
@@ -3219,7 +3222,8 @@ POST /api/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
 | `slug` | `SlugField(50)` | Code identifier (e.g., `"free"`, `"pro"`) |
 | `description` | `CharField(500)` | Short description shown to users |
 | `billing_cycle` | `CharField(10)` | One of: `free`, `monthly`, `yearly`, `lifetime` |
-| `price` | `DecimalField(8,2)` | Price in INR (`0.00` for free tier) |
+| `price` | `DecimalField(8,2)` | Current/discounted price in INR (`0.00` for free tier) |
+| `original_price` | `DecimalField(8,2)` | Original price before discount — use for strikethrough display (`0.00` if no discount) |
 | `credits_per_month` | `int` | Credits granted each billing cycle |
 | `max_credits_balance` | `int` | Max credits from monthly grants (`0` = no cap). Top-ups bypass this |
 | `topup_credits_per_pack` | `int` | Credits per top-up pack (`0` = top-up not allowed) |
@@ -3229,7 +3233,7 @@ POST /api/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
 | `max_resume_size_mb` | `int` | Max resume file size in MB |
 | `max_resumes_stored` | `int` | Max resumes stored at once (`0` = unlimited) |
 | `job_notifications` | `bool` | Can receive job alert notifications |
-| `max_job_alerts` | `int` | Maximum active job alerts (`0` = disabled) |
+| `max_job_alerts` | `int` | **Deprecated** — no longer enforced. Kept for backward compatibility |
 | `pdf_export` | `bool` | Can export analysis as PDF |
 | `share_analysis` | `bool` | Can generate public share links |
 | `job_tracking` | `bool` | Can use job tracking features |
@@ -3242,10 +3246,11 @@ POST /api/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
 
 Seeded via `python manage.py seed_plans` (idempotent — safe to re-run).
 
-| Name | Slug | Price | Credits/mo | Cap | Top-up | Job Notifications | Rate | Resumes |
-|------|------|-------|-----------|-----|--------|-------------------|------|---------|
-| **Free** | `free` | ₹0 | 2 | 10 | ❌ | ❌ | 200/hr | 5 stored, 5MB max |
-| **Pro** | `pro` | ₹499/mo | 25 | 100 | 5 credits/₹49 | ✅ | 500/hr | Unlimited, 10MB max |
+| Name | Slug | Price | Original Price | Billing | Credits/mo | Cap | Top-up | Job Alerts | Rate | Resumes |
+|------|------|-------|---------------|---------|-----------|-----|--------|------------|------|---------|
+| **Free** | `free` | ₹0 | ₹0 | free | 2 | 10 | ❌ | ❌ | 200/hr | 5 stored, 5MB max |
+| **Pro** | `pro` | ₹399/mo | ~~₹599~~ | monthly | 25 | 100 | 5 credits/₹49 | ✅ | 500/hr | Unlimited, 10MB max |
+| **Pro Yearly** | `pro-yearly` | ₹3,999/yr | ~~₹7,188~~ | yearly | 25 | 100 | 5 credits/₹49 | ✅ | 500/hr | Unlimited, 10MB max |
 
 ### Plan in User Responses
 
@@ -3266,6 +3271,7 @@ The `plan`, `wallet`, `plan_valid_until`, and `pending_plan` objects are include
     "description": "Get started with basic resume analysis.",
     "billing_cycle": "free",
     "price": "0.00",
+    "original_price": "0.00",
     "credits_per_month": 2,
     "max_credits_balance": 10,
     "topup_credits_per_pack": 0,
@@ -3419,6 +3425,8 @@ List all active plans. **Public endpoint — no auth required.**
     "id": 1,
     "name": "Free",
     "slug": "free",
+    "price": "0.00",
+    "original_price": "0.00",
     "credits_per_month": 2,
     "topup_credits_per_pack": 0,
     "topup_price": "0.00",
@@ -3430,11 +3438,26 @@ List all active plans. **Public endpoint — no auth required.**
     "id": 2,
     "name": "Pro",
     "slug": "pro",
+    "price": "399.00",
+    "original_price": "599.00",
     "credits_per_month": 25,
     "topup_credits_per_pack": 5,
     "topup_price": "49.00",
     "job_notifications": true,
-    "max_job_alerts": 10,
+    "max_job_alerts": 0,
+    "...": "..."
+  },
+  {
+    "id": 3,
+    "name": "Pro Yearly",
+    "slug": "pro-yearly",
+    "price": "3999.00",
+    "original_price": "7188.00",
+    "credits_per_month": 25,
+    "topup_credits_per_pack": 5,
+    "topup_price": "49.00",
+    "job_notifications": true,
+    "max_job_alerts": 0,
     "...": "..."
   }
 ]
@@ -3925,7 +3948,7 @@ Smart Job Alerts automatically discover job opportunities that match a user's re
 ### Feature Gating
 
 - **Plan requirement**: User must be on a plan with `job_notifications = true` (e.g. Pro)
-- **Quota**: Each plan defines `max_job_alerts` (Free=0, Pro=3)
+- **Quota**: No limit on number of active job alerts (unlimited when enabled)
 - **Credits**: Each alert run costs **1 credit** (`job_alert_run` action)
 - **Crawl schedule**: Admin-configurable via `django-celery-beat` (default: daily at 20:30 UTC). Crawl sources are managed in Django Admin via the `CrawlSource` model.
 - **Matching**: Uses pgvector cosine-similarity against OpenAI embeddings, with a feedback learning loop that adjusts scores based on past user feedback.
@@ -3977,7 +4000,6 @@ POST /api/job-alerts/
 | Status | Reason |
 |--------|--------|
 | 403 | Plan doesn't support job alerts |
-| 403 | `{"detail": "You have reached the maximum of 3 active job alerts...", "max_job_alerts": 3, "active_count": 3}` |
 | 400 | Validation error (invalid resume, etc.) |
 
 ### 20.2 Job Alert Detail
@@ -4620,7 +4642,54 @@ const cancelSubscription = async () => {
 
 ---
 
-## 22. Quick Reference — All Endpoints
+## 22. Landing Page Contact Form
+
+Public endpoint for landing-page contact form submissions. No authentication required.
+
+### `POST /api/auth/contact/`
+
+Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
+
+**Request:**
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "subject": "Pricing question",
+  "message": "I'd like to know more about the Pro plan."
+}
+```
+
+**Response (201):**
+```json
+{
+  "detail": "Your message has been submitted successfully."
+}
+```
+
+**Validation errors (400):**
+```json
+{
+  "name": ["This field is required."],
+  "email": ["Enter a valid email address."],
+  "subject": ["This field is required."],
+  "message": ["This field is required."]
+}
+```
+
+**Field constraints:**
+| Field | Type | Max Length | Required |
+|-------|------|-----------|----------|
+| `name` | string | 100 | ✅ |
+| `email` | email | 254 | ✅ |
+| `subject` | string | 200 | ✅ |
+| `message` | text | unlimited | ✅ |
+
+> Submissions are viewable in Django Admin (read-only). No email notification is sent by default.
+
+---
+
+## 23. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -4639,6 +4708,7 @@ const cancelSubscription = async () => {
 | POST | `/api/auth/reset-password/` | ❌ | Auth (20/hr IP) | Set new password with reset token |
 | POST | `/api/auth/avatar/` | ✅ | User (200/hr) | Upload avatar image (JPEG/PNG/WebP, max 2 MB) |
 | DELETE | `/api/auth/avatar/` | ✅ | User (200/hr) | Remove avatar |
+| POST | `/api/auth/contact/` | ❌ | Anon (per IP) | Landing page contact form submission |
 | GET | `/api/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
 | PUT | `/api/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
 | **Wallet & Plans** |||||
@@ -4698,6 +4768,15 @@ const cancelSubscription = async () => {
 ---
 
 ## Changelog
+
+### v0.22.0 — Plans, Pricing & Contact Form
+
+- **3 plans seeded**: Free (₹0), Pro Monthly (₹399, was ₹599), Pro Yearly (₹3,999, was ₹7,188)
+- **`original_price` field** added to Plan model and serializer — use for strikethrough pricing display
+- **Job alert quota removed**: Unlimited alerts when `job_notifications = true` (no more 403 quota errors). `max_job_alerts` field kept but deprecated.
+- **Contact form endpoint**: `POST /api/auth/contact/` — public, anon-throttled, no auth required
+- **ContactSubmission model**: `name`, `email`, `subject`, `message`, `created_at` — viewable in Django Admin (read-only)
+- **PostgreSQL fix**: Migration 0014 sets server-side `DEFAULT ''` on `razorpay_plan_id` column to prevent `IntegrityError` when creating plans via Admin
 
 ### v0.21.0 — Frontend–Backend Gap Fixes
 
