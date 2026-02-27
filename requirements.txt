@@ -31,6 +31,7 @@ openai==1.57.2
 json-repair==0.58.0
 Pillow==10.4.0
 razorpay==2.0.0
+google-auth==2.38.0
 
 # Transitive dependencies pinned to avoid installation issues
 urllib3==2.6.3

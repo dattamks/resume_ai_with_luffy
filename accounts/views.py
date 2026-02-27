@@ -1,4 +1,8 @@
+import hashlib
+import hmac
+import json
 import logging
+import time
 from datetime import datetime
 
 from django.contrib.auth.models import User
@@ -28,8 +32,11 @@ from .serializers import (
     PlanSerializer,
     WalletSerializer,
     WalletTransactionSerializer,
+    GoogleAuthSerializer,
+    GoogleCompleteSerializer,
 )
 from .email_utils import send_templated_email
+from .models import ConsentLog
 from .throttles import AuthEndpointThrottle
 
 logger = logging.getLogger('accounts')
@@ -42,8 +49,53 @@ class RegisterView(APIView):
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
+            agree_to_terms = serializer.validated_data.get('agree_to_terms', False)
+            agree_to_data_usage = serializer.validated_data.get('agree_to_data_usage', False)
+            marketing_opt_in = serializer.validated_data.get('marketing_opt_in', False)
+
             user = serializer.save()
             refresh = RefreshToken.for_user(user)
+
+            # ── Record consent audit trail ──
+            ip = self._get_client_ip(request)
+            ua = request.META.get('HTTP_USER_AGENT', '')
+            consent_entries = [
+                ConsentLog(
+                    user=user,
+                    consent_type=ConsentLog.CONSENT_TERMS_PRIVACY,
+                    agreed=agree_to_terms,
+                    ip_address=ip,
+                    user_agent=ua,
+                ),
+                ConsentLog(
+                    user=user,
+                    consent_type=ConsentLog.CONSENT_DATA_USAGE_AI,
+                    agreed=agree_to_data_usage,
+                    ip_address=ip,
+                    user_agent=ua,
+                ),
+                ConsentLog(
+                    user=user,
+                    consent_type=ConsentLog.CONSENT_MARKETING,
+                    agreed=marketing_opt_in,
+                    ip_address=ip,
+                    user_agent=ua,
+                ),
+            ]
+            ConsentLog.objects.bulk_create(consent_entries)
+
+            # ── Update profile consent flags ──
+            profile = user.profile
+            profile.agreed_to_terms = agree_to_terms
+            profile.agreed_to_data_usage = agree_to_data_usage
+            profile.marketing_opt_in = marketing_opt_in
+            profile.save(update_fields=['agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in'])
+
+            # ── Sync marketing opt-in to newsletter preference ──
+            if hasattr(user, 'notification_preferences'):
+                prefs = user.notification_preferences
+                prefs.newsletters_email = marketing_opt_in
+                prefs.save(update_fields=['newsletters_email'])
 
             # Send welcome email (best-effort, don't block registration)
             send_templated_email(
@@ -59,6 +111,14 @@ class RegisterView(APIView):
                 'access': str(refresh.access_token),
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def _get_client_ip(request):
+        """Extract client IP, respecting X-Forwarded-For behind reverse proxies."""
+        xff = request.META.get('HTTP_X_FORWARDED_FOR')
+        if xff:
+            return xff.split(',')[0].strip()
+        return request.META.get('REMOTE_ADDR')
 
 
 class LoginView(TokenObtainPairView):
@@ -408,3 +468,259 @@ class PlanSubscribeView(APIView):
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(result)
+
+
+# ── Google OAuth ──────────────────────────────────────────────────────────────
+
+def _sign_temp_token(payload: dict) -> str:
+    """Create an HMAC-signed, base64-encoded temporary token."""
+    raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    sig = hmac.new(
+        settings.SECRET_KEY.encode(), raw.encode(), hashlib.sha256,
+    ).hexdigest()
+    import base64
+    encoded = base64.urlsafe_b64encode(raw.encode()).decode()
+    return f'{encoded}.{sig}'
+
+
+def _verify_temp_token(token: str) -> dict | None:
+    """Verify HMAC signature and TTL. Returns payload dict or None."""
+    import base64
+    parts = token.rsplit('.', 1)
+    if len(parts) != 2:
+        return None
+    encoded, sig = parts
+    try:
+        raw = base64.urlsafe_b64decode(encoded).decode()
+    except Exception:
+        return None
+    expected_sig = hmac.new(
+        settings.SECRET_KEY.encode(), raw.encode(), hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    # Check TTL
+    if payload.get('exp', 0) < time.time():
+        return None
+    return payload
+
+
+class GoogleLoginView(APIView):
+    """
+    POST /api/auth/google/ — Authenticate with Google.
+
+    Receives a Google ID token (from Google Sign-In / One Tap on the frontend),
+    verifies it, and either:
+      - Returns JWT tokens if the user already exists.
+      - Returns a temp_token + needs_registration flag if the user is new.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [AuthEndpointThrottle]
+
+    def post(self, request):
+        serializer = GoogleAuthSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        id_token_str = serializer.validated_data['token']
+
+        # Verify Google ID token
+        google_client_id = settings.GOOGLE_OAUTH2_CLIENT_ID
+        if not google_client_id:
+            return Response(
+                {'detail': 'Google OAuth is not configured on this server.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+
+            idinfo = google_id_token.verify_oauth2_token(
+                id_token_str,
+                google_requests.Request(),
+                google_client_id,
+            )
+        except ValueError as e:
+            logger.warning('Google token verification failed: %s', e)
+            return Response(
+                {'detail': 'Invalid or expired Google token.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        email = idinfo.get('email', '').lower().strip()
+        if not email or not idinfo.get('email_verified'):
+            return Response(
+                {'detail': 'Google account email is not verified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        google_sub = idinfo.get('sub', '')
+        name = idinfo.get('name', '')
+        given_name = idinfo.get('given_name', '')
+        family_name = idinfo.get('family_name', '')
+        picture = idinfo.get('picture', '')
+
+        # Check if user exists
+        try:
+            user = User.objects.get(email__iexact=email)
+            # Existing user — issue JWT tokens
+            refresh = RefreshToken.for_user(user)
+            logger.info('Google login: existing user=%s', user.username)
+            return Response({
+                'user': UserSerializer(user).data,
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            })
+        except User.DoesNotExist:
+            pass
+
+        # New user — issue temp token for registration completion
+        ttl = getattr(settings, 'GOOGLE_OAUTH2_TEMP_TOKEN_TTL', 600)
+        payload = {
+            'email': email,
+            'google_sub': google_sub,
+            'name': name,
+            'given_name': given_name,
+            'family_name': family_name,
+            'picture': picture,
+            'exp': int(time.time()) + ttl,
+        }
+        temp_token = _sign_temp_token(payload)
+
+        logger.info('Google login: new user email=%s — needs registration', email)
+        return Response({
+            'needs_registration': True,
+            'temp_token': temp_token,
+            'email': email,
+            'name': name,
+            'given_name': given_name,
+            'family_name': family_name,
+            'picture': picture,
+        })
+
+
+class GoogleCompleteView(APIView):
+    """
+    POST /api/auth/google/complete/ — Complete Google sign-up.
+
+    For new Google users: accepts the temp_token, chosen username, password,
+    and consent checkboxes. Creates the account and returns JWT tokens.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [AuthEndpointThrottle]
+
+    def post(self, request):
+        serializer = GoogleCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        temp_token = serializer.validated_data['temp_token']
+        username = serializer.validated_data['username']
+        password = serializer.validated_data['password']
+        agree_to_terms = serializer.validated_data['agree_to_terms']
+        agree_to_data_usage = serializer.validated_data['agree_to_data_usage']
+        marketing_opt_in = serializer.validated_data.get('marketing_opt_in', False)
+
+        # Verify temp token
+        payload = _verify_temp_token(temp_token)
+        if not payload:
+            return Response(
+                {'detail': 'Invalid or expired temporary token. Please sign in with Google again.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = payload['email']
+        google_sub = payload.get('google_sub', '')
+        given_name = payload.get('given_name', '')
+        family_name = payload.get('family_name', '')
+        picture = payload.get('picture', '')
+
+        # Guard against race condition — email taken between step 1 and step 2
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {'detail': 'An account with this email already exists. Please log in instead.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Create user with Google profile details
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            first_name=given_name,
+            last_name=family_name,
+        )
+
+        # Update profile: consent flags + Google-specific fields
+        profile = user.profile
+        profile.agreed_to_terms = agree_to_terms
+        profile.agreed_to_data_usage = agree_to_data_usage
+        profile.marketing_opt_in = marketing_opt_in
+        profile.auth_provider = 'google'
+        profile.avatar_url = picture
+        profile.google_sub = google_sub
+        profile.save(update_fields=[
+            'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
+            'auth_provider', 'avatar_url', 'google_sub',
+        ])
+
+        # Sync marketing opt-in to newsletter preference
+        if hasattr(user, 'notification_preferences'):
+            prefs = user.notification_preferences
+            prefs.newsletters_email = marketing_opt_in
+            prefs.save(update_fields=['newsletters_email'])
+
+        # Record consent audit trail
+        ip = self._get_client_ip(request)
+        ua = request.META.get('HTTP_USER_AGENT', '')
+        ConsentLog.objects.bulk_create([
+            ConsentLog(
+                user=user,
+                consent_type=ConsentLog.CONSENT_TERMS_PRIVACY,
+                agreed=agree_to_terms,
+                ip_address=ip, user_agent=ua,
+            ),
+            ConsentLog(
+                user=user,
+                consent_type=ConsentLog.CONSENT_DATA_USAGE_AI,
+                agreed=agree_to_data_usage,
+                ip_address=ip, user_agent=ua,
+            ),
+            ConsentLog(
+                user=user,
+                consent_type=ConsentLog.CONSENT_MARKETING,
+                agreed=marketing_opt_in,
+                ip_address=ip, user_agent=ua,
+            ),
+        ])
+
+        # Issue JWT tokens
+        refresh = RefreshToken.for_user(user)
+
+        # Send welcome email
+        send_templated_email(
+            slug='welcome',
+            recipient=user.email,
+            context={'username': user.username},
+            fail_silently=True,
+        )
+
+        logger.info('Google sign-up completed: user=%s email=%s google_sub=%s',
+                     user.username, email, google_sub)
+
+        return Response({
+            'user': UserSerializer(user).data,
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _get_client_ip(request):
+        """Extract client IP, respecting X-Forwarded-For behind reverse proxies."""
+        xff = request.META.get('HTTP_X_FORWARDED_FOR')
+        if xff:
+            return xff.split(',')[0].strip()
+        return request.META.get('REMOTE_ADDR')

@@ -6,6 +6,7 @@ from .views import (
     NotificationPreferenceView, ForgotPasswordView, ResetPasswordView,
     WalletView, WalletTransactionListView, WalletTopUpView,
     PlanListView, PlanSubscribeView,
+    GoogleLoginView, GoogleCompleteView,
 )
 from .views_payments import (
     CreateSubscriptionView, VerifySubscriptionView, CancelSubscriptionView,
@@ -39,4 +40,7 @@ urlpatterns = [
     path('payments/topup/verify/', VerifyTopUpView.as_view(), name='payment-topup-verify'),
     path('payments/webhook/', RazorpayWebhookView.as_view(), name='payment-webhook'),
     path('payments/history/', PaymentHistoryView.as_view(), name='payment-history'),
+    # Google OAuth
+    path('google/', GoogleLoginView.as_view(), name='google-login'),
+    path('google/complete/', GoogleCompleteView.as_view(), name='google-complete'),
 ]

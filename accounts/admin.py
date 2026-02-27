@@ -3,13 +3,18 @@ from .models import (
     UserProfile, NotificationPreference, EmailTemplate, Plan,
     Wallet, WalletTransaction, CreditCost,
     RazorpayPayment, RazorpaySubscription, WebhookEvent,
+    ConsentLog,
 )
 
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'plan', 'plan_valid_until', 'pending_plan', 'country_code', 'mobile_number')
-    list_filter = ('plan',)
+    list_display = (
+        'user', 'plan', 'plan_valid_until', 'pending_plan',
+        'country_code', 'mobile_number',
+        'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
+    )
+    list_filter = ('plan', 'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in')
     search_fields = ('user__username', 'mobile_number')
     raw_id_fields = ('user',)
 
@@ -159,3 +164,23 @@ class WebhookEventAdmin(admin.ModelAdmin):
     search_fields = ('event_id',)
     readonly_fields = ('event_id', 'event_type', 'created_at')
     list_per_page = 50
+
+
+@admin.register(ConsentLog)
+class ConsentLogAdmin(admin.ModelAdmin):
+    list_display = ('user', 'consent_type', 'agreed', 'version', 'ip_address', 'created_at')
+    list_filter = ('consent_type', 'agreed', 'version')
+    search_fields = ('user__username', 'user__email', 'ip_address')
+    raw_id_fields = ('user',)
+    readonly_fields = ('user', 'consent_type', 'agreed', 'version', 'ip_address', 'user_agent', 'created_at')
+    ordering = ('-created_at',)
+    list_per_page = 50
+
+    def has_add_permission(self, request):
+        return False  # Consent logs are created by the system only
+
+    def has_change_permission(self, request, obj=None):
+        return False  # Consent logs are immutable
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Consent logs are immutable

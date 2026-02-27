@@ -352,6 +352,10 @@ if not DEBUG and RAZORPAY_KEY_ID == 'rzp_test_placeholder':
 # Password reset token expiry (seconds) — default 1 hour
 PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int)
 
+# ── Google OAuth2 ────────────────────────────────────────────────────────────
+GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default='')
+GOOGLE_OAUTH2_TEMP_TOKEN_TTL = 600  # 10 minutes for completing registration
+
 # Logging
 # In production (Railway), use only the console handler — Railway captures
 # stdout/stderr automatically. The file handler is kept for local dev only.

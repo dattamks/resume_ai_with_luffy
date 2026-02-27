@@ -72,17 +72,45 @@ class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True)
 
+    # ── Consent checkboxes ─────────────────────────────────────────────────────
+    agree_to_terms = serializers.BooleanField(
+        write_only=True,
+        help_text='Must be true. User agrees to Terms of Service and Privacy Policy.',
+    )
+    agree_to_data_usage = serializers.BooleanField(
+        write_only=True,
+        help_text='Must be true. User acknowledges AI data processing and Data Usage Policy.',
+    )
+    marketing_opt_in = serializers.BooleanField(
+        write_only=True, required=False, default=False,
+        help_text='Optional. User opts in to marketing emails and newsletters.',
+    )
+
     class Meta:
         model = User
-        fields = ('username', 'email', 'password', 'password2')
+        fields = (
+            'username', 'email', 'password', 'password2',
+            'agree_to_terms', 'agree_to_data_usage', 'marketing_opt_in',
+        )
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({'password': 'Passwords do not match.'})
+        if not attrs.get('agree_to_terms'):
+            raise serializers.ValidationError({
+                'agree_to_terms': 'You must agree to the Terms of Service and Privacy Policy.',
+            })
+        if not attrs.get('agree_to_data_usage'):
+            raise serializers.ValidationError({
+                'agree_to_data_usage': 'You must acknowledge the Data Usage & AI Disclaimer.',
+            })
         return attrs
 
     def create(self, validated_data):
         validated_data.pop('password2')
+        validated_data.pop('agree_to_terms')
+        validated_data.pop('agree_to_data_usage')
+        validated_data.pop('marketing_opt_in', None)
         user = User.objects.create_user(**validated_data)
         return user
 
@@ -95,13 +123,20 @@ class UserSerializer(serializers.ModelSerializer):
     wallet = serializers.SerializerMethodField()
     plan_valid_until = serializers.DateTimeField(source='profile.plan_valid_until', read_only=True)
     pending_plan = serializers.SerializerMethodField()
+    agreed_to_terms = serializers.BooleanField(source='profile.agreed_to_terms', read_only=True)
+    agreed_to_data_usage = serializers.BooleanField(source='profile.agreed_to_data_usage', read_only=True)
+    marketing_opt_in = serializers.BooleanField(source='profile.marketing_opt_in', read_only=True)
+    auth_provider = serializers.CharField(source='profile.auth_provider', read_only=True)
+    avatar_url = serializers.URLField(source='profile.avatar_url', read_only=True)
 
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'email', 'date_joined',
+            'id', 'username', 'email', 'first_name', 'last_name', 'date_joined',
             'country_code', 'mobile_number',
             'plan', 'wallet', 'plan_valid_until', 'pending_plan',
+            'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
+            'auth_provider', 'avatar_url',
         )
 
     def get_plan(self, obj):
@@ -328,3 +363,54 @@ class SubscriptionStatusSerializer(serializers.Serializer):
     current_start = serializers.DateTimeField(required=False, allow_null=True)
     current_end = serializers.DateTimeField(required=False, allow_null=True)
     created_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+# ── Google OAuth Serializers ────────────────────────────────────────────────
+
+class GoogleAuthSerializer(serializers.Serializer):
+    """Input for Google OAuth login — receives the Google ID token from frontend."""
+    token = serializers.CharField(
+        help_text='Google ID token (credential) from Google Sign-In / One Tap.',
+    )
+
+
+class GoogleCompleteSerializer(serializers.Serializer):
+    """Input for completing Google sign-up — username, password, and consent checkboxes."""
+    temp_token = serializers.CharField(
+        help_text='Temporary token received from POST /api/auth/google/.',
+    )
+    username = serializers.CharField(
+        max_length=150,
+        help_text='Chosen username for the new account.',
+    )
+    password = serializers.CharField(
+        write_only=True,
+        validators=[validate_password],
+        help_text='Password for the new account (min 8 chars, not too common/numeric).',
+    )
+    agree_to_terms = serializers.BooleanField(
+        help_text='Must be true. User agrees to Terms of Service and Privacy Policy.',
+    )
+    agree_to_data_usage = serializers.BooleanField(
+        help_text='Must be true. User acknowledges AI data processing and Data Usage Policy.',
+    )
+    marketing_opt_in = serializers.BooleanField(
+        required=False, default=False,
+        help_text='Optional. User opts in to marketing emails and newsletters.',
+    )
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('A user with that username already exists.')
+        return value
+
+    def validate(self, attrs):
+        if not attrs.get('agree_to_terms'):
+            raise serializers.ValidationError({
+                'agree_to_terms': 'You must agree to the Terms of Service and Privacy Policy.',
+            })
+        if not attrs.get('agree_to_data_usage'):
+            raise serializers.ValidationError({
+                'agree_to_data_usage': 'You must acknowledge the Data Usage & AI Disclaimer.',
+            })
+        return attrs

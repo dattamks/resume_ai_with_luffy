@@ -47,6 +47,44 @@ class UserProfile(models.Model):
         help_text='Plan to switch to after current billing cycle expires (for downgrades).',
     )
 
+    # ── Consent quick-access flags ─────────────────────────────────────
+    agreed_to_terms = models.BooleanField(
+        default=True,
+        help_text='User agreed to Terms of Service and Privacy Policy.',
+    )
+    agreed_to_data_usage = models.BooleanField(
+        default=True,
+        help_text='User acknowledged AI data processing and Data Usage Policy.',
+    )
+    marketing_opt_in = models.BooleanField(
+        default=False,
+        help_text='User opted in to marketing emails, tips, and newsletters.',
+    )
+
+    # ── Google / Social profile fields ─────────────────────────────────
+    AUTH_PROVIDER_CHOICES = [
+        ('email', 'Email'),
+        ('google', 'Google'),
+    ]
+    auth_provider = models.CharField(
+        max_length=20,
+        choices=AUTH_PROVIDER_CHOICES,
+        default='email',
+        help_text='How the user signed up (email registration or Google OAuth).',
+    )
+    avatar_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text='Profile picture URL (from Google or uploaded). Blank means no avatar.',
+    )
+    google_sub = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Google account unique subject identifier (from ID token).',
+    )
+
     class Meta:
         verbose_name = 'User Profile'
         verbose_name_plural = 'User Profiles'
@@ -566,6 +604,46 @@ def create_user_profile(sender, instance, created, **kwargs):
                 description=f'Initial {free_plan.name} plan credits',
             )
             logger.info('Wallet created for user=%s with %d credits', instance.username, initial_credits)
+
+
+class ConsentLog(models.Model):
+    """
+    Immutable audit trail for user consent actions.
+    Every time a user agrees (or withdraws consent) for a specific type,
+    a new row is created — never updated or deleted.
+    """
+    CONSENT_TERMS_PRIVACY = 'terms_privacy'
+    CONSENT_DATA_USAGE_AI = 'data_usage_ai'
+    CONSENT_MARKETING = 'marketing_newsletter'
+
+    CONSENT_TYPE_CHOICES = [
+        (CONSENT_TERMS_PRIVACY, 'Terms & Privacy Policy'),
+        (CONSENT_DATA_USAGE_AI, 'Data Usage & AI Disclaimer'),
+        (CONSENT_MARKETING, 'Marketing & Newsletter'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='consent_logs')
+    consent_type = models.CharField(max_length=30, choices=CONSENT_TYPE_CHOICES)
+    agreed = models.BooleanField(help_text='True = opted in / agreed; False = withdrew consent.')
+    version = models.CharField(
+        max_length=20, default='1.0',
+        help_text='Version of the legal document the user agreed to.',
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Consent Log'
+        verbose_name_plural = 'Consent Logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'consent_type', '-created_at']),
+        ]
+
+    def __str__(self):
+        action = 'agreed' if self.agreed else 'withdrew'
+        return f'{self.user.username} {action} {self.get_consent_type_display()} (v{self.version})'
 
 
 class WebhookEvent(models.Model):

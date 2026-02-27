@@ -197,9 +197,22 @@ Creates a new user account and returns tokens immediately (auto-login).
   "username": "john",
   "email": "john@example.com",
   "password": "SecurePass123!",
-  "password2": "SecurePass123!"
+  "password2": "SecurePass123!",
+  "agree_to_terms": true,
+  "agree_to_data_usage": true,
+  "marketing_opt_in": false
 }
 ```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `username` | string | ✅ | Unique username |
+| `email` | string | ✅ | Valid email address |
+| `password` | string | ✅ | Min 8 chars, can't be too common/numeric |
+| `password2` | string | ✅ | Must match `password` |
+| `agree_to_terms` | boolean | ✅ | Must be `true` — Terms of Service & Privacy Policy |
+| `agree_to_data_usage` | boolean | ✅ | Must be `true` — AI data processing & Data Usage Policy |
+| `marketing_opt_in` | boolean | ❌ | Optional (default `false`) — marketing emails & newsletters |
 
 **Response (201 Created):**
 ```json
@@ -208,9 +221,13 @@ Creates a new user account and returns tokens immediately (auto-login).
     "id": 1,
     "username": "john",
     "email": "john@example.com",
+    "first_name": "",
+    "last_name": "",
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
     "mobile_number": "",
+    "auth_provider": "email",
+    "avatar_url": "",
     "plan": {
       "id": 1,
       "name": "Free",
@@ -239,7 +256,10 @@ Creates a new user account and returns tokens immediately (auto-login).
       "updated_at": "2026-02-22T10:00:00Z"
     },
     "plan_valid_until": null,
-    "pending_plan": null
+    "pending_plan": null,
+    "agreed_to_terms": true,
+    "agreed_to_data_usage": true,
+    "marketing_opt_in": false
   },
   "access": "<jwt_access_token>",
   "refresh": "<jwt_refresh_token>"
@@ -251,9 +271,15 @@ Creates a new user account and returns tokens immediately (auto-login).
 {
   "username": ["A user with that username already exists."],
   "password": ["This password is too common."],
-  "password2": ["Passwords do not match."]
+  "password2": ["Passwords do not match."],
+  "agree_to_terms": ["You must agree to the Terms of Service and Privacy Policy."],
+  "agree_to_data_usage": ["You must acknowledge the Data Usage & AI Disclaimer."]
 }
 ```
+
+> **Consent audit:** Three `ConsentLog` entries are recorded per registration (terms, data usage, marketing) with the user's IP address, user agent, and timestamp. This log is immutable — used for GDPR/compliance auditing.
+>
+> **Newsletter sync:** When `marketing_opt_in` is `true`, the user's `NotificationPreference.newsletters_email` is automatically set to `true`.
 
 > **Email:** A welcome email (HTML template `welcome`) is sent to the registered email address on successful registration.
 
@@ -280,9 +306,13 @@ Creates a new user account and returns tokens immediately (auto-login).
     "id": 1,
     "username": "john",
     "email": "john@example.com",
+    "first_name": "",
+    "last_name": "",
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
     "mobile_number": "",
+    "auth_provider": "email",
+    "avatar_url": "",
     "plan": { "id": 1, "name": "Free", "slug": "free", "...":  "..." },
     "wallet": { "balance": 2, "updated_at": "..." },
     "plan_valid_until": null,
@@ -644,6 +674,186 @@ Exchange a valid refresh token for new access + refresh tokens.
 ```
 
 > **Important:** The old refresh token is blacklisted after this call. Always store the **new** refresh token returned.
+
+---
+
+### Google OAuth Login (Two-Step Flow)
+
+Google Sign-In uses a **two-step flow** for new users (existing users get JWT tokens immediately):
+
+```
+Step 1:  Frontend gets Google ID token (Google Sign-In / One Tap)
+         ↓
+         POST /api/auth/google/  { token: "<google_id_token>" }
+         ↓
+         Existing user? → JWT tokens returned (done!)
+         New user?      → { needs_registration: true, temp_token, email, name, picture }
+
+Step 2:  Frontend shows consent form + username/password fields
+         ↓
+         POST /api/auth/google/complete/  { temp_token, username, password, consents... }
+         ↓
+         User created → JWT tokens returned (done!)
+```
+
+### POST `/api/auth/google/` — Google Login (Step 1)
+
+Verifies a Google ID token. For existing users, returns JWT tokens immediately. For new users, returns a temporary token to complete registration.
+
+**Request:**
+```json
+{
+  "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6..."
+}
+```
+
+**Response — Existing User (200):**
+```json
+{
+  "user": {
+    "id": 5,
+    "username": "existinguser",
+    "email": "user@gmail.com",
+    "agreed_to_terms": true,
+    "agreed_to_data_usage": true,
+    "marketing_opt_in": false
+  },
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOi...",
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGciOi..."
+}
+```
+
+**Response — New User (200):**
+```json
+{
+  "needs_registration": true,
+  "temp_token": "eyJlbWFpbCI6InVzZXJAZ21haWwuY29tIi...",
+  "email": "user@gmail.com",
+  "name": "John Doe",
+  "given_name": "John",
+  "family_name": "Doe",
+  "picture": "https://lh3.googleusercontent.com/..."
+}
+```
+
+> **Note:** Use `given_name` and `family_name` to pre-fill the registration form. These come directly from the user's Google account.
+
+> **Note:** The `temp_token` is valid for **10 minutes**. If it expires, the user must restart the Google Sign-In flow.
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 200 | Existing user | JWT tokens + user object |
+| 200 | New user | `needs_registration: true` + temp_token |
+| 400 | Unverified email | `{ "detail": "Google account email is not verified." }` |
+| 401 | Invalid/expired Google token | `{ "detail": "Invalid or expired Google token." }` |
+| 503 | Google OAuth not configured | `{ "detail": "Google OAuth is not configured on this server." }` |
+
+### POST `/api/auth/google/complete/` — Complete Google Registration (Step 2)
+
+Completes registration for a new Google user. Requires the `temp_token` from Step 1, a chosen username/password, and consent checkboxes.
+
+**Request:**
+```json
+{
+  "temp_token": "eyJlbWFpbCI6InVzZXJAZ21haWwuY29tIi...",
+  "username": "johndoe",
+  "password": "SecurePass123!",
+  "agree_to_terms": true,
+  "agree_to_data_usage": true,
+  "marketing_opt_in": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `temp_token` | string | ✅ | Temporary token from Step 1 |
+| `username` | string | ✅ | Chosen username (must be unique) |
+| `password` | string | ✅ | Must meet Django password validation rules |
+| `agree_to_terms` | boolean | ✅ | Must be `true` — Terms & Privacy Policy |
+| `agree_to_data_usage` | boolean | ✅ | Must be `true` — Data Usage & AI Disclaimer |
+| `marketing_opt_in` | boolean | ❌ | Default `false` — Marketing & Newsletter |
+
+**Response (201):**
+```json
+{
+  "user": {
+    "id": 12,
+    "username": "johndoe",
+    "email": "user@gmail.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "agreed_to_terms": true,
+    "agreed_to_data_usage": true,
+    "marketing_opt_in": false,
+    "auth_provider": "google",
+    "avatar_url": "https://lh3.googleusercontent.com/..."
+  },
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOi...",
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGciOi..."
+}
+```
+
+> **Note:** `first_name`, `last_name`, and `avatar_url` are automatically populated from the Google account. `auth_provider` is `"google"` for Google sign-ups and `"email"` for regular registrations.
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 201 | User created | JWT tokens + user object |
+| 400 | Invalid/expired temp token | `{ "detail": "Invalid or expired registration token. Please restart Google sign-in." }` |
+| 400 | Validation errors | `{ "username": [...], "password": [...], ... }` |
+| 400 | Consent not given | `{ "agree_to_terms": ["You must agree to the Terms & Privacy Policy."] }` |
+| 409 | Email race condition | `{ "detail": "An account with this email already exists. Please log in instead." }` |
+
+**TypeScript Types:**
+
+```typescript
+// Step 1 — Google Login
+interface GoogleLoginRequest {
+  token: string; // Google ID token from Google Sign-In SDK
+}
+
+type GoogleLoginResponse =
+  | { user: UserProfile; access: string; refresh: string }               // existing user
+  | { needs_registration: true; temp_token: string; email: string; name: string; given_name: string; family_name: string; picture: string }; // new user
+
+// Step 2 — Complete Registration
+interface GoogleCompleteRequest {
+  temp_token: string;
+  username: string;
+  password: string;
+  agree_to_terms: true;
+  agree_to_data_usage: true;
+  marketing_opt_in?: boolean;
+}
+
+interface GoogleCompleteResponse {
+  user: UserProfile;
+  access: string;
+  refresh: string;
+}
+```
+
+**Frontend Integration Example:**
+
+```typescript
+async function handleGoogleLogin(googleIdToken: string) {
+  const res = await api.post('/api/auth/google/', { token: googleIdToken });
+
+  if ('needs_registration' in res.data) {
+    // New user — show consent + username form, pre-fill email/name
+    navigateToGoogleComplete(res.data);
+  } else {
+    // Existing user — store tokens, redirect to dashboard
+    storeTokens(res.data.access, res.data.refresh);
+    navigateToDashboard();
+  }
+}
+
+async function completeGoogleRegistration(formData: GoogleCompleteRequest) {
+  const res = await api.post('/api/auth/google/complete/', formData);
+  storeTokens(res.data.access, res.data.refresh);
+  navigateToDashboard();
+}
+```
 
 ---
 
@@ -1984,13 +2194,20 @@ interface User {
   id: number;
   username: string;
   email: string;
+  first_name: string;     // from Google given_name or empty for email signups
+  last_name: string;      // from Google family_name or empty for email signups
   date_joined: string;    // ISO 8601
   country_code: string;   // e.g., "+91" (default)
   mobile_number: string;  // digits only, "" if not set
+  auth_provider: 'email' | 'google';  // how the user signed up
+  avatar_url: string;     // Google profile picture URL, or "" if none
   plan: Plan | null;      // null if no plan assigned (edge case)
   wallet: Wallet | null;  // null if wallet not yet created
   plan_valid_until: string | null;  // ISO 8601, null for free plan
   pending_plan: Plan | null;        // set when downgrade is scheduled
+  agreed_to_terms: boolean;         // true after registration
+  agreed_to_data_usage: boolean;    // true after registration
+  marketing_opt_in: boolean;        // user's newsletter opt-in choice
 }
 
 interface Plan {
@@ -2945,13 +3162,20 @@ interface User {
   id: number;
   username: string;
   email: string;
+  first_name: string;
+  last_name: string;
   date_joined: string;
   country_code: string;
   mobile_number: string;
+  auth_provider: 'email' | 'google';
+  avatar_url: string;
   plan: Plan | null;
   wallet: WalletInfo | null;
   plan_valid_until: string | null;
   pending_plan: Plan | null;
+  agreed_to_terms: boolean;
+  agreed_to_data_usage: boolean;
+  marketing_opt_in: boolean;
 }
 
 // Updated Plan interface (add these fields)
@@ -3944,6 +4168,8 @@ const cancelSubscription = async () => {
 | **Auth** |||||
 | POST | `/api/auth/register/` | ❌ | Auth (20/hr IP) | Create account + auto-login |
 | POST | `/api/auth/login/` | ❌ | Auth (20/hr IP) | Get JWT tokens |
+| POST | `/api/auth/google/` | ❌ | Auth (20/hr IP) | Google login (Step 1) |
+| POST | `/api/auth/google/complete/` | ❌ | Auth (20/hr IP) | Google registration (Step 2) |
 | POST | `/api/auth/logout/` | ✅ | User (200/hr) | Blacklist refresh token |
 | POST | `/api/auth/token/refresh/` | ❌ | Anon (60/hr IP) | Refresh JWT tokens |
 | GET | `/api/auth/me/` | ✅ | User (200/hr) | Current user profile + plan |

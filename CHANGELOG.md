@@ -5,6 +5,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.3] — 2026-02-27
+
+### Added
+- **Google OAuth login** — Two new endpoints for Google Sign-In:
+  - `POST /api/auth/google/` — Verifies Google ID token. Existing users get JWT tokens immediately; new users receive a signed `temp_token` for registration completion.
+  - `POST /api/auth/google/complete/` — Completes registration for new Google users with username, password, and consent checkboxes.
+- **Google profile data** — New Google users automatically get:
+  - `first_name` / `last_name` from Google's `given_name` / `family_name`.
+  - `avatar_url` from Google profile picture.
+  - `google_sub` (Google account unique ID) stored on profile.
+  - `auth_provider` set to `"google"` (vs `"email"` for regular registrations).
+- **UserProfile fields:** `auth_provider`, `avatar_url`, `google_sub` (new model fields).
+- **UserSerializer** now exposes `first_name`, `last_name`, `auth_provider`, `avatar_url` in all user-facing responses.
+- **Stateless temp tokens** — HMAC-SHA256 signed, base64-encoded tokens (10-min TTL) for the two-step registration flow. No DB/cache storage required.
+- **Case-insensitive email lookup** — Google login and registration race-condition guard use `email__iexact`.
+- **`google-auth==2.38.0`** — New dependency for verifying Google ID tokens.
+- **Settings:** `GOOGLE_OAUTH2_CLIENT_ID` (env var), `GOOGLE_OAUTH2_TEMP_TOKEN_TTL` (default 600s).
+- **18 new tests** — `GoogleLoginViewTests` (7) + `GoogleCompleteViewTests` (11) covering token verification, profile data storage, consent logging, expired tokens, race conditions.
+- **FRONTEND_API_GUIDE.md** — Full Google OAuth section with flow diagram, TypeScript types, integration example.
+- **Migration:** `0011_add_google_profile_fields`.
+
+---
+
+## [0.16.2] — 2026-02-27
+
+### Added
+- **Registration consent checkboxes** — `POST /api/auth/register/` now requires:
+  - `agree_to_terms` (boolean, **mandatory**) — Terms of Service & Privacy Policy.
+  - `agree_to_data_usage` (boolean, **mandatory**) — AI data processing & Data Usage Policy.
+  - `marketing_opt_in` (boolean, optional, default `false`) — Marketing emails & newsletters.
+- **`ConsentLog` model** — Immutable audit trail for consent actions. Stores `consent_type`, `agreed`, `version`, `ip_address`, `user_agent`, and `created_at`. Three entries created per registration, never updated or deleted (GDPR-ready).
+- **`UserProfile` consent flags** — Quick-access fields: `agreed_to_terms`, `agreed_to_data_usage`, `marketing_opt_in`. Existing users grandfathered with `agreed_to_terms=True`, `agreed_to_data_usage=True`.
+- **Newsletter sync** — `marketing_opt_in=true` during registration automatically sets `NotificationPreference.newsletters_email=true`.
+- **`ConsentLogAdmin`** — Read-only Django admin for consent audit logs (no add/change/delete).
+- **5 new registration tests** — Missing terms/data-usage validation, consent log creation, newsletter sync, response fields.
+- **Total tests: 269** (up from 264), all passing.
+- **Migration:** `0010_add_consent_log_and_profile_flags`.
+
+### Changed
+- **User response** — `agreed_to_terms`, `agreed_to_data_usage`, `marketing_opt_in` now included in all user-facing responses (register, login, GET/PUT /me/).
+- **FRONTEND_API_GUIDE.md** — Section 2 updated with new request fields, field table, error examples, consent audit notes, and updated TypeScript `User` interface.
+
+---
+
 ## [0.16.1] — 2026-02-27
 
 ### Fixed
