@@ -2739,34 +2739,24 @@ Paginated transaction history.
 | `admin_adjustment` | Admin-initiated adjustment |
 | `upgrade_bonus` | Credits granted on plan upgrade |
 
-#### `POST /api/auth/wallet/topup/`
+#### `POST /api/auth/wallet/topup/` *(DEPRECATED)*
 
-Buy credit packs. **Pro users only.**
+> **Deprecated in v0.13.1.** Credit top-ups now require payment via Razorpay.
+> Use `POST /api/auth/payments/topup/` instead (see [§ 22](#22-razorpay-payments)).
 
-**Request:**
+This endpoint now always returns **402 Payment Required**:
+
 ```json
 {
-  "quantity": 3
+  "detail": "Credit top-ups require payment. Use POST /api/auth/payments/topup/ instead.",
+  "payment_url": "/api/auth/payments/topup/"
 }
 ```
 
-**Success Response (200):**
-```json
-{
-  "detail": "15 credits added.",
-  "credits_added": 15,
-  "balance": 30,
-  "total_price": 147.0
-}
-```
-
-**Error Responses:**
-
-| Status | Condition |
-|--------|-----------|
-| `400` | Free plan user: `"Your plan does not support credit top-ups."` |
-| `400` | Downgrade pending: `"Cannot top up while a plan downgrade is pending."` |
-| `400` | Invalid quantity: `"Quantity must be a positive integer."` |
+**Migration guide:** Replace direct top-up calls with the Razorpay checkout flow:
+1. `POST /api/auth/payments/topup/` → get `order_id` + `key_id`
+2. Open Razorpay checkout with the returned params
+3. `POST /api/auth/payments/topup/verify/` → credits are added after payment verification
 
 ### Plan Endpoints
 
@@ -2785,6 +2775,7 @@ List all active plans. **Public endpoint — no auth required.**
     "topup_credits_per_pack": 0,
     "topup_price": "0.00",
     "job_notifications": false,
+    "max_job_alerts": 0,
     "...": "..."
   },
   {
@@ -2795,6 +2786,7 @@ List all active plans. **Public endpoint — no auth required.**
     "topup_credits_per_pack": 5,
     "topup_price": "49.00",
     "job_notifications": true,
+    "max_job_alerts": 10,
     "...": "..."
   }
 ]
@@ -2802,24 +2794,28 @@ List all active plans. **Public endpoint — no auth required.**
 
 #### `POST /api/auth/plans/subscribe/`
 
-Switch to a different plan.
+Switch to a different plan. **Only allows downgrade to free plan.** Upgrading to a paid plan
+requires payment via Razorpay (see [§ 22](#22-razorpay-payments)).
 
 **Request:**
 ```json
 {
-  "plan_slug": "pro"
+  "plan_slug": "free"
 }
 ```
 
-**Upgrade Response (200):**
+**Paid Plan Upgrade Attempt (402):**
 ```json
 {
-  "action": "upgraded",
-  "message": "Upgraded to Pro. 25 bonus credits added.",
-  "plan": "pro",
-  "plan_valid_until": "2026-03-28T10:00:00Z"
+  "detail": "Upgrading to a paid plan requires payment. Use POST /api/auth/payments/subscribe/ instead.",
+  "payment_url": "/api/auth/payments/subscribe/"
 }
 ```
+
+> **Migration guide:** To upgrade to Pro, use the Razorpay subscription flow:
+> 1. `POST /api/auth/payments/subscribe/` with `{"plan_slug": "pro"}`
+> 2. Open Razorpay checkout with the returned `subscription_id` + `key_id`
+> 3. `POST /api/auth/payments/subscribe/verify/` → plan is upgraded after payment
 
 **Downgrade Response (200):**
 ```json

@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.13.1] — 2026-02-27
+
+### Payment Linkage Audit — Security & Correctness Fixes
+
+### Fixed
+- **PlanSubscribeView security** — Blocked direct upgrade to paid plans without payment. Returns `402 Payment Required` directing to `/api/auth/payments/subscribe/`. Only free-plan downgrades allowed.
+- **WalletTopUpView security** — Deprecated free credit grants. Returns `402 Payment Required` directing to `/api/auth/payments/topup/`.
+- **Re-subscribe after cancellation** — Old cancelled/expired `RazorpaySubscription` records are now deleted before creating a new one (prevents `IntegrityError` from OneToOneField constraint).
+- **`razorpay_payment_id` unique constraint** — Added `default=None` to prevent empty-string collisions when multiple pending payments exist.
+- **Account deletion** — Now cancels active Razorpay subscription before deleting user (prevents continued billing).
+- **Race conditions** — Added `select_for_update()` to idempotency checks in `_activate_subscription` and `_fulfill_topup`.
+- **Webhook: `subscription.activated`** — Logs warning when `payment_id` missing from payload instead of silently skipping.
+- **Webhook: status validation** — `_handle_subscription_status_change` now validates status against `STATUS_CHOICES` before saving.
+- **Production guard** — `_get_razorpay_plan_id` raises `ValueError` in production when plan ID not configured (instead of using placeholder).
+- **Webhook: `_fulfill_topup`** — Fetches real amount from Razorpay API when payment record not found (instead of `amount=0`).
+- **Dead imports** — Removed unused `PaymentHistorySerializer` / `SubscriptionStatusSerializer` imports from `views_payments.py`.
+- **`max_job_alerts`** — Added to `PlanSerializer.fields` and `PlanAdmin` fieldsets.
+- **Migration** — `0007_fix_razorpay_payment_id_default`.
+
+### Changed
+- `POST /api/auth/wallet/topup/` — Now returns `402` (deprecated; use `/api/auth/payments/topup/`).
+- `POST /api/auth/plans/subscribe/` — Now returns `402` for paid plans (use `/api/auth/payments/subscribe/`).
+
+---
+
 ## [0.13.0] — 2026-02-26
 
 ### Phase 13: Razorpay Payment Gateway Integration
