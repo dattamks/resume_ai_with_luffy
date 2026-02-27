@@ -894,7 +894,7 @@ class GeneratedResumeListViewTests(TestCase):
         )
         resp = self.client.get('/api/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(resp.data), 2)
+        self.assertEqual(len(resp.data['results']), 2)
 
     def test_list_excludes_other_users(self):
         """Other users' generated resumes are not visible."""
@@ -907,13 +907,13 @@ class GeneratedResumeListViewTests(TestCase):
         )
         resp = self.client.get('/api/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(resp.data), 0)
+        self.assertEqual(len(resp.data['results']), 0)
 
     def test_list_empty(self):
         """Returns empty list when no generations exist."""
         resp = self.client.get('/api/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(resp.data), 0)
+        self.assertEqual(len(resp.data['results']), 0)
 
     def test_list_ordered_by_newest_first(self):
         """Results are ordered by created_at descending."""
@@ -930,8 +930,8 @@ class GeneratedResumeListViewTests(TestCase):
         resp = self.client.get('/api/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         # gen2 was created after gen1, should be first
-        self.assertEqual(resp.data[0]['id'], str(gen2.id))
-        self.assertEqual(resp.data[1]['id'], str(gen1.id))
+        self.assertEqual(resp.data['results'][0]['id'], str(gen2.id))
+        self.assertEqual(resp.data['results'][1]['id'], str(gen1.id))
 
     def test_list_requires_auth(self):
         """Unauthenticated requests are rejected."""

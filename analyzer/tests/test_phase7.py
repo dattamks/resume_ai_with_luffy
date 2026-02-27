@@ -289,6 +289,7 @@ class DashboardStatsTests(TestCase):
     """Tests for the dashboard analytics endpoint."""
 
     def setUp(self):
+        from django.core.cache import cache
         self.client = APIClient()
         self.user = User.objects.create_user(username='dashuser', password='StrongPass123!')
         token_resp = self.client.post(
@@ -297,7 +298,8 @@ class DashboardStatsTests(TestCase):
             format='json',
         )
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_resp.data["access"]}')
-
+        # Clear dashboard cache to avoid stale data between tests
+        cache.delete(f'dashboard_stats:{self.user.id}')
     def test_stats_empty(self):
         resp = self.client.get('/api/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)

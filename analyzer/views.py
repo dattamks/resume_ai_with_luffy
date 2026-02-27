@@ -401,6 +401,13 @@ class DashboardStatsView(APIView):
 
     def get(self, request):
         user = request.user
+
+        # Cache dashboard stats per user for 5 minutes (heavy aggregate queries)
+        cache_key = f'dashboard_stats:{user.id}'
+        cached = cache.get(cache_key)
+        if cached:
+            return Response(cached)
+
         # Use all_objects to include soft-deleted rows for analytics
         all_qs = ResumeAnalysis.all_objects.filter(user=user)
         active_qs = all_qs.filter(deleted_at__isnull=True)
@@ -443,7 +450,7 @@ class DashboardStatsView(APIView):
             .order_by('month')
         )
 
-        return Response({
+        data = {
             'total_analyses': total,
             'active_analyses': active,
             'deleted_analyses': deleted,
@@ -451,7 +458,10 @@ class DashboardStatsView(APIView):
             'score_trend': score_trend,
             'top_roles': top_roles,
             'analyses_per_month': monthly,
-        })
+        }
+
+        cache.set(cache_key, data, timeout=300)  # 5-minute TTL
+        return Response(data)
 
 
 # ── Share endpoints ───────────────────────────────────────────────────────
@@ -685,17 +695,20 @@ class GeneratedResumeDownloadView(APIView):
 class GeneratedResumeListView(APIView):
     """
     GET /api/generated-resumes/
-    List all generated resumes for the authenticated user.
+    List all generated resumes for the authenticated user (paginated).
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
+        from rest_framework.pagination import PageNumberPagination
         qs = GeneratedResume.objects.filter(
             user=request.user,
         ).select_related('analysis').order_by('-created_at')
-        serializer = GeneratedResumeSerializer(qs, many=True)
-        return Response(serializer.data)
+        paginator = PageNumberPagination()
+        page = paginator.paginate_queryset(qs, request)
+        serializer = GeneratedResumeSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
@@ -710,13 +723,18 @@ class JobAlertListCreateView(APIView):
     throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
+        from rest_framework.pagination import PageNumberPagination
         alerts = (
             JobAlert.objects
             .filter(user=request.user)
             .select_related('resume', 'resume__job_search_profile')
             .order_by('-created_at')
         )
-        return Response(JobAlertSerializer(alerts, many=True).data)
+        paginator = PageNumberPagination()
+        page = paginator.paginate_queryset(alerts, request)
+        return paginator.get_paginated_response(
+            JobAlertSerializer(page, many=True).data
+        )
 
     def post(self, request):
         # ── Plan gating: Pro only ──
@@ -840,23 +858,12 @@ class JobAlertMatchListView(APIView):
                 )
             qs = qs.filter(user_feedback=feedback_filter)
 
-        # Basic pagination (20 per page)
-        from django.core.paginator import Paginator
-        try:
-            page_num = int(request.query_params.get('page', 1))
-            if page_num < 1:
-                page_num = 1
-        except (TypeError, ValueError):
-            page_num = 1
-        paginator = Paginator(qs, 20)
-        page = paginator.get_page(page_num)
-
-        return Response({
-            'count': paginator.count,
-            'num_pages': paginator.num_pages,
-            'page': page_num,
-            'results': JobMatchSerializer(page.object_list, many=True).data,
-        })
+        from rest_framework.pagination import PageNumberPagination
+        paginator = PageNumberPagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(
+            JobMatchSerializer(page, many=True).data
+        )
 
 
 class JobAlertMatchFeedbackView(APIView):

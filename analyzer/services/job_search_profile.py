@@ -13,8 +13,8 @@ import time
 import uuid
 
 from django.conf import settings
-from openai import OpenAI
 
+from .ai_providers.factory import get_openai_client, llm_retry
 from .ai_providers.json_repair import repair_json
 
 logger = logging.getLogger('analyzer')
@@ -98,21 +98,25 @@ def extract_search_profile(resume) -> dict:
     if not api_key:
         raise ValueError('OPENROUTER_API_KEY is not configured.')
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = get_openai_client()
 
     logger.info('Extracting job search profile for resume id=%s', resume.id)
     start = time.monotonic()
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {'role': 'system', 'content': _SYSTEM_PROMPT},
-            {'role': 'user', 'content': prompt},
-        ],
-        temperature=0.2,
-        max_tokens=1000,
-        timeout=60,
-    )
+    @llm_retry
+    def _call():
+        return client.chat.completions.create(
+            model=model,
+            messages=[
+                {'role': 'system', 'content': _SYSTEM_PROMPT},
+                {'role': 'user', 'content': prompt},
+            ],
+            temperature=0.2,
+            max_tokens=1000,
+            timeout=60,
+        )
+
+    response = _call()
     duration = time.monotonic() - start
 
     raw = (response.choices[0].message.content or '').strip()

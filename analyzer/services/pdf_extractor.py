@@ -2,6 +2,7 @@ import io
 import logging
 
 import pdfplumber
+from django.conf import settings
 
 logger = logging.getLogger('analyzer')
 
@@ -42,7 +43,16 @@ class PDFExtractor:
             pdf_source = file_field
 
         with pdfplumber.open(pdf_source) as pdf:
-            logger.debug('PDFExtractor: PDF has %d page(s)', len(pdf.pages))
+            total_pages = len(pdf.pages)
+            max_pages = getattr(settings, 'MAX_PDF_PAGES', 50)
+            logger.debug('PDFExtractor: PDF has %d page(s)', total_pages)
+
+            if total_pages > max_pages:
+                raise ValueError(
+                    f'PDF has {total_pages} pages, which exceeds the maximum of {max_pages}. '
+                    'Please upload a shorter document.'
+                )
+
             for i, page in enumerate(pdf.pages, 1):
                 page_text = page.extract_text()
                 if page_text:

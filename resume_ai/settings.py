@@ -291,6 +291,7 @@ OPENROUTER_MODEL = config('OPENROUTER_MODEL', default='anthropic/claude-3.5-haik
 OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
+MAX_PDF_PAGES = config('MAX_PDF_PAGES', default=50, cast=int)
 
 # Firecrawl
 FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')

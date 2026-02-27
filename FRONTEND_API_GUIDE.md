@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.15.0
+> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.18.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -1896,7 +1896,7 @@ The backend parses `llm_response.parsed_response` and flattens key fields onto t
 
 ## 11. Pagination
 
-All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`) return paginated responses.
+All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`, `GET /api/generated-resumes/`, `GET /api/job-alerts/`, `GET /api/job-alerts/<id>/matches/`) return paginated responses.
 
 | Setting     | Value                    |
 |-------------|--------------------------|
@@ -3377,23 +3377,28 @@ GET /api/generated-resumes/
 Authorization: Bearer <token>
 ```
 
-Returns a flat array (not paginated) of all generated resumes for the authenticated user.
+Returns a **paginated** list of all generated resumes for the authenticated user, newest first.
 
 **Response — 200 OK:**
 
 ```json
-[
-  {
-    "id": "a1b2c3d4-...",
-    "analysis": 42,
-    "template": "ats_classic",
-    "format": "pdf",
-    "status": "done",
-    "error_message": "",
-    "file_url": "https://r2.example.com/generated_resumes/...",
-    "created_at": "2026-02-26T12:00:00Z"
-  }
-]
+{
+  "count": 5,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-...",
+      "analysis": 42,
+      "template": "ats_classic",
+      "format": "pdf",
+      "status": "done",
+      "error_message": "",
+      "file_url": "https://r2.example.com/generated_resumes/...",
+      "created_at": "2026-02-26T12:00:00Z"
+    }
+  ]
+}
 ```
 
 ### 19.5 TypeScript Types
@@ -3476,7 +3481,7 @@ GET  /api/job-alerts/
 POST /api/job-alerts/
 ```
 
-**GET** returns all active alerts for the authenticated user.
+**GET** returns a **paginated** list of active alerts for the authenticated user (20 per page, newest first).
 
 **POST** creates a new job alert. Triggers async LLM profile extraction from the linked resume.
 
@@ -3560,8 +3565,6 @@ GET /api/job-alerts/<uuid:id>/matches/
 
 Returns paginated job matches for an alert, ordered by relevance score (highest first).
 
-> **Pagination note:** This endpoint uses Django's built-in `Paginator` (NOT DRF pagination). The response shape differs from other paginated endpoints — it has `num_pages` and `page` instead of `next`/`previous`.
-
 **Query params:**
 | Param | Type | Description |
 |-------|------|-------------|
@@ -3572,8 +3575,8 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
 ```json
 {
   "count": 42,
-  "num_pages": 3,
-  "page": 1,
+  "next": "http://localhost:8000/api/job-alerts/.../matches/?page=3",
+  "previous": "http://localhost:8000/api/job-alerts/.../matches/?page=1",
   "results": [
     {
       "id": "uuid",
@@ -3742,10 +3745,10 @@ interface JobMatch {
 ### 20.8 Integration Recipe — Job Alerts Screen
 
 ```typescript
-// Fetch user's job alerts
-const fetchAlerts = async (): Promise<JobAlert[]> => {
-  const { data } = await api.get('/api/job-alerts/');
-  return data;  // list, not paginated
+// Fetch user's job alerts (now paginated)
+const fetchAlerts = async (page = 1): Promise<PaginatedResponse<JobAlert>> => {
+  const { data } = await api.get('/api/job-alerts/', { params: { page } });
+  return data;  // paginated { count, next, previous, results }
 };
 
 // Create a new alert
@@ -3762,7 +3765,7 @@ const fetchMatches = async (alertId: string, page = 1, feedback?: string) => {
   const params: Record<string, string> = { page: String(page) };
   if (feedback) params.feedback = feedback;
   const { data } = await api.get(`/api/job-alerts/${alertId}/matches/`, { params });
-  return data;  // paginated { count, num_pages, page, results }
+  return data;  // paginated { count, next, previous, results }
 };
 
 // Submit feedback on a match
@@ -4212,9 +4215,9 @@ const cancelSubscription = async () => {
 | POST | `/api/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
 | GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
 | GET | `/api/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
-| GET | `/api/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes |
+| GET | `/api/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes (paginated) |
 | **Job Alerts** |||||
-| GET | `/api/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts |
+| GET | `/api/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts (paginated) |
 | POST | `/api/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
 | GET | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Job alert detail |
 | PUT | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Update job alert |
@@ -4223,7 +4226,7 @@ const cancelSubscription = async () => {
 | POST | `/api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
 | POST | `/api/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
 | **Dashboard** |||||
-| GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends |
+| GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
 | **Share** |||||
 | GET | `/api/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
 | **System** |||||

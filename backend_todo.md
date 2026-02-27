@@ -413,14 +413,14 @@ On resume upload:
 - [x] **SSRF bypass via DNS rebinding** — `jd_fetcher.py` validates URLs against private IPs at validation time, but Firecrawl uses its own DNS resolution later. **Fix:** Documented as accepted risk (Firecrawl is a hosted service). Existing SSRF protection already comprehensive.
 - [x] **Health check leaks DB error details** — `views_health.py` L26 returns `str(exc)` with raw error messages (hostnames, ports) to unauthenticated callers. **Fix:** Returns generic `"Database connection failed."`, logs full error server-side.
 - [x] **Email enumeration via forgot-password** — Already returns same 200 response regardless of email existence. No change needed.
-- [ ] **Webhook IP allowlisting missing** — Only HMAC verification. If secret leaks, any IP can send fake events. **Fix:** Add middleware/decorator to check against Razorpay's published IP ranges.
+- [ ] **Webhook IP allowlisting missing** — Only HMAC verification. If secret leaks, any IP can send fake events. **Fix:** Add middleware/decorator to check against Razorpay's published IP ranges. *(deferred — infra/reverse-proxy task)*
 
 ### P3 — Low Security
 
 - [x] **Razorpay secrets have plaintext defaults** — `settings.py` L300-302: `'rzp_test_placeholder'`. **Fix:** Added `warnings.warn()` in production when placeholder credentials detected.
 - [x] **`CORS_ALLOW_CREDENTIALS = True` unnecessary** — Auth is JWT-based. **Fix:** Removed — JWT uses Authorization header, not cookies.
 - [x] **`SECURE_BROWSER_XSS_FILTER` deprecated** — Django 4.1+: `X-XSS-Protection` header can introduce vulnerabilities. **Fix:** Removed from production security settings with explanatory comment.
-- [ ] **No CSP or Permissions-Policy headers** — **Fix:** Add `django-csp` middleware or set via reverse proxy.
+- [ ] **No CSP or Permissions-Policy headers** — **Fix:** Add `django-csp` middleware or set via reverse proxy. *(deferred — frontend/reverse-proxy task)*
 - [x] **`celery_task_id` and `resume_file` path exposed in API** — `ResumeAnalysisDetailSerializer` leaks these (excluded from `SharedAnalysisSerializer` confirming they're sensitive). **Fix:** Removed `celery_task_id` from API response.
 - [x] **`JobCreateSerializer` has no URL validation / SSRF prevention** — `job_url` field has no scheme validation. **Fix:** Added URL scheme validation (http/https only).
 
@@ -473,29 +473,29 @@ On resume upload:
 
 ### P1 — High
 
-- [ ] **OpenAI client instantiated per call** — `factory.py`, `resume_generator.py`, `job_matcher.py`, `job_search_profile.py` each create a new `OpenAI()` client per invocation. Wastes TCP connections, misses connection pooling. **Fix:** Module-level singleton or LRU-cached factory keyed by `(base_url, api_key)`.
-- [ ] **No LLM retry logic** — `openrouter_provider.py` L38-47: No retry on transient failures (429, 502/503, timeouts). Single flaky response wastes credits. `tasks.py` `autoretry_for` only covers `ConnectionError/OSError/TimeoutError`, not `openai.RateLimitError`. **Fix:** Add `tenacity` retry with exponential backoff on 429/5xx, or add `openai.RateLimitError`, `openai.APITimeoutError` to `autoretry_for`.
-- [ ] **No page limit on PDF extraction** — `pdf_extractor.py` L37-47: Malicious 10,000-page PDF → unbounded CPU/memory. **Fix:** Add `MAX_PDF_PAGES = 50` setting; raise `ValueError` if page count exceeds.
-- [ ] **No input length / token estimation before LLM calls** — 200-page resume → massive prompt exceeding context window, wasting API cost. **Fix:** Pre-flight token estimation via `tiktoken`; truncate with notice if over threshold.
+- [x] **OpenAI client instantiated per call** — `factory.py`, `resume_generator.py`, `job_matcher.py`, `job_search_profile.py` each create a new `OpenAI()` client per invocation. **Fix:** Added `@functools.lru_cache(maxsize=4)` `_get_openai_client(api_key, base_url)` in `factory.py`; all modules now share cached clients.
+- [x] **No LLM retry logic** — No retry on transient failures (429, 502/503, timeouts). **Fix:** Added `tenacity` retry decorator (`llm_retry`) with exponential backoff on `RateLimitError`, `APITimeoutError`, `APIConnectionError`, and 5xx status errors. Applied to `openrouter_provider.py`, `resume_generator.py`, `job_matcher.py`, `job_search_profile.py`. Also added `retry_backoff=True` to Celery `run_analysis_task`.
+- [x] **No page limit on PDF extraction** — Malicious huge PDF → unbounded CPU/memory. **Fix:** Added `MAX_PDF_PAGES` setting (default 50) in `settings.py`; `pdf_extractor.py` raises `ValueError` if page count exceeds limit.
+- [x] **No input length / token estimation before LLM calls** — 200-page resume → massive prompt exceeding context window. **Fix:** Added `estimate_tokens()` and `check_prompt_length()` utilities in `base.py`; `_build_prompt()` auto-truncates oversized prompts. `resume_generator.py` also checks prompt length before LLM call.
 
 ### P2 — Medium
 
-- [ ] **`DashboardStatsView` no caching** — Runs 5 aggregate queries per request with no caching. **Fix:** Add `@method_decorator(cache_page(300))` or manual cache with 5-min TTL.
-- [ ] **No pagination on `JobListCreateView`, `GeneratedResumeListView`, `JobAlertListCreateView`** — Returns all records unbounded. **Fix:** Add DRF pagination class to each.
-- [ ] **`JobAlertMatchListView` uses manual pagination** — Django `Paginator` instead of DRF's pagination classes. Inconsistent response format. **Fix:** Switch to `PageNumberPagination`.
-- [ ] **Token blacklisting iterates one-by-one** — `MeView.delete()` loops `OutstandingToken` with individual `get_or_create`. **Fix:** `BlacklistedToken.objects.bulk_create([...], ignore_conflicts=True)`.
+- [x] **`DashboardStatsView` no caching** — Runs 5 aggregate queries per request with no caching. **Fix:** Added per-user Redis cache with 5-min TTL (`cache_key = f'dashboard_stats:{user.id}'`).
+- [x] **No pagination on `GeneratedResumeListView`, `JobAlertListCreateView`** — Returns all records unbounded. **Fix:** Added DRF `PageNumberPagination` (20 per page) to both views.
+- [x] **`JobAlertMatchListView` uses manual pagination** — Django `Paginator` instead of DRF's pagination classes. **Fix:** Switched to DRF `PageNumberPagination` with consistent envelope format.
+- [x] **Token blacklisting iterates one-by-one** — `MeView.delete()` and `ChangePasswordView.post()` loop with individual `get_or_create`. **Fix:** Replaced with `BlacklistedToken.objects.bulk_create([...], ignore_conflicts=True)`.
 - [ ] **Prompt template resent every request (~2,200 chars)** — Full JSON schema embedded in every LLM prompt. **Fix:** Use function-calling / structured output mode if supported by model; otherwise, explore system prompt caching.
-- [ ] **Migrations run on every web container start** — `entrypoint.sh` + `Procfile` both run `migrate --noinput`. Concurrent replicas → migration race. **Fix:** Run migrations as a separate Railway deploy hook or one-shot service.
-- [ ] **No `--max-tasks-per-child` for Celery workers** — AI/PDF processing leaks memory over time. **Fix:** Add `--max-tasks-per-child=50` to Celery worker command.
-- [ ] **Adzuna source always page 1** — `adzuna_source.py` L48: Hardcoded `/search/1` with 20-result cap. **Fix:** Add pagination support or document the limitation.
+- [x] **Migrations run on every web container start** — `entrypoint.sh` + `Procfile` both run `migrate --noinput`. Concurrent replicas → migration race. **Fix:** Removed inline migrate from `Procfile` web command; `entrypoint.sh` now uses `flock -w 120 /tmp/migrate.lock` to serialize migrations.
+- [x] **No `--max-tasks-per-child` for Celery workers** — AI/PDF processing leaks memory over time. **Fix:** Added `--max-tasks-per-child=50` to both `Procfile` and `entrypoint.sh` (configurable via `CELERY_MAX_TASKS_PER_CHILD` env var).
+- ~~[ ] **Adzuna source always page 1** — Removed in Phase 12 (Firecrawl replaced all external job sources).~~
 - [ ] **`unbounded listings` in discover_jobs_task** — `all_listings.extend(listings)` with no limit. Job source returning thousands of results overwhelms the matcher. **Fix:** Cap `all_listings` at a configurable max (e.g., 200).
 
 ### P3 — Low
 
-- [ ] **Style objects recreated in `pdf_report.py`** — `_build_styles()` creates ~20 `ParagraphStyle` objects on every call. **Fix:** Cache at module level.
-- [ ] **Adzuna style iteration** — `resume_docx_renderer.py` L42-56: Iterates all styles into a list just to check set membership. **Fix:** Use `set()` or `try/except KeyError`.
-- [ ] **SerpAPI `num` parameter ignored** — SerpAPI Google Jobs engine doesn't support `num`. Result count is Google-determined. **Fix:** Remove `num` param, document behavior.
-- [ ] **Job source factory creates instances every call** — `get_job_sources()` instantiates fresh objects each time. **Fix:** Cache instances by source type.
+- [x] **Style objects recreated in `pdf_report.py`** — `_build_styles()` creates ~20 `ParagraphStyle` objects on every call. **Fix:** Added `_CACHED_STYLES` module-level cache; styles built once and reused.
+- ~~[ ] **Adzuna style iteration** — Removed in Phase 12 (Adzuna source deleted).~~
+- ~~[ ] **SerpAPI `num` parameter ignored** — Removed in Phase 12 (SerpAPI source deleted).~~
+- [x] **Job source factory creates instances every call** — `get_job_sources()` instantiates fresh objects each time. **Fix:** Added `_cached_sources` module-level cache in `job_sources/factory.py`.
 
 ---
 
@@ -615,13 +615,13 @@ On resume upload:
 ## Backlog — Deployment & Infrastructure
 
 - [ ] **P1: Update `runtime.txt`** — `python-3.12.1` is outdated with known security fixes. Change to `python-3.12` for latest patch auto-pick.
-- [ ] **P2: Separate migrations from web start** — Run as Railway deploy hook or one-shot service, not on every container start (`entrypoint.sh` + `Procfile` both run `migrate --noinput`).
+- [x] **P2: Separate migrations from web start** — Fixed: Removed inline migrate from Procfile web command; entrypoint.sh uses `flock` to serialize concurrent migrations.
 - [ ] **P2: Health check: verify Redis + Celery** — Current check only tests DB. App reports healthy when analysis submissions silently fail.
 - [ ] **P2: Add Sentry or error tracking** — Bare `except` blocks swallow errors with only `logger.exception()`. No alerting.
 - [ ] **P2: Structured logging (JSON format)** — For better log aggregation and search in Railway/Datadog.
 - [ ] **P2: Emit custom metrics** — Prometheus/StatsD for: analysis duration, LLM token usage, credit operations, payment failures.
 - [ ] **P3: Gunicorn timeout alignment** — `--timeout 120` matches Railway's proxy timeout; reduce to `--timeout 110` so Gunicorn responds before proxy kills the connection.
-- [ ] **P3: Add `--max-tasks-per-child=50`** — Celery worker memory leak prevention.
+- [x] **P3: Add `--max-tasks-per-child=50`** — Added to Procfile and entrypoint.sh (configurable via `CELERY_MAX_TASKS_PER_CHILD`).
 - [ ] **P3: Celery task monitoring** — Flower or custom task status dashboard.
 - [ ] **P3: API versioning** — URL-based or header-based API versioning for future-proofing.
 

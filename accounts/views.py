@@ -190,8 +190,10 @@ class MeView(APIView):
         # Blacklist all outstanding tokens for this user
         try:
             tokens = OutstandingToken.objects.filter(user=user)
-            for token in tokens:
-                BlacklistedToken.objects.get_or_create(token=token)
+            BlacklistedToken.objects.bulk_create(
+                [BlacklistedToken(token=t) for t in tokens],
+                ignore_conflicts=True,
+            )
         except Exception:
             pass  # best-effort; user is being deleted anyway
 
@@ -224,8 +226,10 @@ class ChangePasswordView(APIView):
         # Invalidate all existing JWT sessions so the old tokens can't be reused
         try:
             tokens = OutstandingToken.objects.filter(user=request.user)
-            for token in tokens:
-                BlacklistedToken.objects.get_or_create(token=token)
+            BlacklistedToken.objects.bulk_create(
+                [BlacklistedToken(token=t) for t in tokens],
+                ignore_conflicts=True,
+            )
         except Exception:
             pass  # best-effort
 

@@ -18,8 +18,9 @@ import time
 import uuid
 
 from django.conf import settings
-from openai import OpenAI
 
+from .ai_providers.factory import get_openai_client, llm_retry
+from .ai_providers.base import check_prompt_length
 from .ai_providers.json_repair import repair_json
 
 logger = logging.getLogger('analyzer')
@@ -328,10 +329,11 @@ def call_llm_for_rewrite(analysis) -> dict:
     if not api_key:
         raise ValueError('OPENROUTER_API_KEY not configured')
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = get_openai_client()
 
     user_prompt = build_rewrite_prompt(analysis)
     max_tokens = getattr(settings, 'AI_MAX_TOKENS', 4096)
+    user_prompt = check_prompt_length(user_prompt, max_output_tokens=max_tokens)
 
     messages = [
         {'role': 'system', 'content': RESUME_REWRITE_SYSTEM_PROMPT},
@@ -341,13 +343,17 @@ def call_llm_for_rewrite(analysis) -> dict:
     logger.info('Resume rewrite LLM call: analysis_id=%s model=%s', analysis.id, model)
     req_start = time.time()
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.3,
-        timeout=120,
-    )
+    @llm_retry
+    def _call():
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.3,
+            timeout=120,
+        )
+
+    response = _call()
 
     elapsed = time.time() - req_start
     logger.info('Resume rewrite LLM response in %.2fs: analysis_id=%s', elapsed, analysis.id)

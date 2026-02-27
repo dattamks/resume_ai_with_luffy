@@ -5,6 +5,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.18.0] — 2026-02-27
+
+### Scalability & Performance
+
+#### Added
+- **`tenacity` retry decorator for all LLM calls** — Exponential backoff (2s → 30s, 3 attempts) on `RateLimitError` (429), `APITimeoutError`, `APIConnectionError`, and 5xx status errors. Applied to resume analysis, resume generation, job matching, and profile extraction.
+- **PDF page limit** — New `MAX_PDF_PAGES` setting (default 50). Oversized PDFs are rejected with a clear error before any processing begins.
+- **Token estimation before LLM calls** — `estimate_tokens()` and `check_prompt_length()` utilities auto-truncate prompts exceeding the model's safe input limit (~100k tokens), preventing wasted API calls.
+- **Dashboard stats caching** — `GET /api/dashboard/stats/` responses are now cached per-user in Redis with a 5-minute TTL. Subsequent requests within the window skip all 5 aggregate queries.
+- **Pagination on 3 more endpoints:**
+  - `GET /api/generated-resumes/` — Now returns paginated envelope (was flat array).
+  - `GET /api/job-alerts/` — Now returns paginated envelope (was flat array).
+  - `GET /api/job-alerts/<id>/matches/` — Switched from Django `Paginator` to DRF `PageNumberPagination` (consistent `{count, next, previous, results}` envelope).
+- **Celery task retry backoff** — `run_analysis_task` now uses `retry_backoff=True` with `retry_backoff_max=120` for smarter retry spacing.
+- **Migration race prevention** — `entrypoint.sh` now uses `flock -w 120` to serialize concurrent migrations across Railway replicas. Inline migrate removed from `Procfile` web command.
+- **Celery memory leak prevention** — `--max-tasks-per-child=50` (configurable via `CELERY_MAX_TASKS_PER_CHILD` env var) restarts workers after 50 tasks to reclaim leaked memory.
+
+#### Changed
+- **OpenAI client is now LRU-cached** — All modules (`openrouter_provider`, `resume_generator`, `job_matcher`, `job_search_profile`, `embedding_service`) share a cached `OpenAI()` client keyed by `(api_key, base_url)` instead of creating a new instance per call. Enables HTTP connection pooling.
+- **Token blacklisting uses `bulk_create`** — Account deletion (`DELETE /api/auth/profile/`) and password change (`POST /api/auth/change-password/`) now blacklist all outstanding tokens in a single `bulk_create(ignore_conflicts=True)` instead of looping `get_or_create`.
+- **PDF report styles cached at module level** — `_build_styles()` result cached globally instead of recreating ~20 `ParagraphStyle` objects per report.
+- **Job source factory instances cached** — `get_job_sources()` now returns cached provider instances instead of re-instantiating on every call.
+
+#### Breaking Changes (Frontend)
+- **`GET /api/generated-resumes/`** — Response changed from flat array `[...]` to paginated envelope `{count, next, previous, results}`.
+- **`GET /api/job-alerts/`** — Response changed from flat array `[...]` to paginated envelope `{count, next, previous, results}`.
+- **`GET /api/job-alerts/<id>/matches/`** — Response shape changed from `{count, num_pages, page, results}` to standard DRF pagination `{count, next, previous, results}`.
+
+---
+
 ## [0.16.3] — 2026-02-27
 
 ### Added

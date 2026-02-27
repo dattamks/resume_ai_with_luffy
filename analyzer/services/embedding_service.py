@@ -11,7 +11,8 @@ import logging
 import time
 
 from django.conf import settings
-from openai import OpenAI
+
+from .ai_providers.factory import get_openai_client
 
 logger = logging.getLogger('analyzer')
 
@@ -48,7 +49,7 @@ def compute_embedding(text: str) -> list[float]:
     if len(clean_text) > _MAX_TEXT_LENGTH:
         clean_text = clean_text[:_MAX_TEXT_LENGTH]
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = get_openai_client()
     start = time.monotonic()
 
     try:

@@ -60,7 +60,16 @@ def _safe(text):
 
 # ── Styles ───────────────────────────────────────────────────────────────────
 
+# Cache built styles at module level to avoid recreating ~20 ParagraphStyle
+# objects on every PDF generation call.
+_CACHED_STYLES = None
+
+
 def _build_styles():
+    global _CACHED_STYLES
+    if _CACHED_STYLES is not None:
+        return _CACHED_STYLES
+
     ss = getSampleStyleSheet()
 
     ss.add(ParagraphStyle(
@@ -148,6 +157,7 @@ def _build_styles():
         backColor=COLOR_RED_BG,
     ))
 
+    _CACHED_STYLES = ss
     return ss
 
 

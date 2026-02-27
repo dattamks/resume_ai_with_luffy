@@ -2,7 +2,45 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 
+from django.conf import settings
+
 logger = logging.getLogger('analyzer')
+
+# ── Token estimation ─────────────────────────────────────────────────────
+
+# Conservative estimate: ~4 characters per token for English text.
+# tiktoken would be more precise but adds a heavy dependency.
+_CHARS_PER_TOKEN = 4
+# Default max context window (input + output). Most models support 128K+,
+# but we cap prompts well below to leave room for the response.
+_DEFAULT_MAX_INPUT_TOKENS = 100_000
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count from character length (4 chars ≈ 1 token)."""
+    return len(text) // _CHARS_PER_TOKEN
+
+
+def check_prompt_length(prompt_text: str, max_output_tokens: int = 8192) -> str:
+    """
+    Check if prompt is within safe context window limits.
+    Truncates the prompt text if it would exceed the limit.
+
+    Returns the (possibly truncated) prompt text.
+    """
+    max_input = getattr(settings, 'MAX_INPUT_TOKENS', _DEFAULT_MAX_INPUT_TOKENS)
+    safe_input_limit = max_input - max_output_tokens
+
+    est_tokens = estimate_tokens(prompt_text)
+    if est_tokens > safe_input_limit:
+        # Truncate to safe length (chars = tokens * 4)
+        safe_chars = safe_input_limit * _CHARS_PER_TOKEN
+        logger.warning(
+            'Prompt too long (~%d tokens, limit %d). Truncating input.',
+            est_tokens, safe_input_limit,
+        )
+        return prompt_text[:safe_chars]
+    return prompt_text
 
 # ── System prompt (LLM role) ──────────────────────────────────────────────
 
@@ -250,8 +288,10 @@ class AIProvider(ABC):
 
     def _build_prompt(self, resume_text: str, job_description: str) -> str:
         boundary = uuid.uuid4().hex[:16]
-        return ANALYSIS_PROMPT_TEMPLATE.format(
+        prompt = ANALYSIS_PROMPT_TEMPLATE.format(
             resume_text=self._sanitize_user_content(resume_text),
             job_description=self._sanitize_user_content(job_description),
             boundary=boundary,
         )
+        max_tokens = getattr(settings, 'AI_MAX_TOKENS', 8192)
+        return check_prompt_length(prompt, max_output_tokens=max_tokens)

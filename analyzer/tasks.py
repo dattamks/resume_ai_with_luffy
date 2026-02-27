@@ -39,6 +39,8 @@ def _set_analysis_cache(analysis):
     max_retries=2,
     default_retry_delay=30,
     autoretry_for=(ConnectionError, OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=120,
     acks_late=True,
     reject_on_worker_lost=True,
 )

@@ -10,7 +10,10 @@ set -e
 case "${SERVICE_TYPE}" in
   web)
     echo "▶ Starting web service (gunicorn)…"
-    python manage.py migrate --noinput
+    # Use flock to prevent concurrent migration runs across replicas.
+    # Only one replica acquires the lock; others wait (max 120s) then proceed.
+    echo "▶ Running migrations (with lock)…"
+    flock -w 120 /tmp/migrate.lock python manage.py migrate --noinput || true
     python manage.py seed_email_templates
     python manage.py seed_plans
     exec gunicorn resume_ai.wsgi:application \
@@ -24,7 +27,8 @@ case "${SERVICE_TYPE}" in
     echo "▶ Starting Celery worker…"
     exec celery -A resume_ai worker \
       -l "${LOG_LEVEL:-info}" \
-      --concurrency="${CELERY_CONCURRENCY:-2}"
+      --concurrency="${CELERY_CONCURRENCY:-2}" \
+      --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-50}"
     ;;
 
   beat)

@@ -13,8 +13,8 @@ import re
 import time
 
 from django.conf import settings
-from openai import OpenAI
 
+from .ai_providers.factory import get_openai_client, llm_retry
 from .ai_providers.json_repair import repair_json
 
 logger = logging.getLogger('analyzer')
@@ -158,19 +158,23 @@ def _score_batch(batch, titles, skills, seniority, industries, experience_years)
     if not api_key:
         raise ValueError('OPENROUTER_API_KEY is not configured.')
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = get_openai_client()
     start = time.monotonic()
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {'role': 'system', 'content': _SYSTEM_PROMPT},
-            {'role': 'user', 'content': prompt},
-        ],
-        temperature=0.1,
-        max_tokens=1500,
-        timeout=60,
-    )
+    @llm_retry
+    def _call():
+        return client.chat.completions.create(
+            model=model,
+            messages=[
+                {'role': 'system', 'content': _SYSTEM_PROMPT},
+                {'role': 'user', 'content': prompt},
+            ],
+            temperature=0.1,
+            max_tokens=1500,
+            timeout=60,
+        )
+
+    response = _call()
     duration = time.monotonic() - start
     logger.debug('Job matching LLM call: batch_size=%d duration=%.2fs', len(batch), duration)
 

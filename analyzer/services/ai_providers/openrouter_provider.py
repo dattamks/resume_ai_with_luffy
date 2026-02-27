@@ -3,7 +3,6 @@ import logging
 import re
 import time
 
-from openai import OpenAI
 from django.conf import settings
 
 from .base import AIProvider, SYSTEM_PROMPT, validate_ai_response
@@ -22,11 +21,23 @@ class OpenRouterProvider(AIProvider):
     """
 
     def __init__(self, api_key: str, model: str, base_url: str = 'https://openrouter.ai/api/v1'):
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-        )
+        from .factory import _get_openai_client
+        self.client = _get_openai_client(api_key, base_url)
         self.model = model
+
+    def _call_llm(self, messages: list, max_tokens: int, temperature: float = 0.3, timeout: int = 120):
+        """Call the LLM API with automatic retry on transient failures."""
+        from .factory import llm_retry
+        @llm_retry
+        def _do_call():
+            return self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+            )
+        return _do_call()
 
     def analyze(self, resume_text: str, job_description: str) -> dict:
         prompt = self._build_prompt(resume_text, job_description)
@@ -40,13 +51,7 @@ class OpenRouterProvider(AIProvider):
         logger.info('OpenRouter: sending request — model=%s', self.model)
         req_start = time.time()
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.3,
-            timeout=120,  # 2 min hard timeout to prevent hung workers
-        )
+        response = self._call_llm(messages, max_tokens)
 
         elapsed = time.time() - req_start
         logger.info('OpenRouter: response received in %.2fs', elapsed)
