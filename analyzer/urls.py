@@ -7,6 +7,9 @@ from .views import (
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
     GenerateResumeView, GeneratedResumeStatusView,
     GeneratedResumeDownloadView, GeneratedResumeListView,
+    # New endpoints
+    AnalysisCancelView, AnalysisBulkDeleteView, AnalysisExportJSONView,
+    AccountDataExportView,
     # Phase 11 — Smart Job Alerts
     JobAlertListCreateView, JobAlertDetailView,
     JobAlertMatchListView, JobAlertMatchFeedbackView, JobAlertManualRunView,
@@ -21,7 +24,9 @@ urlpatterns = [
     path('analyses/<int:pk>/status/', AnalysisStatusView.as_view(), name='analysis-status'),
     path('analyses/<int:pk>/retry/', RetryAnalysisView.as_view(), name='analysis-retry'),
     path('analyses/<int:pk>/delete/', AnalysisDeleteView.as_view(), name='analysis-delete'),
+    path('analyses/<int:pk>/cancel/', AnalysisCancelView.as_view(), name='analysis-cancel'),
     path('analyses/<int:pk>/export-pdf/', AnalysisPDFExportView.as_view(), name='analysis-export-pdf'),
+    path('analyses/<int:pk>/export-json/', AnalysisExportJSONView.as_view(), name='analysis-export-json'),
     path('analyses/<int:pk>/share/', AnalysisShareView.as_view(), name='analysis-share'),
     path('analyses/<int:pk>/generate-resume/', GenerateResumeView.as_view(), name='generate-resume'),
     path('analyses/<int:pk>/generated-resume/', GeneratedResumeStatusView.as_view(), name='generated-resume-status'),
@@ -30,6 +35,10 @@ urlpatterns = [
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
+    # Bulk operations
+    path('analyses/bulk-delete/', AnalysisBulkDeleteView.as_view(), name='analysis-bulk-delete'),
+    # Account data export (GDPR)
+    path('account/export/', AccountDataExportView.as_view(), name='account-data-export'),
     # Generated resumes
     path('generated-resumes/', GeneratedResumeListView.as_view(), name='generated-resume-list'),
     # Phase 11 — Smart Job Alerts

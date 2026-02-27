@@ -56,6 +56,51 @@ class AnalyzeResumeView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        # ── Plan quota: monthly analysis limit ──
+        profile = getattr(request.user, 'profile', None)
+        plan = getattr(profile, 'plan', None) if profile else None
+        if plan and plan.analyses_per_month > 0:
+            from django.utils import timezone as tz
+            month_start = tz.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            month_count = ResumeAnalysis.objects.filter(
+                user=request.user, created_at__gte=month_start,
+            ).exclude(status=ResumeAnalysis.STATUS_FAILED).count()
+            if month_count >= plan.analyses_per_month:
+                return Response(
+                    {
+                        'detail': f'Monthly analysis limit reached ({plan.analyses_per_month}). Upgrade your plan for more.',
+                        'limit': plan.analyses_per_month,
+                        'used': month_count,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # ── Plan quota: max resumes stored ──
+        if plan and plan.max_resumes_stored > 0:
+            resume_count = Resume.objects.filter(user=request.user).count()
+            if resume_count >= plan.max_resumes_stored:
+                return Response(
+                    {
+                        'detail': f'Resume storage limit reached ({plan.max_resumes_stored}). Delete old resumes or upgrade.',
+                        'limit': plan.max_resumes_stored,
+                        'stored': resume_count,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # ── Plan quota: per-plan resume size limit ──
+        resume_file = request.FILES.get('resume')
+        if resume_file and plan and plan.max_resume_size_mb:
+            max_bytes = plan.max_resume_size_mb * 1024 * 1024
+            if resume_file.size > max_bytes:
+                return Response(
+                    {
+                        'detail': f'Resume file exceeds your plan limit of {plan.max_resume_size_mb} MB.',
+                        'max_size_mb': plan.max_resume_size_mb,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # ── Credit check — deduct upfront, refund on failure ──
         from accounts.services import deduct_credits, InsufficientCreditsError
         try:
@@ -98,15 +143,28 @@ class AnalyzeResumeView(APIView):
             run_analysis_task.delay(analysis.id, request.user.id)
 
             logger.info('Celery task dispatched for analysis id=%s', analysis.id)
-            return Response(
-                {
-                    'id': analysis.id,
-                    'status': analysis.status,
-                    'credits_used': credit_result['cost'],
-                    'balance': credit_result['balance_after'],
-                },
-                status=status.HTTP_202_ACCEPTED,
-            )
+
+            # Build response — include duplicate resume warning if applicable
+            response_data = {
+                'id': analysis.id,
+                'status': analysis.status,
+                'credits_used': credit_result['cost'],
+                'balance': credit_result['balance_after'],
+            }
+
+            # Check if resume was a duplicate (file_hash already existed)
+            resume_obj = analysis.resume
+            if resume_obj:
+                existing_analyses = ResumeAnalysis.objects.filter(
+                    resume=resume_obj, user=request.user,
+                ).exclude(id=analysis.id).count()
+                if existing_analyses > 0:
+                    response_data['duplicate_resume_warning'] = (
+                        f'This resume has been analyzed {existing_analyses} time(s) before. '
+                        'Consider uploading an updated version for new insights.'
+                    )
+
+            return Response(response_data, status=status.HTTP_202_ACCEPTED)
         except Exception:
             # Release lock and refund credits on unexpected errors
             cache.delete(lock_key)
@@ -259,6 +317,15 @@ class AnalysisPDFExportView(APIView):
             analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
         except ResumeAnalysis.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # ── Plan feature flag: pdf_export ──
+        profile = getattr(request.user, 'profile', None)
+        plan = getattr(profile, 'plan', None) if profile else None
+        if plan and not plan.pdf_export:
+            return Response(
+                {'detail': 'PDF export requires a higher plan.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if analysis.status != ResumeAnalysis.STATUS_DONE:
             return Response(
@@ -423,19 +490,50 @@ class DashboardStatsView(APIView):
         ).aggregate(avg=Avg('ats_score'))['avg']
 
         # Score trend — last 10 completed analyses (newest first)
-        score_trend = list(
-            all_qs.filter(
-                status=ResumeAnalysis.STATUS_DONE,
-                ats_score__isnull=False,
-            )
-            .order_by('-created_at')[:10]
-            .values('ats_score', 'jd_role', 'created_at')
+        # Includes per-ATS breakdown (generic, workday, greenhouse)
+        done_qs = all_qs.filter(
+            status=ResumeAnalysis.STATUS_DONE,
+            ats_score__isnull=False,
         )
+        score_trend_raw = list(
+            done_qs.order_by('-created_at')[:10]
+            .values('ats_score', 'scores', 'jd_role', 'created_at')
+        )
+        score_trend = []
+        for entry in score_trend_raw:
+            item = {
+                'ats_score': entry['ats_score'],
+                'jd_role': entry['jd_role'],
+                'created_at': entry['created_at'],
+            }
+            scores = entry.get('scores') or {}
+            item['generic_ats'] = scores.get('generic_ats')
+            item['workday_ats'] = scores.get('workday_ats')
+            item['greenhouse_ats'] = scores.get('greenhouse_ats')
+            score_trend.append(item)
+
+        # Grade distribution (count per overall_grade)
+        grade_distribution = {
+            item['overall_grade']: item['count']
+            for item in done_qs
+            .filter(overall_grade__gt='')
+            .values('overall_grade')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        }
 
         # Top roles analyzed (all time)
         top_roles = list(
             all_qs.filter(jd_role__gt='')
             .values('jd_role')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:5]
+        )
+
+        # Top industries analyzed (all time)
+        top_industries = list(
+            all_qs.filter(jd_industry__gt='')
+            .values('jd_industry')
             .annotate(count=Count('id'))
             .order_by('-count')[:5]
         )
@@ -456,7 +554,9 @@ class DashboardStatsView(APIView):
             'deleted_analyses': deleted,
             'average_ats_score': round(avg_ats, 1) if avg_ats is not None else None,
             'score_trend': score_trend,
+            'grade_distribution': grade_distribution,
             'top_roles': top_roles,
+            'top_industries': top_industries,
             'analyses_per_month': monthly,
         }
 
@@ -479,6 +579,15 @@ class AnalysisShareView(APIView):
             analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
         except ResumeAnalysis.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # ── Plan feature flag: share_analysis ──
+        profile = getattr(request.user, 'profile', None)
+        plan = getattr(profile, 'plan', None) if profile else None
+        if plan and not plan.share_analysis:
+            return Response(
+                {'detail': 'Sharing analyses requires a higher plan.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if analysis.status != ResumeAnalysis.STATUS_DONE:
             return Response(
@@ -1008,4 +1117,245 @@ class NotificationMarkReadView(APIView):
                 {'detail': 'Provide notification_id or set mark_all=true.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+# ── Cancel stuck analysis ────────────────────────────────────────────────────
+
+
+class AnalysisCancelView(APIView):
+    """
+    POST /api/analyses/<id>/cancel/
+    Cancel a stuck/processing analysis by revoking the Celery task.
+    Marks as failed and refunds credits.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def post(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if analysis.status != ResumeAnalysis.STATUS_PROCESSING:
+            return Response(
+                {'detail': 'Only processing analyses can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Revoke the Celery task if we have the ID
+        if analysis.celery_task_id:
+            try:
+                from resume_ai.celery import app as celery_app
+                celery_app.control.revoke(analysis.celery_task_id, terminate=True)
+                logger.info('Revoked Celery task %s for analysis %s', analysis.celery_task_id, pk)
+            except Exception:
+                logger.warning('Failed to revoke Celery task %s', analysis.celery_task_id)
+
+        # Mark as failed
+        analysis.status = ResumeAnalysis.STATUS_FAILED
+        analysis.pipeline_step = ResumeAnalysis.STEP_FAILED
+        analysis.error_message = 'Cancelled by user.'
+        analysis.save(update_fields=['status', 'pipeline_step', 'error_message'])
+
+        # Refund credits
+        if analysis.credits_deducted:
+            from accounts.services import refund_credits
+            refund_credits(
+                request.user, 'resume_analysis',
+                description=f'Refund: analysis #{analysis.id} cancelled by user',
+                reference_id=str(analysis.id),
+            )
+            analysis.credits_deducted = False
+            analysis.save(update_fields=['credits_deducted'])
+
+        cache.delete(f'analysis_status:{request.user.id}:{pk}')
+
+        return Response({
+            'id': analysis.id,
+            'status': analysis.status,
+            'detail': 'Analysis cancelled and credits refunded.',
+        })
+
+
+# ── Bulk delete analyses ─────────────────────────────────────────────────────
+
+
+class AnalysisBulkDeleteView(APIView):
+    """
+    POST /api/analyses/bulk-delete/
+    Soft-delete multiple analyses at once.
+    Body: {"ids": [1, 2, 3]}
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def post(self, request):
+        ids = request.data.get('ids', [])
+        if not isinstance(ids, list) or not ids:
+            return Response(
+                {'detail': 'Provide a non-empty list of analysis IDs in "ids".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(ids) > 50:
+            return Response(
+                {'detail': 'Cannot delete more than 50 analyses at once.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        analyses = ResumeAnalysis.objects.filter(
+            pk__in=ids, user=request.user, deleted_at__isnull=True,
+        )
+        deleted_count = 0
+        for analysis in analyses:
+            analysis.soft_delete()
+            cache.delete(f'analysis_status:{request.user.id}:{analysis.id}')
+            deleted_count += 1
+
+        logger.info('Bulk soft-deleted %d analyses for user=%s', deleted_count, request.user.id)
+        return Response({
+            'deleted': deleted_count,
+            'requested': len(ids),
+        })
+
+
+# ── Export analysis as JSON ──────────────────────────────────────────────────
+
+
+class AnalysisExportJSONView(APIView):
+    """
+    GET /api/analyses/<id>/export-json/
+    Download the full analysis data as a JSON file.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.select_related(
+                'scrape_result', 'llm_response',
+            ).get(pk=pk, user=request.user)
+        except ResumeAnalysis.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if analysis.status != ResumeAnalysis.STATUS_DONE:
+            return Response(
+                {'detail': 'Analysis must be complete to export.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ResumeAnalysisDetailSerializer(analysis, context={'request': request})
+
+        import json
+        from django.http import HttpResponse
+        json_bytes = json.dumps(serializer.data, indent=2, default=str).encode('utf-8')
+
+        role_slug = (analysis.jd_role or 'analysis').replace(' ', '_')[:30]
+        filename = f'analysis_{role_slug}_{analysis.pk}.json'
+
+        response = HttpResponse(json_bytes, content_type='application/json')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+
+# ── Account data export (GDPR) ──────────────────────────────────────────────
+
+
+class AccountDataExportView(APIView):
+    """
+    GET /api/account/export/
+    Download all user data as a JSON file (GDPR compliance).
+    Includes profile, analyses, resumes, wallet, notifications.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def get(self, request):
+        import json
+        from django.http import HttpResponse
+        from accounts.models import WalletTransaction, ConsentLog
+
+        user = request.user
+
+        # Profile data
+        profile = getattr(user, 'profile', None)
+        profile_data = {
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'date_joined': str(user.date_joined),
+            'last_login': str(user.last_login) if user.last_login else None,
+        }
+        if profile:
+            profile_data.update({
+                'country_code': profile.country_code,
+                'mobile_number': profile.mobile_number,
+                'plan': profile.plan.name if profile.plan else 'Free',
+                'auth_provider': profile.auth_provider,
+                'agreed_to_terms': profile.agreed_to_terms,
+                'agreed_to_data_usage': profile.agreed_to_data_usage,
+                'marketing_opt_in': profile.marketing_opt_in,
+            })
+
+        # Analyses (metadata only, no heavy text fields)
+        analyses = list(
+            ResumeAnalysis.all_objects.filter(user=user).values(
+                'id', 'jd_role', 'jd_company', 'jd_industry', 'status',
+                'overall_grade', 'ats_score', 'created_at', 'deleted_at',
+            )
+        )
+
+        # Resumes
+        resumes = list(
+            Resume.objects.filter(user=user).values(
+                'id', 'original_filename', 'file_size_bytes', 'uploaded_at',
+            )
+        )
+
+        # Wallet transactions
+        try:
+            wallet = user.wallet
+            transactions = list(
+                WalletTransaction.objects.filter(wallet=wallet).values(
+                    'amount', 'balance_after', 'transaction_type',
+                    'description', 'created_at',
+                )
+            )
+            wallet_data = {
+                'balance': wallet.balance,
+                'transactions': transactions,
+            }
+        except Exception:
+            wallet_data = {'balance': 0, 'transactions': []}
+
+        # Consent logs
+        consents = list(
+            ConsentLog.objects.filter(user=user).values(
+                'consent_type', 'agreed', 'version', 'created_at',
+            )
+        )
+
+        # Notifications
+        notifications = list(
+            Notification.objects.filter(user=user).values(
+                'title', 'body', 'notification_type', 'is_read', 'created_at',
+            )
+        )
+
+        export_data = {
+            'export_date': str(timezone.now()),
+            'profile': profile_data,
+            'analyses': analyses,
+            'resumes': resumes,
+            'wallet': wallet_data,
+            'consent_logs': consents,
+            'notifications': notifications,
+        }
+
+        json_bytes = json.dumps(export_data, indent=2, default=str).encode('utf-8')
+        response = HttpResponse(json_bytes, content_type='application/json')
+        response['Content-Disposition'] = f'attachment; filename="i-luffy-data-export-{user.username}.json"'
+        return response
 

@@ -311,6 +311,70 @@ class GoogleLoginViewTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('access', resp.data)
 
+    @override_settings(GOOGLE_OAUTH2_CLIENT_ID='test-client-id')
+    @patch('google.oauth2.id_token.verify_oauth2_token')
+    def test_existing_user_syncs_blank_fields(self, mock_verify):
+        """Returning Google user: blank name/avatar get filled from Google."""
+        user = User.objects.create_user(
+            username='syncuser', email='sync@gmail.com', password='Pass123!',
+            first_name='', last_name='',
+        )
+        # Profile has no avatar and default auth_provider='email'
+        mock_verify.return_value = {
+            'email': 'sync@gmail.com',
+            'email_verified': True,
+            'sub': 'google-sub-sync',
+            'name': 'Sync User',
+            'given_name': 'Sync',
+            'family_name': 'User',
+            'picture': 'https://example.com/avatar.jpg',
+        }
+        resp = self.client.post(self.url, {'token': 'valid'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        user.refresh_from_db()
+        user.profile.refresh_from_db()
+        self.assertEqual(user.first_name, 'Sync')
+        self.assertEqual(user.last_name, 'User')
+        self.assertEqual(user.profile.avatar_url, 'https://example.com/avatar.jpg')
+        self.assertEqual(user.profile.google_sub, 'google-sub-sync')
+        self.assertEqual(user.profile.auth_provider, 'google')
+
+    @override_settings(GOOGLE_OAUTH2_CLIENT_ID='test-client-id')
+    @patch('google.oauth2.id_token.verify_oauth2_token')
+    def test_existing_user_does_not_overwrite_manual_edits(self, mock_verify):
+        """Returning Google user: manually set name/avatar NOT overwritten."""
+        user = User.objects.create_user(
+            username='manualuser', email='manual@gmail.com', password='Pass123!',
+            first_name='Custom', last_name='Name',
+        )
+        profile = user.profile
+        profile.avatar_url = 'https://my-custom-avatar.com/pic.png'
+        profile.auth_provider = 'google'
+        profile.google_sub = 'original-sub'
+        profile.save(update_fields=['avatar_url', 'auth_provider', 'google_sub'])
+
+        mock_verify.return_value = {
+            'email': 'manual@gmail.com',
+            'email_verified': True,
+            'sub': 'google-sub-updated',
+            'name': 'Google Name',
+            'given_name': 'Google',
+            'family_name': 'Name',
+            'picture': 'https://google.com/new-avatar.jpg',
+        }
+        resp = self.client.post(self.url, {'token': 'valid'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        user.refresh_from_db()
+        user.profile.refresh_from_db()
+        # Name and avatar should NOT be overwritten
+        self.assertEqual(user.first_name, 'Custom')
+        self.assertEqual(user.last_name, 'Name')
+        self.assertEqual(user.profile.avatar_url, 'https://my-custom-avatar.com/pic.png')
+        # google_sub should always update
+        self.assertEqual(user.profile.google_sub, 'google-sub-updated')
+
 
 class GoogleCompleteViewTests(TestCase):
     """Tests for POST /api/auth/google/complete/"""

@@ -3,6 +3,7 @@ from pathlib import Path
 from decouple import config
 from datetime import timedelta
 from django.core.exceptions import ImproperlyConfigured
+from celery.schedules import crontab
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -212,6 +213,10 @@ CELERY_BEAT_SCHEDULE = {
     'flush-expired-tokens': {
         'task': 'analyzer.tasks.flush_expired_tokens',
         'schedule': 86400.0,  # once per day
+    },
+    'weekly-digest': {
+        'task': 'analyzer.tasks.send_weekly_digest_task',
+        'schedule': crontab(hour=9, minute=0, day_of_week='monday'),  # Monday 9 AM UTC
     },
 }
 

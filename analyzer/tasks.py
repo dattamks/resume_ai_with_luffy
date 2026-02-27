@@ -13,6 +13,7 @@ from celery import shared_task
 from django.conf import settings
 from django.core.cache import cache
 from django.core.files.base import ContentFile
+from django.db.models import Avg
 from django.utils import timezone
 
 logger = logging.getLogger('analyzer')
@@ -84,6 +85,9 @@ def run_analysis_task(self, analysis_id, user_id):
         # Auto-generate PDF report after successful analysis
         generate_pdf_report_task.delay(analysis_id)
 
+        # Send analysis completion email (respects notification preferences)
+        _send_analysis_complete_email(result)
+
     except ValueError as exc:
         logger.warning('Analysis failed (user=%s): %s', user_id, exc)
         try:
@@ -149,6 +153,42 @@ def _refund_analysis_credits(analysis):
         logger.info('Credits refunded for failed analysis id=%s', analysis.id)
     except Exception:
         logger.exception('Failed to refund credits for analysis id=%s', analysis.id)
+
+
+def _send_analysis_complete_email(analysis):
+    """
+    Send an analysis-complete email notification.
+    Respects user notification preferences (feature_updates_email).
+    Falls back silently if the email template doesn't exist yet.
+    """
+    try:
+        from django.contrib.auth.models import User
+        user = User.objects.select_related('notification_preferences').get(id=analysis.user_id)
+
+        # Respect notification preferences
+        notif_prefs = getattr(user, 'notification_preferences', None)
+        if notif_prefs and not notif_prefs.feature_updates_email:
+            logger.debug('Analysis complete email skipped: user=%s has feature_updates_email=False', user.id)
+            return
+
+        from accounts.email_utils import send_templated_email
+        send_templated_email(
+            slug='analysis-complete',
+            recipient=user.email,
+            context={
+                'username': user.first_name or user.username,
+                'analysis_id': analysis.id,
+                'jd_role': analysis.jd_role or 'your resume',
+                'jd_company': analysis.jd_company or '',
+                'overall_grade': analysis.overall_grade or '—',
+                'ats_score': analysis.ats_score or '—',
+                'analysis_url': f'/analyses/{analysis.id}/',
+            },
+            fail_silently=True,
+        )
+        logger.info('Analysis complete email sent: user=%s analysis=%s', user.id, analysis.id)
+    except Exception:
+        logger.debug('Analysis complete email not sent (template may not exist): analysis=%s', analysis.id)
 
 
 @shared_task(
@@ -1166,3 +1206,69 @@ def match_all_alerts_task():
         'match_all_alerts_task: completed in %.2fs, total_matched=%d across %d alerts',
         duration, total_matched, active_alerts.count(),
     )
+
+
+# ── Weekly Email Digest ──────────────────────────────────────────────────────
+
+
+@shared_task(ignore_result=True)
+def send_weekly_digest_task():
+    """
+    Periodic task (Celery Beat, weekly): send a summary email to all users with
+    activity in the past week. Includes ATS score trends, analysis count, and tips.
+    Respects user notification preferences (newsletters_email).
+    """
+    from django.contrib.auth.models import User
+    from .models import ResumeAnalysis
+
+    one_week_ago = timezone.now() - timezone.timedelta(days=7)
+
+    # Find users with at least one completed analysis in the past week
+    active_user_ids = (
+        ResumeAnalysis.objects
+        .filter(
+            status=ResumeAnalysis.STATUS_DONE,
+            created_at__gte=one_week_ago,
+        )
+        .values_list('user_id', flat=True)
+        .distinct()
+    )
+
+    sent_count = 0
+    for user_id in active_user_ids:
+        try:
+            user = User.objects.select_related('notification_preferences').get(id=user_id)
+
+            # Respect notification preferences
+            notif_prefs = getattr(user, 'notification_preferences', None)
+            if notif_prefs and not notif_prefs.newsletters_email:
+                continue
+
+            # Gather stats
+            week_analyses = ResumeAnalysis.objects.filter(
+                user=user, created_at__gte=one_week_ago,
+                status=ResumeAnalysis.STATUS_DONE,
+            )
+            count = week_analyses.count()
+            avg_ats = week_analyses.aggregate(avg=Avg('ats_score'))['avg']
+            best = week_analyses.order_by('-ats_score').values('jd_role', 'ats_score').first()
+
+            from accounts.email_utils import send_templated_email
+            send_templated_email(
+                slug='weekly-digest',
+                recipient=user.email,
+                context={
+                    'username': user.first_name or user.username,
+                    'analyses_count': count,
+                    'average_ats': round(avg_ats, 1) if avg_ats is not None else '—',
+                    'best_role': best['jd_role'] if best else '—',
+                    'best_score': best['ats_score'] if best else '—',
+                    'dashboard_url': '/dashboard/',
+                },
+                fail_silently=True,
+            )
+            sent_count += 1
+        except Exception:
+            logger.debug('Weekly digest skipped for user_id=%s', user_id)
+
+    logger.info('Weekly digest sent to %d users', sent_count)

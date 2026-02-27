@@ -698,7 +698,9 @@ Step 2:  Frontend shows consent form + username/password fields
 
 ### POST `/api/auth/google/` — Google Login (Step 1)
 
-Verifies a Google ID token. For existing users, returns JWT tokens immediately. For new users, returns a temporary token to complete registration.
+Verifies a Google ID token. For existing users, returns JWT tokens immediately (with smart profile sync). For new users, returns a temporary token to complete registration.
+
+> **Profile sync on returning login:** When an existing user logs in via Google, the backend fills in any **blank** profile fields (`first_name`, `last_name`, `avatar_url`) from the Google account. Fields the user has manually set are **never overwritten**. `google_sub` is always updated, and `auth_provider` is upgraded from `"email"` to `"google"` if applicable.
 
 **Request:**
 ```json
@@ -857,6 +859,38 @@ async function completeGoogleRegistration(formData: GoogleCompleteRequest) {
 
 ---
 
+### POST `/api/auth/logout-all/` — Logout All Devices
+
+🔒 Requires auth. **Throttled:** `auth` scope (20/hour).
+
+Invalidates **all** active JWT sessions for the authenticated user by blacklisting all outstanding tokens.
+
+**Request body:** None.
+
+**Response (200):**
+```json
+{
+  "detail": "All sessions invalidated.",
+  "invalidated": 3
+}
+```
+
+| Field          | Type   | Description                         |
+|----------------|--------|-------------------------------------|
+| `detail`       | string | Human-readable status message       |
+| `invalidated`  | int    | Number of tokens that were blacklisted |
+
+**Frontend tip:** After calling this endpoint, clear all stored tokens and redirect to the login page.
+
+```js
+await api.post('/auth/logout-all/');
+localStorage.removeItem('access_token');
+localStorage.removeItem('refresh_token');
+navigateToLogin();
+```
+
+---
+
 ## 4. Analysis Endpoints
 
 All prefixed with `/api/`.
@@ -913,10 +947,19 @@ After receiving the `id`, begin [polling for status](#13-polling-for-analysis-st
 | 400  | Validation error | `{ "resume_file": ["Only PDF files are accepted."] }` |
 | 400  | Bad PDF content | `{ "resume_file": ["File content does not appear to be a valid PDF."] }` |
 | 400  | File too large | `{ "resume_file": ["Resume file must be under 5MB."] }` |
+| 400  | Plan file size limit | `{ "detail": "Your plan limits resume files to X MB." }` |
 | 400  | Invalid resume_id | `{ "resume_id": ["Resume not found or does not belong to you."] }` |
 | 400  | Missing JD fields | `{ "jd_text": ["Job description text is required when input type is \"text\"."] }` |
+| 403  | Monthly quota reached | `{ "detail": "Monthly analysis limit reached (X/X). Upgrade your plan.", "limit": X, "used": X }` |
+| 403  | Max resumes stored | `{ "detail": "Resume storage limit reached (X). Delete old resumes or upgrade.", "limit": X, "stored": X }` |
 | 409  | Duplicate submit | `{ "detail": "An analysis is already being submitted. Please wait." }` |
 | 429  | Rate limited | `{ "detail": "Request was throttled. Expected available in 120 seconds." }` |
+
+> **New:** The response on `202 Accepted` may include a `duplicate_resume_warning` field if the same resume was previously analyzed:
+>
+> ```json
+> { "id": 42, "status": "processing", "duplicate_resume_warning": "This resume has been analyzed before." }
+> ```
 
 **Example — New file upload (multipart/form-data):**
 ```js
@@ -1132,6 +1175,149 @@ a.click();
 URL.revokeObjectURL(url);
 ```
 
+> **Plan feature flag:** If the user's plan has `pdf_export: false`, this endpoint returns `403 Forbidden` with `{ "detail": "PDF export requires a higher plan." }`.
+
+---
+
+### POST `/api/analyses/<id>/cancel/` — Cancel Stuck Analysis
+
+🔒 Requires auth. **Throttled:** `write` scope (30/hour).
+
+Cancel a processing analysis. Revokes the Celery task, marks as failed, and refunds any deducted credits.
+
+**Request body:** None.
+
+**Response (200):**
+```json
+{
+  "id": 42,
+  "status": "failed",
+  "detail": "Analysis cancelled and credits refunded."
+}
+```
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Not processing | `{ "detail": "Only processing analyses can be cancelled." }` |
+| 404  | Not found | `{ "detail": "Not found." }` |
+
+**Frontend tip:** Show a "Cancel" button on analyses that have been processing for more than 2-3 minutes.
+
+```js
+await api.post(`/analyses/${id}/cancel/`);
+// Refresh analysis list or update local state
+```
+
+---
+
+### POST `/api/analyses/bulk-delete/` — Bulk Soft-Delete Analyses
+
+🔒 Requires auth. **Throttled:** `write` scope (30/hour).
+
+Soft-delete multiple analyses at once. Maximum 50 per request.
+
+**Request body:**
+```json
+{ "ids": [1, 2, 3] }
+```
+
+**Response (200):**
+```json
+{
+  "deleted": 3,
+  "requested": 3
+}
+```
+
+| Field       | Type | Description                                      |
+|-------------|------|--------------------------------------------------|
+| `deleted`   | int  | Number actually soft-deleted (owned by user)      |
+| `requested` | int  | Number of IDs submitted                           |
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Empty/missing ids | `{ "detail": "Provide a non-empty list of analysis IDs in \"ids\"." }` |
+| 400  | Over 50 ids | `{ "detail": "Cannot delete more than 50 analyses at once." }` |
+
+```js
+const { data } = await api.post('/analyses/bulk-delete/', {
+  ids: selectedAnalysisIds,
+});
+// data.deleted = number actually removed
+```
+
+---
+
+### GET `/api/analyses/<id>/export-json/` — Download Analysis as JSON
+
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour).
+
+Download the full analysis data as a JSON file attachment.
+
+**Response (200):**
+- `Content-Type: application/json`
+- `Content-Disposition: attachment; filename="analysis_<role>_<id>.json"`
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Not complete | `{ "detail": "Analysis must be complete to export." }` |
+| 404  | Not found | `{ "detail": "Not found." }` |
+
+```js
+const response = await api.get(`/analyses/${id}/export-json/`, {
+  responseType: 'blob',
+});
+const url = URL.createObjectURL(response.data);
+const a = document.createElement('a');
+a.href = url;
+a.download = `analysis_${id}.json`;
+a.click();
+URL.revokeObjectURL(url);
+```
+
+---
+
+### GET `/api/account/export/` — GDPR Data Export
+
+🔒 Requires auth. **Throttled:** `write` scope (30/hour).
+
+Download all user data as a JSON file (GDPR compliance). Includes profile, analyses, resumes, wallet, consent logs, notifications.
+
+**Response (200):**
+- `Content-Type: application/json`
+- `Content-Disposition: attachment; filename="i-luffy-data-export-<username>.json"`
+
+**Response structure:**
+```json
+{
+  "export_date": "2026-02-27T15:00:00.000Z",
+  "profile": { "username": "...", "email": "...", "plan": "Free", ... },
+  "analyses": [{ "id": 1, "jd_role": "...", "ats_score": 78, ... }],
+  "resumes": [{ "id": "uuid", "original_filename": "resume.pdf", ... }],
+  "wallet": { "balance": 5, "transactions": [...] },
+  "consent_logs": [{ "consent_type": "terms_privacy", "agreed": true, ... }],
+  "notifications": [{ "title": "...", "body": "...", "is_read": false, ... }]
+}
+```
+
+**Frontend tip:** Add a "Download My Data" button in account settings.
+
+```js
+const response = await api.get('/account/export/', { responseType: 'blob' });
+const url = URL.createObjectURL(response.data);
+const a = document.createElement('a');
+a.href = url;
+a.download = 'my-data-export.json';
+a.click();
+URL.revokeObjectURL(url);
+```
+
 ---
 
 ## 5. Resume Endpoints
@@ -1245,21 +1431,39 @@ try {
   "score_trend": [
     {
       "ats_score": 85,
+      "generic_ats": 85,
+      "workday_ats": 78,
+      "greenhouse_ats": 80,
       "jd_role": "Senior Developer",
       "created_at": "2026-02-23T14:00:00Z"
     },
     {
       "ats_score": 72,
+      "generic_ats": 72,
+      "workday_ats": 65,
+      "greenhouse_ats": 68,
       "jd_role": "Backend Engineer",
       "created_at": "2026-02-22T10:00:00Z"
     }
   ],
+  "grade_distribution": {
+    "A": 5,
+    "B": 18,
+    "C": 12,
+    "D": 5,
+    "F": 2
+  },
   "top_roles": [
     { "jd_role": "Backend Engineer", "count": 12 },
     { "jd_role": "Full Stack Developer", "count": 8 },
     { "jd_role": "DevOps Engineer", "count": 5 },
     { "jd_role": "ML Engineer", "count": 3 },
     { "jd_role": "Frontend Developer", "count": 2 }
+  ],
+  "top_industries": [
+    { "jd_industry": "Technology", "count": 20 },
+    { "jd_industry": "Finance", "count": 10 },
+    { "jd_industry": "Healthcare", "count": 5 }
   ],
   "analyses_per_month": [
     { "month": "2025-09-01T00:00:00Z", "count": 3 },
@@ -1281,23 +1485,28 @@ try {
 | `deleted_analyses`   | int            | Soft-deleted analyses                                       |
 | `average_ats_score`  | float \| null  | Average ATS score across all **completed** analyses; `null` if no completed analyses |
 | `score_trend`        | array          | Last **10** completed analyses with score, role, and date (newest first) |
+| `grade_distribution` | object         | Count of completed analyses per overall grade (e.g., `{"A": 5, "B": 18}`) |
 | `top_roles`          | array          | Top **5** most-analyzed job roles with count                 |
+| `top_industries`     | array          | Top **5** most-analyzed industries with count                |
 | `analyses_per_month` | array          | Monthly analysis count for the last **6 months** (oldest first) |
 
 **`score_trend` item:**
 
-| Field        | Type     | Description                      |
-|--------------|----------|----------------------------------|
-| `ats_score`  | int      | ATS score (0-100)                |
-| `jd_role`    | string   | Job role analyzed                |
-| `created_at` | datetime | When analysis was submitted      |
+| Field            | Type         | Description                                   |
+|------------------|--------------|-----------------------------------------------|
+| `ats_score`      | int          | Overall ATS score (0-100)                     |
+| `generic_ats`    | int \| null  | Generic ATS score from `scores` JSON          |
+| `workday_ats`    | int \| null  | Workday ATS score from `scores` JSON          |
+| `greenhouse_ats` | int \| null  | Greenhouse ATS score from `scores` JSON       |
+| `jd_role`        | string       | Job role analyzed                             |
+| `created_at`     | datetime     | When analysis was submitted                   |
 
-**`top_roles` item:**
+**`top_roles` / `top_industries` item:**
 
-| Field    | Type   | Description          |
-|----------|--------|----------------------|
-| `jd_role`| string | Job role name        |
-| `count`  | int    | Number of analyses   |
+| Field        | Type   | Description                |
+|--------------|--------|----------------------------|
+| `jd_role` / `jd_industry` | string | Role or industry name |
+| `count`      | int    | Number of analyses         |
 
 **`analyses_per_month` item:**
 
@@ -1343,6 +1552,7 @@ Allow users to generate a public, read-only link for a completed analysis. Anyon
 | Code | Condition | Response |
 |------|-----------|----------|
 | 400  | Analysis not complete | `{ "detail": "Only completed analyses can be shared." }` |
+| 403  | Plan restriction | `{ "detail": "Sharing analyses requires a higher plan." }` |
 | 404  | Not found / not owner | `{ "detail": "Not found." }` |
 
 **Frontend usage:**
@@ -1433,6 +1643,7 @@ showToast('Share link copied!');
   ],
   "summary": "Strong backend profile with room for DevOps and keyword improvement.",
   "ai_provider_used": "OpenRouterProvider",
+  "ai_response_time_seconds": 12.45,
   "created_at": "2026-02-23T14:30:00Z"
 }
 ```
@@ -1456,6 +1667,7 @@ showToast('Share link copied!');
 | `quick_wins`           | array           | `[{ priority (1-3), action }]` — 1–3 items |
 | `summary`              | string          | 2-3 sentence overall summary                             |
 | `ai_provider_used`     | string          | AI model identifier                                      |
+| `ai_response_time_seconds` | float \| null | Time taken by the LLM to generate the analysis (seconds) |
 | `created_at`           | datetime        | When analysis was submitted                              |
 
 **Error (404):**

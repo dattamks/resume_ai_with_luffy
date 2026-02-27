@@ -35,9 +35,11 @@ class PDFExtractor:
         elif hasattr(file_field, 'open'):
             # Django FieldFile — works with local and R2/S3 storage
             logger.debug('PDFExtractor: reading from storage backend')
-            file_field.open('rb')
-            pdf_source = io.BytesIO(file_field.read())
-            file_field.close()
+            try:
+                file_field.open('rb')
+                pdf_source = io.BytesIO(file_field.read())
+            finally:
+                file_field.close()
         else:
             # Generic file-like object
             pdf_source = file_field

@@ -164,6 +164,7 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
     report_pdf_url = serializers.SerializerMethodField()
     resume_file_url = serializers.SerializerMethodField()
     share_url = serializers.SerializerMethodField()
+    ai_response_time_seconds = serializers.SerializerMethodField()
 
     class Meta:
         model = ResumeAnalysis
@@ -197,6 +198,7 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'quick_wins',
             'summary',
             'ai_provider_used',
+            'ai_response_time_seconds',
             'report_pdf_url',
             'share_token',
             'share_url',
@@ -204,6 +206,12 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_ai_response_time_seconds(self, obj):
+        llm = getattr(obj, 'llm_response', None)
+        if llm and llm.duration_seconds is not None:
+            return round(llm.duration_seconds, 2)
+        return None
 
     def get_report_pdf_url(self, obj):
         if obj.report_pdf:

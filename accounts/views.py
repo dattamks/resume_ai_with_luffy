@@ -141,6 +141,43 @@ class LogoutView(APIView):
             return Response({'detail': 'Invalid token.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class LogoutAllDevicesView(APIView):
+    """
+    POST /api/auth/logout-all/
+    Invalidate all active JWT sessions for the authenticated user.
+    Blacklists all outstanding tokens at once.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [AuthEndpointThrottle]
+
+    def post(self, request):
+        from rest_framework_simplejwt.token_blacklist.models import (
+            OutstandingToken, BlacklistedToken,
+        )
+
+        outstanding = OutstandingToken.objects.filter(user=request.user)
+        count = outstanding.count()
+
+        if count == 0:
+            return Response({'detail': 'No active sessions found.', 'invalidated': 0})
+
+        # Bulk blacklist all tokens
+        blacklist_entries = [
+            BlacklistedToken(token=token)
+            for token in outstanding
+            if not hasattr(token, 'blacklistedtoken')
+        ]
+        if blacklist_entries:
+            BlacklistedToken.objects.bulk_create(blacklist_entries, ignore_conflicts=True)
+
+        logger.info('Logout all devices: user=%s invalidated=%d tokens', request.user.username, count)
+
+        return Response({
+            'detail': 'All sessions invalidated.',
+            'invalidated': count,
+        })
+
+
 class MeView(APIView):
     """
     GET    /api/auth/me/  — Return current user profile.
@@ -182,7 +219,7 @@ class MeView(APIView):
             from .razorpay_service import cancel_subscription
             cancel_subscription(user)
             logger.info('Razorpay subscription cancelled during account deletion: user=%s', user.username)
-        except (ValueError, Exception) as e:
+        except Exception as e:
             # User may not have a subscription, or Razorpay API may fail — log but don't block deletion
             logger.info('No active subscription to cancel (or API error) during account deletion: user=%s err=%s',
                         user.username, str(e))
@@ -571,9 +608,44 @@ class GoogleLoginView(APIView):
         # Check if user exists
         try:
             user = User.objects.get(email__iexact=email)
+
+            # ── Smart profile sync (only fill blanks, never overwrite manual edits) ──
+            profile = user.profile
+            profile_updates = []
+
+            # Always keep google_sub current (identifier, not user-editable)
+            if profile.google_sub != google_sub and google_sub:
+                profile.google_sub = google_sub
+                profile_updates.append('google_sub')
+
+            # Upgrade auth_provider if user originally registered via email
+            if profile.auth_provider == 'email':
+                profile.auth_provider = 'google'
+                profile_updates.append('auth_provider')
+
+            # Only fill avatar if user hasn't set one manually
+            if not profile.avatar_url and picture:
+                profile.avatar_url = picture
+                profile_updates.append('avatar_url')
+
+            if profile_updates:
+                profile.save(update_fields=profile_updates)
+
+            # Only fill name fields if currently blank
+            user_updates = []
+            if not user.first_name and given_name:
+                user.first_name = given_name
+                user_updates.append('first_name')
+            if not user.last_name and family_name:
+                user.last_name = family_name
+                user_updates.append('last_name')
+            if user_updates:
+                user.save(update_fields=user_updates)
+
             # Existing user — issue JWT tokens
             refresh = RefreshToken.for_user(user)
-            logger.info('Google login: existing user=%s', user.username)
+            logger.info('Google login: existing user=%s synced_fields=%s',
+                        user.username, profile_updates + user_updates or 'none')
             return Response({
                 'user': UserSerializer(user).data,
                 'refresh': str(refresh),

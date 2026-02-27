@@ -114,7 +114,7 @@ def match_jobs(job_alert, discovered_jobs) -> list:
                 experience_years=experience_years,
             )
             results.extend(batch_results)
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             logger.warning(
                 'Job matcher batch failed (alert=%s, batch_size=%d): %s',
                 job_alert.id, len(batch), exc,

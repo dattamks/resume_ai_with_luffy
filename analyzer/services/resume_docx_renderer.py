@@ -43,7 +43,9 @@ def _setup_styles(doc):
     pf.line_spacing = Pt(13)
 
     # Section heading style
-    if 'SectionHeading' not in [s.name for s in doc.styles]:
+    try:
+        doc.styles['SectionHeading']
+    except KeyError:
         heading_style = doc.styles.add_style('SectionHeading', WD_STYLE_TYPE.PARAGRAPH)
         heading_style.font.name = 'Calibri'
         heading_style.font.size = Pt(12)

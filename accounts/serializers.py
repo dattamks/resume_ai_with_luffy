@@ -69,6 +69,10 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(
+        required=True,
+        help_text='Required. Used for password reset and notifications.',
+    )
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True)
 
@@ -92,6 +96,14 @@ class RegisterSerializer(serializers.ModelSerializer):
             'username', 'email', 'password', 'password2',
             'agree_to_terms', 'agree_to_data_usage', 'marketing_opt_in',
         )
+
+    def validate_email(self, value):
+        value = value.lower().strip()
+        if not value:
+            raise serializers.ValidationError('Email is required.')
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return value
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
@@ -192,13 +204,18 @@ class UpdateUserSerializer(serializers.ModelSerializer):
         return value
 
     def validate_country_code(self, value):
-        if value and not value.startswith('+'):
-            raise serializers.ValidationError('Country code must start with + (e.g., +91).')
+        import re
+        if value and not re.match(r'^\+\d{1,4}$', value):
+            raise serializers.ValidationError(
+                'Country code must be + followed by 1–4 digits (e.g., +91, +1, +44).'
+            )
         return value
 
     def validate_mobile_number(self, value):
         if value and not value.isdigit():
             raise serializers.ValidationError('Mobile number must contain only digits.')
+        if value and len(value) < 7:
+            raise serializers.ValidationError('Mobile number must be at least 7 digits.')
         return value
 
     def update(self, instance, validated_data):
@@ -348,7 +365,6 @@ class PaymentHistorySerializer(serializers.Serializer):
     amount_display = serializers.CharField()
     currency = serializers.CharField()
     status = serializers.CharField()
-    notes = serializers.JSONField()
     created_at = serializers.CharField()
 
 

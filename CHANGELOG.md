@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.19.0] — 2026-02-27
+
+### Backend Backlog Sweep
+
+#### Added — New Endpoints
+- **`POST /api/auth/logout-all/`** — Invalidate all JWT sessions at once (bulk blacklist outstanding tokens).
+- **`POST /api/analyses/<id>/cancel/`** — Cancel a stuck/processing analysis. Revokes Celery task, marks as failed, refunds credits.
+- **`POST /api/analyses/bulk-delete/`** — Soft-delete up to 50 analyses in a single request.
+- **`GET /api/analyses/<id>/export-json/`** — Download complete analysis data as a JSON file attachment.
+- **`GET /api/account/export/`** — GDPR-compliant data export: profile, analyses, resumes, wallet, consent logs, notifications.
+
+#### Added — Plan Quota Enforcement
+- **Monthly analysis quota** — `AnalyzeResumeView` now checks `plan.analyses_per_month` and returns 403 with `limit`/`used` when exceeded.
+- **Max resumes stored** — Blocks new uploads when `plan.max_resumes_stored` is reached (403).
+- **Per-plan resume size limit** — Validates file size against `plan.max_resume_size_mb` (400).
+- **PDF export feature flag** — `plan.pdf_export = false` blocks PDF downloads (403). Free-tier (no plan) is allowed.
+- **Share analysis feature flag** — `plan.share_analysis = false` blocks share link generation (403). Free-tier allowed.
+
+#### Added — Dashboard Enhancements
+- **`grade_distribution`** — Count of analyses per overall grade (A/B/C/D/F) in dashboard stats.
+- **`top_industries`** — Top 5 industries analyzed, with count.
+- **Per-ATS score trends** — `score_trend` now includes `generic_ats`, `workday_ats`, `greenhouse_ats` from the `scores` JSONField.
+- **`ai_response_time_seconds`** — New field on `ResumeAnalysisDetailSerializer` showing LLM response duration.
+
+#### Added — Notifications
+- **Analysis complete email** — Sends `analysis-complete` template when processing finishes (respects `feature_updates_email` pref).
+- **Weekly digest task** — Celery beat task every Monday 9 AM UTC. Summarises past week activity (respects `newsletters_email` pref).
+- **`analysis-complete` and `weekly-digest` email templates** — Added to `seed_email_templates` management command.
+
+#### Added — Other
+- **Duplicate resume warning** — `AnalyzeResumeView` response includes `duplicate_resume_warning` if the same resume was previously analyzed.
+- **`raw_id_fields`** on 5 admin models for FK performance.
+- **`list_per_page = 50`** on `DiscoveredJobAdmin`.
+
+#### Added — Test Coverage
+- **54 new tests** across `accounts/test_new_endpoints.py` and `analyzer/tests/test_new_endpoints.py`.
+  - Forgot/reset password flow, notification preferences, wallet, plans, logout-all.
+  - Cancel, bulk-delete, export-json, GDPR export, dashboard stats (with enhanced fields).
+  - Plan quota enforcement (monthly quota, file size, feature flags).
+
+#### Changed
+- **`runtime.txt`** updated from `python-3.12.1` to `python-3.12`.
+- **FRONTEND_API_GUIDE.md** updated with all new endpoints, error codes, and field changes.
+
+---
+
 ## [0.18.0] — 2026-02-27
 
 ### Scalability & Performance

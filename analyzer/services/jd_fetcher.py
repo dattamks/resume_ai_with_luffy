@@ -88,10 +88,11 @@ class JDFetcher:
             logger.error('Firecrawl scrape failed for %s: %s', url, exc)
             if scrape:
                 scrape.status = ScrapeResult.STATUS_FAILED
-                scrape.error_message = str(exc)
+                scrape.error_message = str(exc)[:500]
                 scrape.save(update_fields=['status', 'error_message'])
             raise ValueError(
-                f'Failed to fetch job description URL: {exc}'
+                'Failed to fetch job description from the provided URL. '
+                'Please check the URL and try again.'
             ) from exc
 
         # ── Extract content from Document object ──

@@ -8,6 +8,7 @@ class ResumeAdmin(admin.ModelAdmin):
     list_filter = ('uploaded_at',)
     search_fields = ('user__username', 'original_filename', 'file_hash')
     readonly_fields = ('id', 'file_hash', 'uploaded_at')
+    raw_id_fields = ('user',)
 
 
 @admin.register(ResumeAnalysis)
@@ -16,6 +17,7 @@ class ResumeAnalysisAdmin(admin.ModelAdmin):
     list_filter = ('status', 'jd_input_type', 'ai_provider_used', 'deleted_at')
     search_fields = ('user__username', 'jd_role', 'jd_company')
     readonly_fields = ('resume_text', 'resolved_jd', 'created_at', 'updated_at', 'deleted_at')
+    raw_id_fields = ('user', 'resume')
 
     def get_queryset(self, request):
         """Show all analyses including soft-deleted in admin."""
@@ -46,6 +48,7 @@ class GeneratedResumeAdmin(admin.ModelAdmin):
     list_filter = ('status', 'template', 'format')
     search_fields = ('user__username',)
     readonly_fields = ('id', 'resume_content', 'created_at')
+    raw_id_fields = ('user', 'analysis')
 
 
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
@@ -67,6 +70,7 @@ class JobAlertAdmin(admin.ModelAdmin):
     list_filter = ('frequency', 'is_active')
     search_fields = ('user__username',)
     readonly_fields = ('id', 'created_at', 'updated_at')
+    raw_id_fields = ('user', 'resume')
 
 
 @admin.register(DiscoveredJob)
@@ -75,6 +79,7 @@ class DiscoveredJobAdmin(admin.ModelAdmin):
     list_filter = ('source',)
     search_fields = ('title', 'company', 'location')
     readonly_fields = ('id', 'raw_data', 'created_at')
+    list_per_page = 50
 
 
 @admin.register(JobMatch)
@@ -83,6 +88,7 @@ class JobMatchAdmin(admin.ModelAdmin):
     list_filter = ('user_feedback',)
     search_fields = ('job_alert__user__username',)
     readonly_fields = ('id', 'created_at')
+    raw_id_fields = ('job_alert', 'discovered_job')
 
 
 @admin.register(JobAlertRun)
