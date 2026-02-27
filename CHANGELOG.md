@@ -5,6 +5,87 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.0] — 2026-02-27
+
+### Frontend–Backend Gap Fixes (28 items)
+
+Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented across P0/P1/P2 priorities. P3 items documented as backlog TODOs.
+
+#### P0 — Critical Fixes
+- **`first_name` / `last_name` writable on `PUT /api/auth/me/`** — Both fields now accepted by `UpdateUserSerializer` and persisted on the `User` model.
+- **`keyword_match_percent` in `score_trend`** — Each trend entry now includes `keyword_match_percent` extracted from the `scores` JSONField.
+- **Aggregated `top_missing_keywords`** in dashboard stats — Top 10 missing keywords across the user's last 20 analyses, computed via `Counter`.
+- **`credit_usage` history (monthly)** in dashboard stats — Wallet transactions grouped by month and type (`debit`/`credit`), returned as a list of `{month, type, total}` objects.
+
+#### P1 — Core Feature Gaps
+- **`DELETE /api/generated-resumes/<uuid:pk>/`** — Delete a generated resume (file removed from R2, record deleted). Ownership-checked.
+- **Server-side search/filter/sort on analyses** — `AnalysisListView` now supports `?search=` (role/company/industry), `?status=`, `?score_min=`, `?score_max=`, `?ordering=` (created_at, ats_score).
+- **Server-side search/filter/sort on resumes** — `ResumeListView` now supports `?search=` (filename), `?ordering=` (uploaded_at, original_filename, file_size).
+- **Payment history pagination** — `PaymentHistoryView` now uses DRF `PageNumberPagination` (page_size=20). Response format changed from `{count, payments}` to standard `{count, next, previous, results}`.
+- **`total_matches`** on `JobAlertSerializer` — Each job alert now includes the total count of associated matches.
+- **`POST /api/resumes/bulk-delete/`** — Bulk-delete up to 50 resumes. Skips resumes with active (processing/pending) analyses; returns `{deleted, skipped, errors}`.
+- **`weekly_job_matches`** in dashboard stats — Count of job matches created in the last 7 days.
+
+#### P2 — UX Improvements
+- **Social links CRUD** — Added `website_url`, `github_url`, `linkedin_url` (URLFields) to `UserProfile`. Readable via `GET /api/auth/me/`, writable via `PUT /api/auth/me/`.
+- **Resume staleness indicators** — `ResumeSerializer` now includes `days_since_upload` (integer) and `last_analyzed_at` (datetime or null).
+- **`GET /api/shared/<uuid:token>/summary/`** — Lightweight public endpoint returning `{ats_score, overall_grade, jd_role, jd_company}` for social card previews. No auth required.
+- **`GET /api/analyses/compare/?ids=<uuid>,<uuid>`** — Side-by-side comparison of 2–5 analyses. Returns list of `{id, jd_role, jd_company, ats_score, overall_grade, created_at, scores}`. Ownership-checked.
+- **`GET /api/auth/wallet/transactions/export/`** — CSV download of all wallet transactions (columns: date, type, amount, description, balance_after).
+- **`POST /api/auth/avatar/`** — Upload avatar image (JPEG/PNG/WebP, max 2 MB). Validates with Pillow. Stores in R2, updates `avatar_url` on profile.
+- **`DELETE /api/auth/avatar/`** — Remove avatar (deletes file from R2, clears `avatar_url`).
+- **`industry_benchmark_percentile`** in dashboard stats — User's ATS score percentile rank vs all platform users. `null` if no analyses exist.
+
+#### Migration
+- `accounts/0013_add_social_links_to_userprofile` — Adds `website_url`, `github_url`, `linkedin_url` to `UserProfile`.
+
+#### Tests
+- **42 new tests** in `analyzer/tests/test_gap_fixes.py` covering all P0/P1/P2 features.
+- **Total tests: 402** (up from 360).
+
+#### Breaking Changes
+- **Payment history response format** — `GET /api/auth/payments/history/` now returns `{count, next, previous, results}` instead of `{count, payments}`. Parameter `?limit=` replaced by `?page=`.
+
+#### P3 — Documented as Backlog (not implemented)
+- Activity streak (#10)
+- Skill gap analysis (#9)
+- Professional profile (#3) — consider reusing `JobSearchProfile`
+- Weekly market insight (#14) — derive from `DiscoveredJob` data
+- Application tracker (#8) — consider extending `JobMatch`
+- Push notifications (#28) — defer until mobile app ships
+
+---
+
+## [0.20.0] — 2026-02-27
+
+### Dynamic Razorpay Plan Sync
+
+#### Added
+- **`razorpay_plan_id` field on Plan model** — Stores the current Razorpay plan ID. Auto-managed by the sync system; read-only in admin.
+- **`sync_razorpay_plan()` service function** — Creates a new immutable Razorpay Plan via API when price or billing cycle changes. Old plans are preserved in Razorpay for audit and existing subscriber billing.
+- **`_get_razorpay_plan_id()` rewritten** — 3-tier priority: (1) model field, (2) env var fallback with auto-backfill, (3) placeholder in dev/test or `ValueError` in production.
+- **PlanAdmin overhaul:**
+  - `save_model()` — Auto-creates new Razorpay plan when price or billing_cycle changes on a paid plan. Shows success/error message.
+  - **"Duplicate selected plans"** admin action — Copies plan with `(Copy N)` suffix, deactivated, no `razorpay_plan_id`.
+  - **"Sync with Razorpay"** admin action — Manual sync for selected plans.
+  - **"Activate / Deactivate"** admin actions — Bulk toggle `is_active`.
+  - **Delete disabled** — `has_delete_permission() → False`. Plans are deactivated, never deleted (audit trail).
+  - `razorpay_plan_id` shown as read-only in a dedicated "Razorpay" fieldset.
+- **`sync_razorpay_plans` management command** — Syncs all active paid plans missing a `razorpay_plan_id`. Supports `--force` (recreate all) and `--dry-run` (preview).
+- **18 new tests** in `accounts/test_razorpay_sync.py`:
+  - `sync_razorpay_plan()` — create, skip, force, free plan rejection, API error, yearly period.
+  - `_get_razorpay_plan_id()` — model priority, test placeholder, production error.
+  - `PlanAdmin` — delete denied, save_model auto-sync, no-sync on unchanged price, duplicate action, duplicate counter.
+  - Management command — sync, skip synced, force resync, dry run.
+- **Migration:** `0012_add_razorpay_plan_id_to_plan`.
+- **Total tests: 360** (up from 342).
+
+#### Design Notes
+- **Existing subscribers are grandfathered** — `RazorpaySubscription` stores per-subscription `razorpay_plan_id`. Price changes only affect NEW subscriptions. Existing subs continue billing at their original rate.
+- **Razorpay plans are immutable** — Once created via API, a plan's amount/period cannot be changed. The sync system creates a new plan for every pricing change.
+
+---
+
 ## [0.19.0] — 2026-02-27
 
 ### Backend Backlog Sweep

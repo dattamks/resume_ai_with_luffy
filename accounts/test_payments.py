@@ -636,7 +636,7 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
         resp = self.client.get('/api/auth/payments/history/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 0)
-        self.assertEqual(resp.data['payments'], [])
+        self.assertEqual(resp.data['results'], [])
 
     def test_history_with_payments(self):
         RazorpayPayment.objects.create(
@@ -663,8 +663,8 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
         resp = self.client.get('/api/auth/payments/history/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_history_limit_param(self):
-        for i in range(5):
+    def test_history_pagination(self):
+        for i in range(25):
             RazorpayPayment.objects.create(
                 user=self.user,
                 payment_type=RazorpayPayment.PAYMENT_TYPE_TOPUP,
@@ -672,8 +672,14 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
                 amount=4900,
             )
 
-        resp = self.client.get('/api/auth/payments/history/?limit=3')
-        self.assertEqual(resp.data['count'], 3)
+        resp = self.client.get('/api/auth/payments/history/')
+        self.assertEqual(resp.data['count'], 25)
+        self.assertEqual(len(resp.data['results']), 20)  # page_size=20
+        self.assertIsNotNone(resp.data['next'])
+
+        # Page 2
+        resp2 = self.client.get('/api/auth/payments/history/?page=2')
+        self.assertEqual(len(resp2.data['results']), 5)
 
     def test_history_isolation(self):
         """User should only see their own payments."""

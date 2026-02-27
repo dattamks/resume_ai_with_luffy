@@ -847,37 +847,117 @@ def _get_razorpay_plan_id(plan) -> str:
     """
     Get the Razorpay plan_id for a given Plan.
 
-    Convention: Store in env as RAZORPAY_PLAN_ID_{SLUG_UPPER}.
-    Falls back to a placeholder for development.
+    Priority:
+    1. plan.razorpay_plan_id (stored on the model, auto-managed)
+    2. Env var RAZORPAY_PLAN_ID_{SLUG_UPPER} (legacy/override)
+    3. Placeholder in dev/test, error in production
     """
     from django.conf import settings
 
+    # 1. Model field (preferred — set by sync_razorpay_plan)
+    if plan.razorpay_plan_id:
+        return plan.razorpay_plan_id
+
+    # 2. Env var fallback (backward compat / manual override)
     env_key = f'RAZORPAY_PLAN_ID_{plan.slug.upper()}'
     plan_id = getattr(settings, env_key, None)
-
     if not plan_id:
-        # Try from decouple
         from decouple import config
         plan_id = config(env_key, default='')
 
-    if not plan_id:
-        # Fail hard in production — placeholder plan IDs won't work
-        debug = getattr(settings, 'DEBUG', False)
-        testing = getattr(settings, 'TESTING', False)
-        if not debug and not testing:
-            raise ValueError(
-                f'Razorpay plan_id not configured for plan "{plan.slug}". '
-                f'Set the {env_key} environment variable.'
-            )
-        # Development placeholder
-        plan_id = f'plan_{plan.slug}_monthly'
-        logger.warning(
-            'Using placeholder Razorpay plan_id=%s for plan=%s. '
-            'Set %s env var for production.',
-            plan_id, plan.slug, env_key,
-        )
+    if plan_id:
+        # Backfill the model so future lookups skip env
+        plan.razorpay_plan_id = plan_id
+        plan.save(update_fields=['razorpay_plan_id'])
+        logger.info('Backfilled razorpay_plan_id from env: plan=%s id=%s', plan.slug, plan_id)
+        return plan_id
 
+    # 3. No plan_id configured
+    debug = getattr(settings, 'DEBUG', False)
+    testing = getattr(settings, 'TESTING', False)
+    if not debug and not testing:
+        raise ValueError(
+            f'Razorpay plan_id not configured for plan "{plan.slug}". '
+            f'Run: python manage.py sync_razorpay_plans'
+        )
+    # Development placeholder
+    plan_id = f'plan_{plan.slug}_monthly'
+    logger.warning(
+        'Using placeholder Razorpay plan_id=%s for plan=%s. '
+        'Run sync_razorpay_plans for production.',
+        plan_id, plan.slug,
+    )
     return plan_id
+
+
+def sync_razorpay_plan(plan, force: bool = False) -> str:
+    """
+    Create a Razorpay Plan via API for the given Django Plan.
+
+    Razorpay plans are immutable — if price or billing_cycle changes,
+    a NEW Razorpay plan is created. The old one remains in Razorpay
+    for audit/existing subscribers.
+
+    Args:
+        plan: Plan model instance (must be saved, price > 0)
+        force: Create even if razorpay_plan_id already exists
+
+    Returns:
+        The new razorpay plan_id string.
+
+    Raises:
+        ValueError if plan is free or API call fails.
+    """
+    if plan.price == 0:
+        raise ValueError('Cannot create a Razorpay plan for a free tier.')
+
+    if plan.razorpay_plan_id and not force:
+        logger.info('Plan %s already has razorpay_plan_id=%s (use force=True to recreate)',
+                     plan.slug, plan.razorpay_plan_id)
+        return plan.razorpay_plan_id
+
+    client = _get_client()
+
+    period_map = {
+        'monthly': ('monthly', 1),
+        'yearly': ('yearly', 1),
+        'lifetime': ('monthly', 1),  # one-time handled differently
+    }
+    period, interval = period_map.get(plan.billing_cycle, ('monthly', 1))
+    amount_paise = int(plan.price * 100)
+
+    try:
+        rz_plan = client.plan.create({
+            'period': period,
+            'interval': interval,
+            'item': {
+                'name': f'{plan.name} ({plan.billing_cycle.title()})',
+                'amount': amount_paise,
+                'currency': settings.RAZORPAY_CURRENCY,
+                'description': plan.description or f'{plan.name} plan — ₹{plan.price}/{plan.billing_cycle}',
+            },
+            'notes': {
+                'django_plan_slug': plan.slug,
+                'django_plan_id': str(plan.id),
+                'created_by': 'sync_razorpay_plan',
+            },
+        })
+    except Exception as e:
+        logger.error('Razorpay plan creation failed: plan=%s error=%s', plan.slug, str(e))
+        raise ValueError(f'Razorpay API error: {str(e)}')
+
+    new_plan_id = rz_plan['id']
+    old_plan_id = plan.razorpay_plan_id
+
+    plan.razorpay_plan_id = new_plan_id
+    plan.save(update_fields=['razorpay_plan_id'])
+
+    logger.info(
+        'Razorpay plan synced: django_plan=%s new_rz_plan=%s old_rz_plan=%s amount=%d',
+        plan.slug, new_plan_id, old_plan_id or 'none', amount_paise,
+    )
+
+    return new_plan_id
 
 
 def get_payment_history(user, limit: int = 20) -> list:

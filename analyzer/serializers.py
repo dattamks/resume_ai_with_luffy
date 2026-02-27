@@ -8,12 +8,15 @@ class ResumeSerializer(serializers.ModelSerializer):
     """Read-only serializer for the Resume model."""
     active_analysis_count = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
+    days_since_upload = serializers.SerializerMethodField()
+    last_analyzed_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Resume
         fields = (
             'id', 'original_filename', 'file_size_bytes',
             'uploaded_at', 'active_analysis_count', 'file_url',
+            'days_since_upload', 'last_analyzed_at',
         )
         read_only_fields = fields
 
@@ -25,6 +28,18 @@ class ResumeSerializer(serializers.ModelSerializer):
         if obj.file:
             return obj.file.url
         return None
+
+    def get_days_since_upload(self, obj):
+        from django.utils import timezone
+        delta = timezone.now() - obj.uploaded_at
+        return delta.days
+
+    def get_last_analyzed_at(self, obj):
+        latest = obj.analyses.filter(
+            deleted_at__isnull=True,
+            status='done',
+        ).order_by('-created_at').values_list('created_at', flat=True).first()
+        return latest
 
 
 class ScrapeResultSerializer(serializers.ModelSerializer):
@@ -403,6 +418,7 @@ class JobAlertRunSerializer(serializers.ModelSerializer):
 class JobAlertSerializer(serializers.ModelSerializer):
     """List serializer — lightweight."""
     last_run = serializers.SerializerMethodField()
+    total_matches = serializers.SerializerMethodField()
     resume_filename = serializers.CharField(source='resume.original_filename', read_only=True)
     search_profile = JobSearchProfileSerializer(
         source='resume.job_search_profile', read_only=True, default=None,
@@ -413,16 +429,19 @@ class JobAlertSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'resume', 'resume_filename', 'frequency', 'is_active',
             'preferences', 'last_run_at', 'next_run_at',
-            'search_profile', 'last_run', 'created_at',
+            'search_profile', 'last_run', 'total_matches', 'created_at',
         )
         read_only_fields = (
             'id', 'resume_filename', 'last_run_at', 'next_run_at',
-            'search_profile', 'last_run', 'created_at',
+            'search_profile', 'last_run', 'total_matches', 'created_at',
         )
 
     def get_last_run(self, instance):
         latest = instance.runs.order_by('-created_at').first()
         return JobAlertRunSerializer(latest).data if latest else None
+
+    def get_total_matches(self, instance):
+        return getattr(instance, 'total_matches', instance.matches.count())
 
 
 class JobAlertCreateSerializer(serializers.ModelSerializer):

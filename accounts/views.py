@@ -800,3 +800,133 @@ class GoogleCompleteView(APIView):
         if xff:
             return xff.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
+
+
+# ── Wallet CSV export ─────────────────────────────────────────────────────────
+
+
+class WalletTransactionExportView(APIView):
+    """
+    GET /api/auth/wallet/transactions/export/
+    Export all wallet transactions as a CSV file.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        import csv
+        from django.http import HttpResponse
+        from .models import Wallet, WalletTransaction
+
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        transactions = WalletTransaction.objects.filter(wallet=wallet).order_by('-created_at')
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = (
+            f'attachment; filename="wallet-transactions-{request.user.username}.csv"'
+        )
+
+        writer = csv.writer(response)
+        writer.writerow(['Date', 'Type', 'Amount', 'Balance After', 'Description', 'Reference'])
+        for tx in transactions:
+            writer.writerow([
+                tx.created_at.isoformat(),
+                tx.transaction_type,
+                tx.amount,
+                tx.balance_after,
+                tx.description,
+                tx.reference_id or '',
+            ])
+
+        return response
+
+
+# ── Avatar upload ─────────────────────────────────────────────────────────────
+
+
+class AvatarUploadView(APIView):
+    """
+    POST /api/auth/avatar/
+    Upload a profile picture (JPEG/PNG, max 2 MB).
+    Stores the file in R2 and updates avatar_url on the user profile.
+
+    DELETE /api/auth/avatar/
+    Remove the current avatar.
+    """
+    permission_classes = [IsAuthenticated]
+
+    MAX_SIZE = 2 * 1024 * 1024  # 2 MB
+    ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
+
+    def post(self, request):
+        from django.core.files.storage import default_storage
+        from PIL import Image
+        import io
+
+        f = request.FILES.get('avatar')
+        if not f:
+            return Response(
+                {'detail': 'No file uploaded. Send a file with key "avatar".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if f.content_type not in self.ALLOWED_TYPES:
+            return Response(
+                {'detail': f'Invalid file type "{f.content_type}". Allowed: JPEG, PNG, WebP.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if f.size > self.MAX_SIZE:
+            return Response(
+                {'detail': f'File too large ({f.size / 1024 / 1024:.1f} MB). Maximum is 2 MB.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate it's a real image
+        try:
+            img = Image.open(f)
+            img.verify()
+            f.seek(0)
+        except Exception:
+            return Response(
+                {'detail': 'Invalid image file.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Delete old avatar if it was an uploaded file (not a Google URL)
+        profile = request.user.profile
+        old_url = profile.avatar_url
+        if old_url and 'r2.cloudflarestorage' in old_url:
+            try:
+                # Extract the path from the URL
+                old_path = old_url.split('/avatars/')[-1] if '/avatars/' in old_url else None
+                if old_path:
+                    default_storage.delete(f'avatars/{old_path}')
+            except Exception:
+                pass  # best-effort cleanup
+
+        # Save new avatar
+        ext = f.name.rsplit('.', 1)[-1].lower() if '.' in f.name else 'jpg'
+        filename = f'avatars/{request.user.id}.{ext}'
+
+        # Save to storage (R2 / local filesystem)
+        saved_name = default_storage.save(filename, f)
+        avatar_url = default_storage.url(saved_name)
+
+        profile.avatar_url = avatar_url
+        profile.save(update_fields=['avatar_url'])
+
+        logger.info('Avatar uploaded: user=%s url=%s', request.user.username, avatar_url)
+        return Response({
+            'avatar_url': avatar_url,
+            'detail': 'Avatar updated successfully.',
+        })
+
+    def delete(self, request):
+        profile = request.user.profile
+        if not profile.avatar_url:
+            return Response({'detail': 'No avatar to remove.'}, status=status.HTTP_404_NOT_FOUND)
+
+        profile.avatar_url = ''
+        profile.save(update_fields=['avatar_url'])
+        logger.info('Avatar removed: user=%s', request.user.username)
+        return Response(status=status.HTTP_204_NO_CONTENT)

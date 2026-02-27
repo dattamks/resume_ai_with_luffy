@@ -4,9 +4,10 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, LoginView, LogoutView, LogoutAllDevicesView, MeView, ChangePasswordView,
     NotificationPreferenceView, ForgotPasswordView, ResetPasswordView,
-    WalletView, WalletTransactionListView, WalletTopUpView,
+    WalletView, WalletTransactionListView, WalletTopUpView, WalletTransactionExportView,
     PlanListView, PlanSubscribeView,
     GoogleLoginView, GoogleCompleteView,
+    AvatarUploadView,
 )
 from .views_payments import (
     CreateSubscriptionView, VerifySubscriptionView, CancelSubscriptionView,
@@ -21,6 +22,7 @@ urlpatterns = [
     path('logout-all/', LogoutAllDevicesView.as_view(), name='logout-all'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('me/', MeView.as_view(), name='me'),
+    path('avatar/', AvatarUploadView.as_view(), name='avatar-upload'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
     path('reset-password/', ResetPasswordView.as_view(), name='reset-password'),
@@ -28,6 +30,7 @@ urlpatterns = [
     # Wallet & Credits
     path('wallet/', WalletView.as_view(), name='wallet'),
     path('wallet/transactions/', WalletTransactionListView.as_view(), name='wallet-transactions'),
+    path('wallet/transactions/export/', WalletTransactionExportView.as_view(), name='wallet-transactions-export'),
     path('wallet/topup/', WalletTopUpView.as_view(), name='wallet-topup'),
     # Plans
     path('plans/', PlanListView.as_view(), name='plan-list'),

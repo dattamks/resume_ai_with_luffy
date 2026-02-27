@@ -264,19 +264,34 @@ class RazorpayWebhookView(APIView):
 class PaymentHistoryView(APIView):
     """
     GET /api/payments/history/
-    Returns the user's payment history.
+    Returns the user's payment history (paginated).
+    Supports ?page= for pagination.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [PaymentThrottle]
 
     def get(self, request):
-        from .razorpay_service import get_payment_history
+        from rest_framework.pagination import PageNumberPagination
+        from .models import RazorpayPayment
 
-        limit = request.query_params.get('limit', 20)
-        try:
-            limit = max(1, min(int(limit), 100))
-        except (TypeError, ValueError):
-            limit = 20
+        qs = RazorpayPayment.objects.filter(user=request.user).order_by('-created_at')
 
-        history = get_payment_history(request.user, limit=limit)
-        return Response({'payments': history, 'count': len(history)})
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        page = paginator.paginate_queryset(qs, request)
+
+        payments = []
+        for p in page:
+            payments.append({
+                'id': p.id,
+                'payment_type': p.payment_type,
+                'razorpay_order_id': p.razorpay_order_id or '',
+                'razorpay_payment_id': p.razorpay_payment_id or '',
+                'amount': p.amount,
+                'amount_display': f'₹{p.amount / 100:.2f}',
+                'currency': p.currency,
+                'status': p.status,
+                'created_at': p.created_at.isoformat(),
+            })
+
+        return paginator.get_paginated_response(payments)

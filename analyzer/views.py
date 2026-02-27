@@ -2,10 +2,10 @@ import logging
 import uuid
 
 from django.core.cache import cache
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import status, filters
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -253,13 +253,40 @@ class AnalysisListView(ListAPIView):
     """
     GET /api/analyses/
     List all analyses for the authenticated user (paginated).
+
+    Query params:
+    - ?search=  — search in jd_role, jd_company, jd_industry
+    - ?status=  — filter by status (pending, processing, done, failed)
+    - ?ordering= — sort by created_at, ats_score, jd_role (prefix with - for desc)
+    - ?score_min= — minimum ats_score (integer)
+    - ?score_max= — maximum ats_score (integer)
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
     serializer_class = ResumeAnalysisListSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['jd_role', 'jd_company', 'jd_industry']
+    ordering_fields = ['created_at', 'ats_score', 'jd_role', 'status']
+    ordering = ['-created_at']
 
     def get_queryset(self):
-        return ResumeAnalysis.objects.filter(user=self.request.user)
+        qs = ResumeAnalysis.objects.filter(user=self.request.user)
+
+        # Status filter
+        status_filter = self.request.query_params.get('status')
+        if status_filter and status_filter in dict(ResumeAnalysis.STATUS_CHOICES):
+            qs = qs.filter(status=status_filter)
+
+        # Score range filters
+        score_min = self.request.query_params.get('score_min')
+        if score_min and score_min.isdigit():
+            qs = qs.filter(ats_score__gte=int(score_min))
+
+        score_max = self.request.query_params.get('score_max')
+        if score_max and score_max.isdigit():
+            qs = qs.filter(ats_score__lte=int(score_max))
+
+        return qs
 
 
 class AnalysisDetailView(RetrieveAPIView):
@@ -401,10 +428,18 @@ class ResumeListView(ListAPIView):
     """
     GET /api/resumes/
     List the user's deduplicated resume files with analysis counts.
+
+    Query params:
+    - ?search=  — search in original_filename
+    - ?ordering= — sort by uploaded_at, original_filename, file_size_bytes (prefix - for desc)
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
     serializer_class = ResumeSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['original_filename']
+    ordering_fields = ['uploaded_at', 'original_filename', 'file_size_bytes']
+    ordering = ['-uploaded_at']
 
     def get_queryset(self):
         return (
@@ -414,7 +449,6 @@ class ResumeListView(ListAPIView):
                 'analyses',
                 filter=Q(analyses__deleted_at__isnull=True),
             ))
-            .order_by('-uploaded_at')
         )
 
 
@@ -510,6 +544,7 @@ class DashboardStatsView(APIView):
             item['generic_ats'] = scores.get('generic_ats')
             item['workday_ats'] = scores.get('workday_ats')
             item['greenhouse_ats'] = scores.get('greenhouse_ats')
+            item['keyword_match_percent'] = scores.get('keyword_match_percent')
             score_trend.append(item)
 
         # Grade distribution (count per overall_grade)
@@ -548,16 +583,75 @@ class DashboardStatsView(APIView):
             .order_by('month')
         )
 
+        # ── Top missing keywords (aggregated across recent analyses) ──
+        from collections import Counter
+        recent_done = done_qs.order_by('-created_at')[:20]
+        keyword_counter = Counter()
+        for analysis in recent_done:
+            ka = analysis.keyword_analysis or {}
+            for kw in ka.get('missing_keywords', []):
+                if isinstance(kw, str):
+                    keyword_counter[kw.lower().strip()] += 1
+        top_missing_keywords = [
+            {'keyword': kw, 'count': cnt}
+            for kw, cnt in keyword_counter.most_common(10)
+        ]
+
+        # ── Credit usage per month (last 6 months) ──
+        from accounts.models import WalletTransaction
+        credit_usage = list(
+            WalletTransaction.objects.filter(
+                wallet__user=user,
+                transaction_type__in=['analysis_debit', 'topup', 'plan_credit', 'refund'],
+                created_at__gte=six_months_ago,
+            )
+            .annotate(month=TruncMonth('created_at'))
+            .values('month', 'transaction_type')
+            .annotate(total=Count('id'), amount_sum=Sum('amount'))
+            .order_by('month')
+        )
+
+        # ── Weekly job match count ──
+        seven_days_ago = timezone.now() - timezone.timedelta(days=7)
+        weekly_job_matches = JobMatch.objects.filter(
+            job_alert__user=user,
+            created_at__gte=seven_days_ago,
+        ).count()
+
+        # ── Industry benchmark (percentile rank among all users) ──
+        industry_benchmark = None
+        if avg_ats is not None:
+            # Count how many users have a lower average ATS score
+            from django.db.models import Subquery, OuterRef
+            all_user_avgs = (
+                ResumeAnalysis.all_objects
+                .filter(status=ResumeAnalysis.STATUS_DONE, ats_score__isnull=False)
+                .values('user')
+                .annotate(user_avg=Avg('ats_score'))
+            )
+            total_users = all_user_avgs.count()
+            if total_users > 1:
+                users_below = sum(
+                    1 for row in all_user_avgs if row['user_avg'] < avg_ats
+                )
+                industry_benchmark = round((users_below / total_users) * 100)
+            else:
+                industry_benchmark = 50  # Only user — default to 50th percentile
+
         data = {
             'total_analyses': total,
             'active_analyses': active,
             'deleted_analyses': deleted,
             'average_ats_score': round(avg_ats, 1) if avg_ats is not None else None,
+            'industry_benchmark_percentile': industry_benchmark,
             'score_trend': score_trend,
             'grade_distribution': grade_distribution,
             'top_roles': top_roles,
             'top_industries': top_industries,
             'analyses_per_month': monthly,
+            'top_missing_keywords': top_missing_keywords,
+            'credit_usage': credit_usage,
+            'weekly_job_matches': weekly_job_matches,
         }
 
         cache.set(cache_key, data, timeout=300)  # 5-minute TTL
@@ -837,6 +931,7 @@ class JobAlertListCreateView(APIView):
             JobAlert.objects
             .filter(user=request.user)
             .select_related('resume', 'resume__job_search_profile')
+            .annotate(total_matches=Count('matches'))
             .order_by('-created_at')
         )
         paginator = PageNumberPagination()
@@ -1358,4 +1453,177 @@ class AccountDataExportView(APIView):
         response = HttpResponse(json_bytes, content_type='application/json')
         response['Content-Disposition'] = f'attachment; filename="i-luffy-data-export-{user.username}.json"'
         return response
+
+
+# ── Generated resume delete ──────────────────────────────────────────────────
+
+
+class GeneratedResumeDeleteView(APIView):
+    """
+    DELETE /api/generated-resumes/<uuid:pk>/
+    Delete a generated resume owned by the authenticated user.
+    Removes the file from R2 storage.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def delete(self, request, pk):
+        try:
+            gen = GeneratedResume.objects.get(pk=pk, user=request.user)
+        except GeneratedResume.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Delete file from R2
+        if gen.file:
+            try:
+                gen.file.delete(save=False)
+            except Exception:
+                logger.warning('Failed to delete generated resume file: %s', gen.pk)
+
+        gen.delete()
+        logger.info('Generated resume deleted: id=%s user=%s', pk, request.user.id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Bulk delete resumes ──────────────────────────────────────────────────────
+
+
+class ResumeBulkDeleteView(APIView):
+    """
+    POST /api/resumes/bulk-delete/
+    Delete multiple resumes at once.
+    Body: {"ids": ["uuid1", "uuid2", ...]}
+    Only deletes resumes with no active analyses or job alerts referencing them.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def post(self, request):
+        ids = request.data.get('ids', [])
+        if not isinstance(ids, list) or not ids:
+            return Response(
+                {'detail': 'Provide a non-empty list of resume IDs in "ids".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(ids) > 50:
+            return Response(
+                {'detail': 'Maximum 50 resumes per request.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resumes = Resume.objects.filter(pk__in=ids, user=request.user)
+        found = resumes.count()
+
+        deleted = 0
+        skipped = []
+        for resume in resumes:
+            # Check active analyses
+            active_count = ResumeAnalysis.objects.filter(resume=resume).count()
+            if active_count > 0:
+                skipped.append({
+                    'id': str(resume.pk),
+                    'reason': f'{active_count} active analysis(es) reference this resume',
+                })
+                continue
+
+            # Check active job alerts
+            alert_count = JobAlert.objects.filter(resume=resume, is_active=True).count()
+            if alert_count > 0:
+                skipped.append({
+                    'id': str(resume.pk),
+                    'reason': f'{alert_count} active job alert(s) reference this resume',
+                })
+                continue
+
+            resume.delete()
+            deleted += 1
+
+        return Response({
+            'deleted': deleted,
+            'skipped': skipped,
+            'not_found': len(ids) - found,
+        })
+
+
+# ── Comparison endpoint ──────────────────────────────────────────────────────
+
+
+class AnalysisCompareView(APIView):
+    """
+    GET /api/analyses/compare/?ids=1,2
+    Compare two or more analyses side-by-side.
+    Returns full detail for each analysis.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request):
+        ids_param = request.query_params.get('ids', '')
+        try:
+            ids = [int(x.strip()) for x in ids_param.split(',') if x.strip()]
+        except ValueError:
+            return Response(
+                {'detail': 'ids must be comma-separated integers.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(ids) < 2:
+            return Response(
+                {'detail': 'Provide at least 2 analysis IDs to compare.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(ids) > 5:
+            return Response(
+                {'detail': 'Maximum 5 analyses per comparison.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        analyses = (
+            ResumeAnalysis.objects
+            .filter(pk__in=ids, user=request.user)
+            .select_related('scrape_result', 'llm_response')
+        )
+        if analyses.count() != len(ids):
+            return Response(
+                {'detail': 'One or more analyses not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ResumeAnalysisDetailSerializer(analyses, many=True)
+        return Response({
+            'count': len(ids),
+            'analyses': serializer.data,
+        })
+
+
+# ── Share score summary ──────────────────────────────────────────────────────
+
+
+class SharedAnalysisSummaryView(APIView):
+    """
+    GET /api/shared/<uuid:token>/summary/
+    Lightweight public summary of a shared analysis — for social card previews.
+    Returns only score, grade, and role (no PII).
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, token):
+        try:
+            analysis = ResumeAnalysis.objects.get(share_token=token)
+        except ResumeAnalysis.DoesNotExist:
+            return Response(
+                {'detail': 'Shared analysis not found or link has been revoked.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response({
+            'ats_score': analysis.ats_score,
+            'overall_grade': analysis.overall_grade,
+            'jd_role': analysis.jd_role,
+            'jd_company': analysis.jd_company,
+            'scores': analysis.scores,
+            'summary': analysis.summary,
+        })
 

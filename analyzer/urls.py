@@ -7,9 +7,11 @@ from .views import (
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
     GenerateResumeView, GeneratedResumeStatusView,
     GeneratedResumeDownloadView, GeneratedResumeListView,
+    GeneratedResumeDeleteView,
     # New endpoints
     AnalysisCancelView, AnalysisBulkDeleteView, AnalysisExportJSONView,
-    AccountDataExportView,
+    AccountDataExportView, ResumeBulkDeleteView, AnalysisCompareView,
+    SharedAnalysisSummaryView,
     # Phase 11 — Smart Job Alerts
     JobAlertListCreateView, JobAlertDetailView,
     JobAlertMatchListView, JobAlertMatchFeedbackView, JobAlertManualRunView,
@@ -37,10 +39,17 @@ urlpatterns = [
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     # Bulk operations
     path('analyses/bulk-delete/', AnalysisBulkDeleteView.as_view(), name='analysis-bulk-delete'),
+    # Comparison (must be before analyses/<int:pk>/ but Django int converter won't match 'compare' anyway)
+    path('analyses/compare/', AnalysisCompareView.as_view(), name='analysis-compare'),
     # Account data export (GDPR)
     path('account/export/', AccountDataExportView.as_view(), name='account-data-export'),
     # Generated resumes
     path('generated-resumes/', GeneratedResumeListView.as_view(), name='generated-resume-list'),
+    path('generated-resumes/<uuid:pk>/', GeneratedResumeDeleteView.as_view(), name='generated-resume-delete'),
+    # Bulk operations — resumes
+    path('resumes/bulk-delete/', ResumeBulkDeleteView.as_view(), name='resume-bulk-delete'),
+    # Share summary (lightweight public endpoint)
+    path('shared/<uuid:token>/summary/', SharedAnalysisSummaryView.as_view(), name='shared-analysis-summary'),
     # Phase 11 — Smart Job Alerts
     path('job-alerts/', JobAlertListCreateView.as_view(), name='job-alert-list-create'),
     path('job-alerts/<uuid:pk>/', JobAlertDetailView.as_view(), name='job-alert-detail'),

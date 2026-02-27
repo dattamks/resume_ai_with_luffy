@@ -140,6 +140,9 @@ class UserSerializer(serializers.ModelSerializer):
     marketing_opt_in = serializers.BooleanField(source='profile.marketing_opt_in', read_only=True)
     auth_provider = serializers.CharField(source='profile.auth_provider', read_only=True)
     avatar_url = serializers.URLField(source='profile.avatar_url', read_only=True)
+    website_url = serializers.URLField(source='profile.website_url', read_only=True)
+    github_url = serializers.URLField(source='profile.github_url', read_only=True)
+    linkedin_url = serializers.URLField(source='profile.linkedin_url', read_only=True)
 
     class Meta:
         model = User
@@ -149,6 +152,7 @@ class UserSerializer(serializers.ModelSerializer):
             'plan', 'wallet', 'plan_valid_until', 'pending_plan',
             'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
             'auth_provider', 'avatar_url',
+            'website_url', 'github_url', 'linkedin_url',
         )
 
     def get_plan(self, obj):
@@ -186,10 +190,35 @@ class UpdateUserSerializer(serializers.ModelSerializer):
         allow_blank=True,
         help_text='Mobile number without country code',
     )
+    website_url = serializers.URLField(
+        required=False,
+        max_length=300,
+        allow_blank=True,
+        help_text='Personal website or portfolio URL',
+    )
+    github_url = serializers.URLField(
+        required=False,
+        max_length=300,
+        allow_blank=True,
+        help_text='GitHub profile URL',
+    )
+    linkedin_url = serializers.URLField(
+        required=False,
+        max_length=300,
+        allow_blank=True,
+        help_text='LinkedIn profile URL',
+    )
+    avatar_url = serializers.URLField(
+        required=False,
+        max_length=500,
+        allow_blank=True,
+        help_text='Profile picture URL',
+    )
 
     class Meta:
         model = User
-        fields = ('username', 'email', 'country_code', 'mobile_number')
+        fields = ('username', 'email', 'first_name', 'last_name', 'country_code', 'mobile_number',
+                  'website_url', 'github_url', 'linkedin_url', 'avatar_url')
 
     def validate_username(self, value):
         user = self.context['request'].user
@@ -222,18 +251,32 @@ class UpdateUserSerializer(serializers.ModelSerializer):
         # Extract profile fields before passing to User update
         country_code = validated_data.pop('country_code', None)
         mobile_number = validated_data.pop('mobile_number', None)
+        website_url = validated_data.pop('website_url', None)
+        github_url = validated_data.pop('github_url', None)
+        linkedin_url = validated_data.pop('linkedin_url', None)
+        avatar_url = validated_data.pop('avatar_url', None)
 
-        # Update User fields (username, email)
+        # Update User fields (username, email, first_name, last_name)
         instance = super().update(instance, validated_data)
 
         # Update profile fields if provided
-        if country_code is not None or mobile_number is not None:
-            profile = instance.profile
-            if country_code is not None:
-                profile.country_code = country_code
-            if mobile_number is not None:
-                profile.mobile_number = mobile_number
-            profile.save(update_fields=['country_code', 'mobile_number'])
+        profile = instance.profile
+        update_fields = []
+        profile_updates = {
+            'country_code': country_code,
+            'mobile_number': mobile_number,
+            'website_url': website_url,
+            'github_url': github_url,
+            'linkedin_url': linkedin_url,
+            'avatar_url': avatar_url,
+        }
+        for field_name, value in profile_updates.items():
+            if value is not None:
+                setattr(profile, field_name, value)
+                update_fields.append(field_name)
+
+        if update_fields:
+            profile.save(update_fields=update_fields)
 
         return instance
 

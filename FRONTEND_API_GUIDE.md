@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.18.0
+> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.21.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -411,17 +411,38 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ### PUT `/api/auth/me/` — Update Profile
 
-🔒 Requires auth. Update the current user's username, email, and/or phone fields. Partial updates are supported (send only the fields you want to change).
+🔒 Requires auth. Update the current user's profile. Partial updates are supported (send only the fields you want to change).
 
 **Request (JSON):**
 ```json
 {
   "username": "new_name",
   "email": "new@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
   "country_code": "+1",
-  "mobile_number": "5551234567"
+  "mobile_number": "5551234567",
+  "website_url": "https://johndoe.dev",
+  "github_url": "https://github.com/johndoe",
+  "linkedin_url": "https://linkedin.com/in/johndoe",
+  "avatar_url": "https://example.com/photo.jpg"
 }
 ```
+
+**Writable fields:**
+
+| Field          | Type   | Notes |
+|----------------|--------|-------|
+| `username`     | string | Must be unique |
+| `email`        | string | Must be unique |
+| `first_name`   | string | User's first name |
+| `last_name`    | string | User's last name |
+| `country_code` | string | e.g. `"+1"` |
+| `mobile_number`| string | e.g. `"5551234567"` |
+| `website_url`  | URL    | Personal website (blank to clear) |
+| `github_url`   | URL    | GitHub profile (blank to clear) |
+| `linkedin_url` | URL    | LinkedIn profile (blank to clear) |
+| `avatar_url`   | URL    | Profile picture URL (prefer using `POST /api/auth/avatar/` for uploads) |
 
 **Response (200):**
 ```json
@@ -429,9 +450,15 @@ Use this on app load to verify the stored token is still valid and hydrate user 
   "id": 1,
   "username": "new_name",
   "email": "new@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
   "date_joined": "2026-02-22T10:00:00Z",
   "country_code": "+1",
   "mobile_number": "5551234567",
+  "website_url": "https://johndoe.dev",
+  "github_url": "https://github.com/johndoe",
+  "linkedin_url": "https://linkedin.com/in/johndoe",
+  "avatar_url": "https://cdn.example.com/avatars/photo.jpg",
   "plan": { "id": 1, "name": "Free", "slug": "free", "...": "..." },
   "wallet": { "balance": 2, "updated_at": "..." },
   "plan_valid_until": null,
@@ -483,6 +510,53 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 | 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
 
 > ⚠️ **This action is irreversible.** Show a confirmation dialog that collects the user's password before calling.
+
+---
+
+### POST `/api/auth/avatar/` — Upload Avatar
+
+🔒 Requires auth. Upload a profile picture. Accepts JPEG, PNG, or WebP images up to **2 MB**. The image is validated server-side using Pillow. Stored in R2 storage and the URL is set on `avatar_url`.
+
+**Request:** `multipart/form-data` with field `avatar`.
+
+```js
+const formData = new FormData();
+formData.append('avatar', fileInput.files[0]);
+const { data } = await api.post('/auth/avatar/', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' },
+});
+// data.avatar_url → "https://cdn.example.com/avatars/abc123.png"
+```
+
+**Response (200):**
+```json
+{
+  "avatar_url": "https://cdn.example.com/avatars/abc123.png"
+}
+```
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | No file provided | `{ "detail": "No file provided." }` |
+| 400  | Invalid file type | `{ "detail": "Invalid file type. Allowed: JPEG, PNG, WebP." }` |
+| 400  | File too large | `{ "detail": "File too large. Maximum size is 2 MB." }` |
+| 400  | Corrupt image | `{ "detail": "Invalid image file." }` |
+
+---
+
+### DELETE `/api/auth/avatar/` — Remove Avatar
+
+🔒 Requires auth. Removes the user's avatar (deletes file from storage and clears `avatar_url`).
+
+**Response (204):** No content.
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 404  | No avatar set | `{ "detail": "No avatar to delete." }` |
 
 ---
 
@@ -994,9 +1068,20 @@ Only returns **active** (non-soft-deleted) analyses.
 
 **Query parameters:**
 
-| Param  | Default | Description |
-|--------|---------|-------------|
-| `page` | 1       | Page number (20 items per page) |
+| Param       | Default          | Description |
+|-------------|------------------|-------------|
+| `page`      | 1                | Page number (20 items per page) |
+| `search`    | —                | Search by `jd_role`, `jd_company`, or `jd_industry` (case-insensitive contains) |
+| `status`    | —                | Filter by status: `pending`, `processing`, `done`, `failed` |
+| `score_min` | —                | Filter analyses with `ats_score >= score_min` |
+| `score_max` | —                | Filter analyses with `ats_score <= score_max` |
+| `ordering`  | `-created_at`    | Sort field. Prefix with `-` for descending. Options: `created_at`, `ats_score` |
+
+**Examples:**
+```
+GET /api/analyses/?search=backend&status=done&score_min=70&ordering=-ats_score
+GET /api/analyses/?search=google&ordering=created_at&page=2
+```
 
 **Response (200):**
 ```json
@@ -1332,9 +1417,11 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 
 **Query parameters:**
 
-| Param  | Default | Description |
-|--------|---------|-------------|
-| `page` | 1       | Page number (20 items per page) |
+| Param      | Default | Description |
+|------------|---------|-------------|
+| `page`     | 1       | Page number (20 items per page) |
+| `search`   | —       | Search by `original_filename` (case-insensitive contains) |
+| `ordering` | `-uploaded_at` | Sort field. Prefix with `-` for descending. Options: `uploaded_at`, `original_filename`, `file_size` |
 
 **Response (200):**
 ```json
@@ -1349,15 +1436,9 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
       "file_size_bytes": 245760,
       "uploaded_at": "2026-02-23T10:00:00Z",
       "active_analysis_count": 3,
-      "file_url": "https://r2.example.com/resumes/my_resume_2026.pdf"
-    },
-    {
-      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-      "original_filename": "resume_v2.pdf",
-      "file_size_bytes": 198432,
-      "uploaded_at": "2026-02-20T08:15:00Z",
-      "active_analysis_count": 1,
-      "file_url": "https://r2.example.com/resumes/resume_v2.pdf"
+      "file_url": "https://r2.example.com/resumes/my_resume_2026.pdf",
+      "days_since_upload": 4,
+      "last_analyzed_at": "2026-02-25T14:00:00Z"
     }
   ]
 }
@@ -1373,6 +1454,8 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 | `uploaded_at`          | datetime | When first uploaded (ISO 8601)                             |
 | `active_analysis_count`| int      | Number of active (non-soft-deleted) analyses using this resume |
 | `file_url`             | string ǀ null | Full URL to download the resume PDF (from R2/storage)  |
+| `days_since_upload`    | int      | Number of days since the resume was uploaded. Use for staleness indicators (e.g., "Resume not updated in 30 days") |
+| `last_analyzed_at`     | datetime ǀ null | Timestamp of the most recent completed analysis using this resume; `null` if never analyzed |
 
 **Frontend usage:** Use `active_analysis_count` to show how many analyses reference each resume, and to determine whether the delete button should show a warning.
 
@@ -1415,6 +1498,87 @@ try {
 
 ---
 
+### POST `/api/resumes/bulk-delete/` — Bulk Delete Resumes
+
+🔒 Requires auth. **Throttled:** `write` scope (60/hour). Delete up to 50 resumes in a single request. Resumes with active (processing/pending) analyses are **skipped** (not deleted).
+
+**Request (JSON):**
+```json
+{
+  "ids": [
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+  ]
+}
+```
+
+**Response (200):**
+```json
+{
+  "deleted": 1,
+  "skipped": 1,
+  "errors": [
+    "Resume b2c3d4e5... skipped: has 1 active analysis(es)"
+  ]
+}
+```
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Empty `ids` list | `{ "ids": ["This list may not be empty."] }` |
+| 400  | Too many items | `{ "ids": ["Ensure this field has no more than 50 elements."] }` |
+
+---
+
+### GET `/api/analyses/compare/` — Compare Analyses Side-by-Side
+
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Compare 2–5 analyses in a single response. All analyses must belong to the authenticated user.
+
+**Query parameters:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `ids` | ✅       | Comma-separated analysis IDs (2–5) |
+
+**Example:** `GET /api/analyses/compare/?ids=42,43,44`
+
+**Response (200):**
+```json
+[
+  {
+    "id": 42,
+    "jd_role": "Backend Engineer",
+    "jd_company": "Acme Corp",
+    "ats_score": 78,
+    "overall_grade": "B",
+    "created_at": "2026-02-22T14:30:00Z",
+    "scores": { "generic_ats": 78, "workday_ats": 65, "greenhouse_ats": 70, "keyword_match_percent": 58 }
+  },
+  {
+    "id": 43,
+    "jd_role": "Full Stack Developer",
+    "jd_company": "BigCo",
+    "ats_score": 85,
+    "overall_grade": "A",
+    "created_at": "2026-02-23T10:00:00Z",
+    "scores": { "generic_ats": 85, "workday_ats": 78, "greenhouse_ats": 80, "keyword_match_percent": 72 }
+  }
+]
+```
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | Missing `ids` | `{ "detail": "Provide 'ids' query parameter with comma-separated analysis IDs." }` |
+| 400  | Fewer than 2 IDs | `{ "detail": "Provide at least 2 analysis IDs to compare." }` |
+| 400  | More than 5 IDs | `{ "detail": "Maximum 5 analyses can be compared at once." }` |
+| 404  | ID not found / not owner | `{ "detail": "One or more analyses not found." }` |
+
+---
+
 ## 6. Dashboard Endpoints
 
 ### GET `/api/dashboard/stats/` — User Dashboard Analytics
@@ -1434,6 +1598,7 @@ try {
       "generic_ats": 85,
       "workday_ats": 78,
       "greenhouse_ats": 80,
+      "keyword_match_percent": 72,
       "jd_role": "Senior Developer",
       "created_at": "2026-02-23T14:00:00Z"
     },
@@ -1442,6 +1607,7 @@ try {
       "generic_ats": 72,
       "workday_ats": 65,
       "greenhouse_ats": 68,
+      "keyword_match_percent": 58,
       "jd_role": "Backend Engineer",
       "created_at": "2026-02-22T10:00:00Z"
     }
@@ -1472,7 +1638,19 @@ try {
     { "month": "2025-12-01T00:00:00Z", "count": 5 },
     { "month": "2026-01-01T00:00:00Z", "count": 15 },
     { "month": "2026-02-01T00:00:00Z", "count": 7 }
-  ]
+  ],
+  "top_missing_keywords": [
+    { "keyword": "kubernetes", "count": 8 },
+    { "keyword": "docker", "count": 6 },
+    { "keyword": "ci/cd", "count": 5 }
+  ],
+  "credit_usage": [
+    { "month": "2026-01", "type": "debit", "total": 12 },
+    { "month": "2026-01", "type": "credit", "total": 50 },
+    { "month": "2026-02", "type": "debit", "total": 5 }
+  ],
+  "weekly_job_matches": 14,
+  "industry_benchmark_percentile": 72.5
 }
 ```
 
@@ -1489,6 +1667,10 @@ try {
 | `top_roles`          | array          | Top **5** most-analyzed job roles with count                 |
 | `top_industries`     | array          | Top **5** most-analyzed industries with count                |
 | `analyses_per_month` | array          | Monthly analysis count for the last **6 months** (oldest first) |
+| `top_missing_keywords` | array        | Top **10** missing keywords across the user's last 20 analyses (descending by count) |
+| `credit_usage`       | array          | Wallet transactions grouped by month and type (`debit`/`credit`), each with `{month, type, total}` |
+| `weekly_job_matches` | int            | Count of job matches created in the last 7 days |
+| `industry_benchmark_percentile` | float \| null | User's ATS score percentile rank vs all platform users (0–100); `null` if no completed analyses |
 
 **`score_trend` item:**
 
@@ -1498,6 +1680,7 @@ try {
 | `generic_ats`    | int \| null  | Generic ATS score from `scores` JSON          |
 | `workday_ats`    | int \| null  | Workday ATS score from `scores` JSON          |
 | `greenhouse_ats` | int \| null  | Greenhouse ATS score from `scores` JSON       |
+| `keyword_match_percent` | int \| null | Keyword match percentage from `scores` JSON |
 | `jd_role`        | string       | Job role analyzed                             |
 | `created_at`     | datetime     | When analysis was submitted                   |
 
@@ -1676,6 +1859,27 @@ showToast('Share link copied!');
 ```
 
 > **Soft-deleted analyses** are not accessible via share links — the default manager automatically excludes them.
+
+---
+
+### GET `/api/shared/<token>/summary/` — Shared Score Summary
+
+🔓 **Public — no auth required.** Lightweight endpoint returning only score data for social card previews (OG meta tags, share widgets).
+
+**Response (200):**
+```json
+{
+  "ats_score": 72,
+  "overall_grade": "B",
+  "jd_role": "Backend Engineer",
+  "jd_company": "Acme Corp"
+}
+```
+
+**Error (404):**
+```json
+{ "detail": "Not found." }
+```
 
 ---
 
@@ -3160,6 +3364,29 @@ Paginated transaction history.
 | `admin_adjustment` | Admin-initiated adjustment |
 | `upgrade_bonus` | Credits granted on plan upgrade |
 
+#### `GET /api/auth/wallet/transactions/export/` — Download Transactions CSV
+
+🔒 Requires auth. Downloads all wallet transactions as a CSV file.
+
+**Response (200):**
+- `Content-Type: text/csv`
+- `Content-Disposition: attachment; filename="wallet_transactions.csv"`
+
+**CSV columns:** `date`, `type`, `amount`, `description`, `balance_after`
+
+**Frontend usage:**
+```js
+const response = await api.get('/auth/wallet/transactions/export/', {
+  responseType: 'blob',
+});
+const url = URL.createObjectURL(response.data);
+const a = document.createElement('a');
+a.href = url;
+a.download = 'wallet_transactions.csv';
+a.click();
+URL.revokeObjectURL(url);
+```
+
 #### `POST /api/auth/wallet/topup/` *(DEPRECATED)*
 
 > **Deprecated in v0.13.1.** Credit top-ups now require payment via Razorpay.
@@ -3613,7 +3840,24 @@ Returns a **paginated** list of all generated resumes for the authenticated user
 }
 ```
 
-### 19.5 TypeScript Types
+### 19.5 Delete Generated Resume
+
+```
+DELETE /api/generated-resumes/<uuid:id>/
+Authorization: Bearer <token>
+```
+
+Permanently deletes a generated resume (file removed from R2 storage, DB record deleted). Only the owner can delete.
+
+**Response — 204 No Content.**
+
+**Errors:**
+
+| Status | Condition |
+|--------|-----------|
+| 404 | Not found or belongs to another user |
+
+### 19.6 TypeScript Types
 
 ```typescript
 type ResumeTemplate = 'ats_classic';
@@ -3646,7 +3890,7 @@ interface GeneratedResume {
 }
 ```
 
-### 19.6 Frontend Integration Recipe
+### 19.7 Frontend Integration Recipe
 
 ```typescript
 // 1. Trigger generation
@@ -4388,16 +4632,19 @@ const cancelSubscription = async () => {
 | POST | `/api/auth/logout/` | ✅ | User (200/hr) | Blacklist refresh token |
 | POST | `/api/auth/token/refresh/` | ❌ | Anon (60/hr IP) | Refresh JWT tokens |
 | GET | `/api/auth/me/` | ✅ | User (200/hr) | Current user profile + plan |
-| PUT | `/api/auth/me/` | ✅ | User (200/hr) | Update username/email/phone |
+| PUT | `/api/auth/me/` | ✅ | User (200/hr) | Update profile (name, email, social links, avatar) |
 | DELETE | `/api/auth/me/` | ✅ | User (200/hr) | Delete account permanently |
 | POST | `/api/auth/change-password/` | ✅ | User (200/hr) | Change password |
 | POST | `/api/auth/forgot-password/` | ❌ | Auth (20/hr IP) | Request password reset email |
 | POST | `/api/auth/reset-password/` | ❌ | Auth (20/hr IP) | Set new password with reset token |
+| POST | `/api/auth/avatar/` | ✅ | User (200/hr) | Upload avatar image (JPEG/PNG/WebP, max 2 MB) |
+| DELETE | `/api/auth/avatar/` | ✅ | User (200/hr) | Remove avatar |
 | GET | `/api/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
 | PUT | `/api/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
 | **Wallet & Plans** |||||
 | GET | `/api/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
 | GET | `/api/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
+| GET | `/api/auth/wallet/transactions/export/` | ✅ | User (200/hr) | Download transactions as CSV |
 | POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§21) |
 | GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
 | POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
@@ -4412,7 +4659,8 @@ const cancelSubscription = async () => {
 | GET | `/api/auth/payments/history/` | ✅ | Payment (30/hr) | Payment history |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
-| GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (paginated) |
+| GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (search/filter/sort/paginated) |
+| GET | `/api/analyses/compare/` | ✅ | Readonly (120/hr) | Compare 2–5 analyses side-by-side |
 | GET | `/api/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
 | GET | `/api/analyses/<id>/status/` | ✅ | Readonly (120/hr) | Poll status (lightweight) |
 | POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
@@ -4421,13 +4669,15 @@ const cancelSubscription = async () => {
 | POST | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Generate public share link |
 | DELETE | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Revoke share link |
 | **Resume** |||||
-| GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (with `file_url` for download) |
+| GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (search/sort/paginated) |
 | DELETE | `/api/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
+| POST | `/api/resumes/bulk-delete/` | ✅ | Write (60/hr) | Bulk-delete up to 50 resumes |
 | **Resume Generation** |||||
 | POST | `/api/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
 | GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
 | GET | `/api/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
 | GET | `/api/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes (paginated) |
+| DELETE | `/api/generated-resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete a generated resume |
 | **Job Alerts** |||||
 | GET | `/api/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts (paginated) |
 | POST | `/api/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
@@ -4441,12 +4691,25 @@ const cancelSubscription = async () => {
 | GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
 | **Share** |||||
 | GET | `/api/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
+| GET | `/api/shared/<uuid:token>/summary/` | ❌ | Anon (60/hr IP) | Lightweight score summary for social cards |
 | **System** |||||
 | GET | `/api/health/` | ❌ | None | Health check |
 
 ---
 
 ## Changelog
+
+### v0.21.0 — Frontend–Backend Gap Fixes
+
+- **28 items implemented** across P0, P1, and P2 priorities. See [CHANGELOG.md](CHANGELOG.md) for full details.
+- **New endpoints:** `POST/DELETE /api/auth/avatar/`, `GET /api/auth/wallet/transactions/export/`, `DELETE /api/generated-resumes/<uuid>/`, `POST /api/resumes/bulk-delete/`, `GET /api/analyses/compare/`, `GET /api/shared/<token>/summary/`
+- **New query params on analyses:** `?search=`, `?status=`, `?score_min=`, `?score_max=`, `?ordering=`
+- **New query params on resumes:** `?search=`, `?ordering=`
+- **New writable fields on `PUT /api/auth/me/`:** `first_name`, `last_name`, `website_url`, `github_url`, `linkedin_url`, `avatar_url`
+- **New fields in resume list:** `days_since_upload`, `last_analyzed_at`
+- **New fields in job alert list:** `total_matches`
+- **New dashboard stats fields:** `keyword_match_percent` in score_trend, `top_missing_keywords`, `credit_usage`, `weekly_job_matches`, `industry_benchmark_percentile`
+- **Breaking:** Payment history response changed from `{count, payments}` to `{count, next, previous, results}` with DRF pagination. `?limit=` replaced by `?page=`.
 
 ### v0.17.0 — Unified Job Alerts Architecture
 

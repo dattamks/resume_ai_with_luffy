@@ -85,6 +85,26 @@ class UserProfile(models.Model):
         help_text='Google account unique subject identifier (from ID token).',
     )
 
+    # ── Social links ──────────────────────────────────────────────────────
+    website_url = models.URLField(
+        max_length=300,
+        blank=True,
+        default='',
+        help_text='Personal website or portfolio URL.',
+    )
+    github_url = models.URLField(
+        max_length=300,
+        blank=True,
+        default='',
+        help_text='GitHub profile URL.',
+    )
+    linkedin_url = models.URLField(
+        max_length=300,
+        blank=True,
+        default='',
+        help_text='LinkedIn profile URL.',
+    )
+
     class Meta:
         verbose_name = 'User Profile'
         verbose_name_plural = 'User Profiles'
@@ -291,6 +311,14 @@ class Plan(models.Model):
     email_support = models.BooleanField(
         default=False,
         help_text='Has access to email support.',
+    )
+
+    # ── Razorpay Integration ─────────────────────────────────────────────
+    razorpay_plan_id = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Current Razorpay plan_id. Auto-managed — created via API when price/billing changes.',
     )
 
     is_active = models.BooleanField(
