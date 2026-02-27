@@ -15,6 +15,7 @@ class PlanSerializer(serializers.ModelSerializer):
         model = Plan
         fields = (
             'id', 'name', 'slug', 'description', 'billing_cycle', 'price',
+            'original_price',
             'analyses_per_month', 'api_rate_per_hour',
             'max_resume_size_mb', 'max_resumes_stored',
             'credits_per_month', 'max_credits_balance',

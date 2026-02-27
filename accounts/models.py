@@ -242,7 +242,13 @@ class Plan(models.Model):
         max_digits=8,
         decimal_places=2,
         default=0,
-        help_text='Price in INR (0 for free tier).',
+        help_text='Discounted/current price in INR (what users actually pay).',
+    )
+    original_price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=0,
+        help_text='Original price in INR before discount (0 = no discount). Shown as strikethrough on frontend.',
     )
 
     # ── Quotas & Limits ──────────────────────────────────────────────────

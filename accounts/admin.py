@@ -57,7 +57,7 @@ class EmailTemplateAdmin(admin.ModelAdmin):
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
     list_display = (
-        'name', 'slug', 'billing_cycle', 'price',
+        'name', 'slug', 'billing_cycle', 'price', 'original_price',
         'credits_per_month', 'max_credits_balance',
         'topup_credits_per_pack', 'topup_price',
         'analyses_per_month', 'api_rate_per_hour',
@@ -71,7 +71,7 @@ class PlanAdmin(admin.ModelAdmin):
     actions = ['duplicate_plans', 'sync_with_razorpay', 'deactivate_plans', 'activate_plans']
     fieldsets = (
         (None, {
-            'fields': ('name', 'slug', 'description', 'billing_cycle', 'price', 'is_active', 'display_order'),
+            'fields': ('name', 'slug', 'description', 'billing_cycle', 'price', 'original_price', 'is_active', 'display_order'),
         }),
         ('Credits & Wallet', {
             'fields': ('credits_per_month', 'max_credits_balance', 'topup_credits_per_pack', 'topup_price'),
