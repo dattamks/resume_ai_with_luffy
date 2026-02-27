@@ -1,9 +1,21 @@
 import hashlib
 import uuid
 
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+
+# pgvector — only enabled when BOTH the Python package is available
+# AND the database backend is PostgreSQL (not SQLite during tests).
+_HAS_PGVECTOR = False
+_db_engine = settings.DATABASES.get('default', {}).get('ENGINE', '')
+if 'postgresql' in _db_engine:
+    try:
+        from pgvector.django import VectorField, HnswIndex
+        _HAS_PGVECTOR = True
+    except ImportError:
+        pass
 
 
 class Resume(models.Model):
@@ -320,55 +332,6 @@ class ResumeAnalysis(models.Model):
         ])
 
 
-class Job(models.Model):
-    """
-    Tracked job posting — linked to a user and optionally a resume.
-    Used for matching relevant jobs from the internet and sending
-    notifications to the user.
-    """
-
-    RELEVANCE_PENDING = 'pending'
-    RELEVANCE_RELEVANT = 'relevant'
-    RELEVANCE_IRRELEVANT = 'irrelevant'
-    RELEVANCE_CHOICES = [
-        (RELEVANCE_PENDING, 'Pending'),
-        (RELEVANCE_RELEVANT, 'Relevant'),
-        (RELEVANCE_IRRELEVANT, 'Irrelevant'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='jobs')
-    resume = models.ForeignKey(
-        Resume, on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='jobs',
-        help_text='Resume used for matching this job',
-    )
-    job_url = models.URLField(max_length=2048, help_text='URL of the job posting')
-    title = models.CharField(max_length=500, blank=True, help_text='Job title/role')
-    company = models.CharField(max_length=255, blank=True)
-    description = models.TextField(blank=True, help_text='Job description snippet')
-    relevance = models.CharField(
-        max_length=15,
-        choices=RELEVANCE_CHOICES,
-        default=RELEVANCE_PENDING,
-        db_index=True,
-        help_text='User feedback on job relevance',
-    )
-    source = models.CharField(max_length=100, blank=True, help_text='Where the job was found (e.g. linkedin, indeed)')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['user', '-created_at']),
-            models.Index(fields=['user', 'relevance']),
-        ]
-
-    def __str__(self):
-        return f"{self.title or self.job_url[:60]} ({self.user.username})"
-
-
 class GeneratedResume(models.Model):
     """
     AI-generated improved resume based on analysis findings.
@@ -441,7 +404,67 @@ class GeneratedResume(models.Model):
         return f"Generated resume for analysis #{self.analysis_id} ({self.template}, {self.format})"
 
 
-# ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
+# ── Smart Job Alerts ─────────────────────────────────────────────────────────
+
+
+class CrawlSource(models.Model):
+    """
+    Admin-managed crawl source. Each entry defines a job board or company
+    career page that the daily crawl should scrape.
+
+    Managed via Django Admin — no user-facing API.
+    """
+
+    TYPE_JOB_BOARD = 'job_board'
+    TYPE_COMPANY = 'company'
+    TYPE_CHOICES = [
+        (TYPE_JOB_BOARD, 'Job Board'),
+        (TYPE_COMPANY, 'Company Career Page'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text='Display name (e.g. "LinkedIn", "Google Careers")',
+    )
+    source_type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default=TYPE_JOB_BOARD,
+        help_text='Job board (uses {query}/{location} URL template) or company career page',
+    )
+    url_template = models.CharField(
+        max_length=2048,
+        help_text=(
+            'URL template with {query} and {location} placeholders for job boards. '
+            'Plain URL for company career pages.'
+        ),
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text='Inactive sources are skipped during crawl',
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=10,
+        help_text='Lower = crawled first. Use to prioritise important sources.',
+    )
+    last_crawled_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Timestamp of last successful crawl',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['priority', 'name']
+        verbose_name = 'Crawl Source'
+        verbose_name_plural = 'Crawl Sources'
+
+    def __str__(self):
+        status = '✓' if self.is_active else '✗'
+        return f"[{status}] {self.name} ({self.get_source_type_display()})"
 
 
 class JobSearchProfile(models.Model):
@@ -482,6 +505,13 @@ class JobSearchProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Phase 12: embedding for pgvector similarity matching
+    if _HAS_PGVECTOR:
+        embedding = VectorField(
+            dimensions=1536, null=True, blank=True,
+            help_text='Resume text embedding for similarity matching',
+        )
+
     class Meta:
         ordering = ['-updated_at']
 
@@ -517,7 +547,8 @@ class JobAlert(models.Model):
         default=dict,
         help_text=(
             'Alert preferences: remote_ok (bool), location (str), '
-            'salary_min (int), excluded_companies (list)'
+            'salary_min (int), excluded_companies (list), '
+            'priority_companies (list)'
         ),
     )
     last_run_at = models.DateTimeField(null=True, blank=True)
@@ -546,15 +577,13 @@ class JobAlert(models.Model):
 
 class DiscoveredJob(models.Model):
     """
-    A job posting discovered from an external source (SerpAPI, Adzuna, etc.).
+    A job posting discovered from an external source (Firecrawl).
     Global — not per-user. Deduplicated by (source, external_id).
     """
 
-    SOURCE_SERPAPI = 'serpapi'
-    SOURCE_ADZUNA = 'adzuna'
+    SOURCE_FIRECRAWL = 'firecrawl'
     SOURCE_CHOICES = [
-        (SOURCE_SERPAPI, 'SerpAPI (Google Jobs)'),
-        (SOURCE_ADZUNA, 'Adzuna'),
+        (SOURCE_FIRECRAWL, 'Firecrawl'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -572,6 +601,13 @@ class DiscoveredJob(models.Model):
     posted_at = models.DateTimeField(null=True, blank=True)
     raw_data = models.JSONField(null=True, blank=True, help_text='Full raw API response for this job')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Phase 12: embedding for pgvector similarity matching
+    if _HAS_PGVECTOR:
+        embedding = VectorField(
+            dimensions=1536, null=True, blank=True,
+            help_text='Job listing embedding for similarity matching',
+        )
 
     class Meta:
         ordering = ['-created_at']
@@ -631,6 +667,10 @@ class JobMatch(models.Model):
         default=FEEDBACK_PENDING,
         db_index=True,
     )
+    feedback_reason = models.TextField(
+        blank=True,
+        help_text='User-provided reason for their feedback (used in learning loop)',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -680,3 +720,96 @@ class JobAlertRun(models.Model):
 
     def __str__(self):
         return f"Run {self.id} for alert {self.job_alert_id} ({self.jobs_matched}/{self.jobs_discovered} matched)"
+
+
+# ── Phase 12: Firecrawl + pgvector Job Alerts Redesign ────────────────────────
+
+
+class SentAlert(models.Model):
+    """
+    Deduplication log — prevents resending the same job to the same user
+    on the same channel. Checked before sending email or in-app notification.
+    """
+
+    CHANNEL_EMAIL = 'email'
+    CHANNEL_IN_APP = 'in_app'
+    CHANNEL_CHOICES = [
+        (CHANNEL_EMAIL, 'Email'),
+        (CHANNEL_IN_APP, 'In-App'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_alerts')
+    discovered_job = models.ForeignKey(
+        DiscoveredJob, on_delete=models.CASCADE,
+        related_name='sent_alerts',
+    )
+    channel = models.CharField(
+        max_length=20,
+        choices=CHANNEL_CHOICES,
+        help_text='Notification channel used',
+    )
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-sent_at']
+        verbose_name = 'Sent Alert'
+        verbose_name_plural = 'Sent Alerts'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'discovered_job', 'channel'],
+                name='unique_sent_alert_per_channel',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', '-sent_at'], name='sentalert_user_sent_idx'),
+        ]
+
+    def __str__(self):
+        return f"SentAlert({self.user.username}, {self.discovered_job.title[:30]}, {self.channel})"
+
+
+class Notification(models.Model):
+    """
+    In-app notification store. Powers the notification bell/badge in the frontend.
+    Supports multiple notification types with metadata for deep-linking.
+    """
+
+    TYPE_JOB_MATCH = 'job_match'
+    TYPE_ANALYSIS_DONE = 'analysis_done'
+    TYPE_RESUME_GENERATED = 'resume_generated'
+    TYPE_SYSTEM = 'system'
+    TYPE_CHOICES = [
+        (TYPE_JOB_MATCH, 'Job Match'),
+        (TYPE_ANALYSIS_DONE, 'Analysis Complete'),
+        (TYPE_RESUME_GENERATED, 'Resume Generated'),
+        (TYPE_SYSTEM, 'System'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=255)
+    body = models.TextField(blank=True)
+    link = models.CharField(
+        max_length=2048, blank=True,
+        help_text='Relative URL or external link for deep-linking',
+    )
+    is_read = models.BooleanField(default=False, db_index=True)
+    notification_type = models.CharField(
+        max_length=30, choices=TYPE_CHOICES, db_index=True,
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Notification'
+        verbose_name_plural = 'Notifications'
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='notification_user_created_idx'),
+            models.Index(fields=['user', 'is_read', '-created_at'], name='notification_user_unread_idx'),
+        ]
+
+    def __str__(self):
+        read_marker = '✓' if self.is_read else '●'
+        return f"{read_marker} {self.title[:50]} ({self.user.username})"

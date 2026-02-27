@@ -14,22 +14,21 @@
 5. [Resume Endpoints](#5-resume-endpoints)
 6. [Dashboard Endpoints](#6-dashboard-endpoints)
 7. [Share Endpoints](#7-share-endpoints)
-8. [Job Endpoints](#8-job-endpoints)
-9. [Health Check](#9-health-check)
-10. [Response Schemas](#10-response-schemas)
-11. [LLM Analysis Output Schema](#11-llm-analysis-output-schema)
-12. [Pagination](#12-pagination)
-13. [Rate Limiting](#13-rate-limiting)
-14. [Polling for Analysis Status](#14-polling-for-analysis-status)
-15. [Error Handling Reference](#15-error-handling-reference)
-16. [TypeScript Type Definitions](#16-typescript-type-definitions)
-17. [Frontend Integration Recipes](#17-frontend-integration-recipes)
-18. [Plans & Wallet (Credits System)](#18-plans--wallet-credits-system)
-19. [Email Templates (Admin)](#19-email-templates-admin)
-20. [Resume Generation](#20-resume-generation)
-21. [Smart Job Alerts](#21-smart-job-alerts)
-22. [Razorpay Payments](#22-razorpay-payments)
-22. [Quick Reference — All Endpoints](#23-quick-reference--all-endpoints)
+8. [Health Check](#8-health-check)
+9. [Response Schemas](#9-response-schemas)
+10. [LLM Analysis Output Schema](#10-llm-analysis-output-schema)
+11. [Pagination](#11-pagination)
+12. [Rate Limiting](#12-rate-limiting)
+13. [Polling for Analysis Status](#13-polling-for-analysis-status)
+14. [Error Handling Reference](#14-error-handling-reference)
+15. [TypeScript Type Definitions](#15-typescript-type-definitions)
+16. [Frontend Integration Recipes](#16-frontend-integration-recipes)
+17. [Plans & Wallet (Credits System)](#17-plans--wallet-credits-system)
+18. [Email Templates (Admin)](#18-email-templates-admin)
+19. [Resume Generation](#19-resume-generation)
+20. [Smart Job Alerts](#20-smart-job-alerts)
+21. [Razorpay Payments](#21-razorpay-payments)
+22. [Quick Reference — All Endpoints](#22-quick-reference--all-endpoints)
 
 ---
 
@@ -693,7 +692,7 @@ Submits a resume + job description for async analysis. Returns immediately with 
 }
 ```
 
-After receiving the `id`, begin [polling for status](#14-polling-for-analysis-status).
+After receiving the `id`, begin [polling for status](#13-polling-for-analysis-status).
 
 **Errors:**
 
@@ -818,12 +817,12 @@ Returns 404 if the analysis is soft-deleted or belongs to another user.
 | Field           | Type          | Description                                          |
 |-----------------|---------------|------------------------------------------------------|
 | `status`        | string        | `"pending"` / `"processing"` / `"done"` / `"failed"` |
-| `pipeline_step` | string        | Current pipeline step (see [Polling](#14-polling-for-analysis-status)) |
+| `pipeline_step` | string        | Current pipeline step (see [Polling](#13-polling-for-analysis-status)) |
 | `overall_grade` | string        | Letter grade `"A"`–`"F"` (empty string until done)    |
 | `ats_score`     | int \| null   | Generic ATS score 0-100 (null until done)            |
 | `error_message` | string        | Error details (empty on success / in-progress)       |
 
-See [Polling for Analysis Status](#14-polling-for-analysis-status) for the full polling implementation guide.
+See [Polling for Analysis Status](#13-polling-for-analysis-status) for the full polling implementation guide.
 
 ---
 
@@ -851,7 +850,7 @@ Retries a failed analysis from its last incomplete pipeline step. Does not requi
 | `credits_used` | int  | Credits consumed by the retry        |
 | `balance`      | int  | Remaining wallet balance after deduction |
 
-After receiving 202, begin [polling for status](#14-polling-for-analysis-status) again.
+After receiving 202, begin [polling for status](#13-polling-for-analysis-status) again.
 
 **Errors:**
 
@@ -1258,119 +1257,7 @@ showToast('Share link copied!');
 
 ---
 
-## 8. Job Endpoints
-
-Track job postings found on the internet. Jobs are linked to a user and optionally to a resume. The `relevance` field captures user feedback (used to train future recommendations).
-
-### GET `/api/jobs/` — List Tracked Jobs
-
-🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns all tracked jobs for the user, newest first.
-
-**Query parameters:**
-
-| Param       | Default | Description |
-|-------------|---------|-------------|
-| `relevance` | —       | Filter by relevance: `pending`, `relevant`, or `irrelevant` |
-
-**Response (200):**
-```json
-[
-  {
-    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "job_url": "https://linkedin.com/jobs/view/123456",
-    "title": "Senior Python Developer",
-    "company": "Acme Corp",
-    "description": "Build cool stuff with Python...",
-    "relevance": "pending",
-    "source": "linkedin",
-    "resume": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-    "resume_filename": "my_resume.pdf",
-    "created_at": "2026-02-23T10:00:00Z",
-    "updated_at": "2026-02-23T10:00:00Z"
-  }
-]
-```
-
-**Response fields:**
-
-| Field             | Type          | Description                                     |
-|-------------------|---------------|-------------------------------------------------|
-| `id`              | UUID          | Job unique identifier                           |
-| `job_url`         | string        | URL to the job posting                          |
-| `title`           | string        | Job title (may be empty if not yet scraped)     |
-| `company`         | string        | Company name (may be empty)                     |
-| `description`     | string        | Job description snippet                         |
-| `relevance`       | string        | `"pending"`, `"relevant"`, or `"irrelevant"`    |
-| `source`          | string        | Where the job was found (e.g., `"linkedin"`)    |
-| `resume`          | UUID ǀ null   | Linked resume ID                                |
-| `resume_filename` | string ǀ null | Linked resume's original filename               |
-| `created_at`      | datetime      | When the job was tracked                        |
-| `updated_at`      | datetime      | Last update time                                |
-
----
-
-### POST `/api/jobs/` — Create Tracked Job
-
-🔒 Requires auth. Create a new tracked job posting.
-
-**Request (JSON):**
-```json
-{
-  "job_url": "https://linkedin.com/jobs/view/123456",
-  "title": "Senior Python Developer",
-  "company": "Acme Corp",
-  "description": "Build cool stuff...",
-  "source": "linkedin",
-  "resume_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
-}
-```
-
-| Field       | Type   | Required | Description |
-|-------------|--------|----------|-------------|
-| `job_url`   | string | ✅       | URL to job posting (max 2048 chars) |
-| `title`     | string | No       | Job title |
-| `company`   | string | No       | Company name |
-| `description`| string| No       | Job description snippet |
-| `source`    | string | No       | Source platform |
-| `resume_id` | UUID   | No       | Link to an existing resume |
-
-**Response (201 Created):** Full `Job` object (same schema as list response).
-
----
-
-### GET `/api/jobs/<uuid:id>/` — Retrieve Job
-
-🔒 Requires auth. Returns a single tracked job.
-
-**Response (200):** Full `Job` object.
-
----
-
-### DELETE `/api/jobs/<uuid:id>/` — Delete Job
-
-🔒 Requires auth. Permanently deletes a tracked job.
-
-**Response (204 No Content).**
-
----
-
-### POST `/api/jobs/<uuid:id>/relevant/` — Mark as Relevant
-
-🔒 Requires auth. Set the job's `relevance` to `"relevant"`.
-
-**Response (200):** Updated `Job` object.
-
----
-
-### POST `/api/jobs/<uuid:id>/irrelevant/` — Mark as Irrelevant
-
-🔒 Requires auth. Set the job's `relevance` to `"irrelevant"`.
-
-**Response (200):** Updated `Job` object.
-
----
-
-## 9. Health Check
+## 8. Health Check
 
 ### GET `/api/health/` — Health Check
 
@@ -1388,7 +1275,7 @@ Track job postings found on the internet. Jobs are linked to a user and optional
 
 ---
 
-## 10. Response Schemas
+## 9. Response Schemas
 
 ### Detail Response Schema
 
@@ -1611,7 +1498,7 @@ This means the frontend can **always rely on `jd_role` being populated** on a co
 
 ---
 
-## 11. LLM Analysis Output Schema
+## 10. LLM Analysis Output Schema
 
 The AI returns the following JSON structure. These fields are stored in `llm_response.parsed_response` **and also flattened** onto the top-level analysis object (so you can access them directly without nesting through `llm_response`).
 
@@ -1797,7 +1684,7 @@ The backend parses `llm_response.parsed_response` and flattens key fields onto t
 
 ---
 
-## 12. Pagination
+## 11. Pagination
 
 All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`) return paginated responses.
 
@@ -1845,7 +1732,7 @@ const { items, totalPages, hasNext } = await fetchPage('/analyses/', 1);
 
 ---
 
-## 13. Rate Limiting
+## 12. Rate Limiting
 
 Every endpoint is throttled. Six scopes exist, each overridable via environment variable:
 
@@ -1888,7 +1775,7 @@ api.interceptors.response.use(null, (error) => {
 
 ---
 
-## 14. Polling for Analysis Status
+## 13. Polling for Analysis Status
 
 After submitting an analysis (`POST /api/analyze/` → `{ id, status }`), poll the lightweight status endpoint until complete.
 
@@ -1988,7 +1875,7 @@ const STEP_PROGRESS = {
 
 ---
 
-## 15. Error Handling Reference
+## 14. Error Handling Reference
 
 ### HTTP Status Codes
 
@@ -2086,7 +1973,7 @@ function handleApiError(error) {
 
 ---
 
-## 16. TypeScript Type Definitions
+## 15. TypeScript Type Definitions
 
 Use these types for type-safe API integration (copy into your project as `src/types/api.ts`):
 
@@ -2414,7 +2301,7 @@ interface DashboardStats {
 
 ---
 
-## 17. Frontend Integration Recipes
+## 16. Frontend Integration Recipes
 
 ### Recipe 1: Analysis Submit Flow (React)
 
@@ -2665,7 +2552,7 @@ function ResumesPage() {
 
 ---
 
-## 18. Plans & Wallet (Credits System)
+## 17. Plans & Wallet (Credits System)
 
 Plans define subscription tiers with quotas, rate limits, and feature flags. Each plan grants monthly credits used for resume analysis. Plans are managed via Django Admin and assigned to users via `UserProfile.plan` FK. New users auto-receive the **Free** plan on registration.
 
@@ -2847,7 +2734,7 @@ Paginated transaction history.
 #### `POST /api/auth/wallet/topup/` *(DEPRECATED)*
 
 > **Deprecated in v0.13.1.** Credit top-ups now require payment via Razorpay.
-> Use `POST /api/auth/payments/topup/` instead (see [§ 22](#22-razorpay-payments)).
+> Use `POST /api/auth/payments/topup/` instead (see [§ 21](#21-razorpay-payments)).
 
 This endpoint now always returns **402 Payment Required**:
 
@@ -2900,7 +2787,7 @@ List all active plans. **Public endpoint — no auth required.**
 #### `POST /api/auth/plans/subscribe/`
 
 Switch to a different plan. **Only allows downgrade to free plan.** Upgrading to a paid plan
-requires payment via Razorpay (see [§ 22](#22-razorpay-payments)).
+requires payment via Razorpay (see [§ 21](#21-razorpay-payments)).
 
 **Request:**
 ```json
@@ -3109,7 +2996,7 @@ interface InsufficientCreditsError {
 
 ---
 
-## 19. Email Templates (Admin)
+## 18. Email Templates (Admin)
 
 Email templates are stored in the database (`EmailTemplate` model) and managed via Django Admin. They use **Django template syntax** for variable substitution.
 
@@ -3164,13 +3051,13 @@ send_templated_email(
 
 ---
 
-## 20. Resume Generation
+## 19. Resume Generation
 
 Generate an AI-improved resume directly from a completed analysis report. The system uses the analysis findings (missing keywords, section scores, quick wins) as an improvement spec and rewrites the resume via LLM, then renders it to PDF or DOCX.
 
 **Cost:** 1 credit per generation.
 
-### 20.1 Trigger Generation
+### 19.1 Trigger Generation
 
 ```
 POST /api/analyses/<id>/generate-resume/
@@ -3214,7 +3101,7 @@ Content-Type: application/json
 | 402 | Insufficient credits | `{"detail": "...", "balance": 0, "cost": 1}` |
 | 404 | Analysis not found / not owned | Standard 404 |
 
-### 20.2 Poll Generation Status
+### 19.2 Poll Generation Status
 
 ```
 GET /api/analyses/<id>/generated-resume/
@@ -3245,7 +3132,7 @@ Authorization: Bearer <token>
 
 **Polling recommendation:** Same pattern as analysis polling — start at 2s, back off to 5s.
 
-### 20.3 Download Generated Resume
+### 19.3 Download Generated Resume
 
 ```
 GET /api/analyses/<id>/generated-resume/download/
@@ -3259,7 +3146,7 @@ Authorization: Bearer <token>
 | 302 | File ready — `Location` header contains signed URL |
 | 404 | No generated resume, or generation not done yet |
 
-### 20.4 List All Generated Resumes
+### 19.4 List All Generated Resumes
 
 ```
 GET /api/generated-resumes/
@@ -3285,7 +3172,7 @@ Returns a flat array (not paginated) of all generated resumes for the authentica
 ]
 ```
 
-### 20.5 TypeScript Types
+### 19.5 TypeScript Types
 
 ```typescript
 type ResumeTemplate = 'ats_classic';
@@ -3318,7 +3205,7 @@ interface GeneratedResume {
 }
 ```
 
-### 20.6 Frontend Integration Recipe
+### 19.6 Frontend Integration Recipe
 
 ```typescript
 // 1. Trigger generation
@@ -3346,7 +3233,7 @@ const poll = setInterval(async () => {
 
 ---
 
-## 21. Smart Job Alerts
+## 20. Smart Job Alerts
 
 Smart Job Alerts automatically discover job opportunities that match a user's resume. The system uses LLM-powered profile extraction and multi-source job searching with relevance scoring.
 
@@ -3355,9 +3242,10 @@ Smart Job Alerts automatically discover job opportunities that match a user's re
 - **Plan requirement**: User must be on a plan with `job_notifications = true` (e.g. Pro)
 - **Quota**: Each plan defines `max_job_alerts` (Free=0, Pro=3)
 - **Credits**: Each alert run costs **1 credit** (`job_alert_run` action)
-- Periodic task runs every 6 hours to process due alerts
+- **Crawl schedule**: Admin-configurable via `django-celery-beat` (default: daily at 20:30 UTC). Crawl sources are managed in Django Admin via the `CrawlSource` model.
+- **Matching**: Uses pgvector cosine-similarity against OpenAI embeddings, with a feedback learning loop that adjusts scores based on past user feedback.
 
-### 21.1 List / Create Job Alerts
+### 20.1 List / Create Job Alerts
 
 ```
 GET  /api/job-alerts/
@@ -3375,8 +3263,10 @@ POST /api/job-alerts/
   "frequency": "daily",           // "daily" | "weekly"
   "preferences": {                // optional
     "excluded_companies": ["Evil Corp"],
-    "location_filter": "Remote",
-    "date_filter": "week"         // "day" | "week" | "month" | null
+    "priority_companies": ["Google", "Stripe"],
+    "remote_ok": true,
+    "location": "San Francisco",
+    "salary_min": 120000
   }
 }
 ```
@@ -3405,7 +3295,7 @@ POST /api/job-alerts/
 | 403 | `{"detail": "You have reached the maximum of 3 active job alerts...", "max_job_alerts": 3, "active_count": 3}` |
 | 400 | Validation error (invalid resume, etc.) |
 
-### 21.2 Job Alert Detail
+### 20.2 Job Alert Detail
 
 ```
 GET    /api/job-alerts/<uuid:id>/
@@ -3424,8 +3314,10 @@ DELETE /api/job-alerts/<uuid:id>/
   "is_active": true,
   "preferences": {
     "excluded_companies": ["Acme"],
-    "location_filter": "New York",
-    "date_filter": "day"
+    "priority_companies": ["Meta"],
+    "remote_ok": false,
+    "location": "New York",
+    "salary_min": 100000
   }
 }
 ```
@@ -3436,7 +3328,7 @@ DELETE /api/job-alerts/<uuid:id>/
 { "detail": "Job alert deactivated." }
 ```
 
-### 21.3 List Matches
+### 20.3 List Matches
 
 ```
 GET /api/job-alerts/<uuid:id>/matches/
@@ -3463,7 +3355,7 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
       "id": "uuid",
       "job": {
         "id": "uuid",
-        "source": "serpapi",
+        "source": "firecrawl",
         "title": "Senior Python Developer",
         "company": "TechCorp",
         "location": "Remote",
@@ -3482,7 +3374,7 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
 }
 ```
 
-### 21.4 Submit Match Feedback
+### 20.4 Submit Match Feedback
 
 ```
 POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
@@ -3491,22 +3383,26 @@ POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
 **Request body:**
 ```json
 {
-  "user_feedback": "relevant"    // "relevant" | "irrelevant" | "applied" | "dismissed"
+  "user_feedback": "relevant",   // "relevant" | "irrelevant" | "applied" | "dismissed"
+  "feedback_reason": "Great match — love the tech stack"  // optional free-text
 }
 ```
+
+> **Feedback learning loop:** Submitting feedback trains the matching algorithm. Future matches for this alert will boost or penalise companies and keywords based on your feedback history.
 
 **Response (200):**
 ```json
 {
   "id": "uuid",
   "user_feedback": "relevant",
+  "feedback_reason": "Great match — love the tech stack",
   "relevance_score": 85,
   "match_reason": "...",
   ...
 }
 ```
 
-### 21.5 Manual Run
+### 20.5 Manual Run
 
 ```
 POST /api/job-alerts/<uuid:id>/run/
@@ -3531,7 +3427,7 @@ Triggers an immediate job discovery + matching run for the alert. Costs 1 credit
 | 400 | Job search profile not yet extracted |
 | 402 | Insufficient credits |
 
-### 21.6 Search Profile (read-only)
+### 20.6 Search Profile (read-only)
 
 The `search_profile` object is nested inside the alert detail response. It is extracted automatically by an LLM from the linked resume.
 
@@ -3547,14 +3443,16 @@ The `search_profile` object is nested inside the alert detail response. It is ex
 }
 ```
 
-### 21.7 TypeScript Types
+### 20.7 TypeScript Types
 
 ```typescript
 // ── Job Alerts ──────────────────────────────────────────
 interface JobAlertPreferences {
   excluded_companies?: string[];
-  location_filter?: string;
-  date_filter?: 'day' | 'week' | 'month' | null;
+  priority_companies?: string[];
+  remote_ok?: boolean;
+  location?: string;
+  salary_min?: number;
 }
 
 interface JobSearchProfile {
@@ -3594,7 +3492,7 @@ interface JobAlert {
 
 interface DiscoveredJob {
   id: string;
-  source: 'serpapi' | 'adzuna';
+  source: string;       // e.g. 'firecrawl'
   title: string;
   company: string;
   location: string;
@@ -3612,11 +3510,12 @@ interface JobMatch {
   relevance_score: number;       // 0–100
   match_reason: string;
   user_feedback: MatchFeedback;
+  feedback_reason: string;       // user-provided free-text reason (may be empty)
   created_at: string;
 }
 ```
 
-### 21.8 Integration Recipe — Job Alerts Screen
+### 20.8 Integration Recipe — Job Alerts Screen
 
 ```typescript
 // Fetch user's job alerts
@@ -3643,10 +3542,10 @@ const fetchMatches = async (alertId: string, page = 1, feedback?: string) => {
 };
 
 // Submit feedback on a match
-const submitFeedback = async (alertId: string, matchId: string, feedback: MatchFeedback) => {
+const submitFeedback = async (alertId: string, matchId: string, feedback: MatchFeedback, reason?: string) => {
   const { data } = await api.post(
     `/api/job-alerts/${alertId}/matches/${matchId}/feedback/`,
-    { user_feedback: feedback }
+    { user_feedback: feedback, feedback_reason: reason }
   );
   return data;
 };
@@ -3660,13 +3559,13 @@ const triggerRun = async (alertId: string) => {
 
 ---
 
-## 22. Razorpay Payments
+## 21. Razorpay Payments
 
 Full Razorpay payment gateway integration for **plan subscriptions** (recurring) and **credit top-ups** (one-time).
 
 > **Currency:** INR &nbsp;|&nbsp; **Amounts:** All amounts from the API are in **paise** (₹499 = 49900 paise).
 
-### 22.1 Subscribe to a Plan
+### 21.1 Subscribe to a Plan
 
 **Step 1 — Create subscription:**
 
@@ -3732,7 +3631,7 @@ Body: {
 }
 ```
 
-### 22.2 Cancel Subscription
+### 21.2 Cancel Subscription
 
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
@@ -3751,7 +3650,7 @@ Auth: Bearer token
 }
 ```
 
-### 22.3 Subscription Status
+### 21.3 Subscription Status
 
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
@@ -3775,7 +3674,7 @@ Auth: Bearer token
 }
 ```
 
-### 22.4 Credit Top-Up (One-Time Purchase)
+### 21.4 Credit Top-Up (One-Time Purchase)
 
 **Step 1 — Create top-up order:**
 
@@ -3841,7 +3740,7 @@ Body: {
 }
 ```
 
-### 22.5 Payment History
+### 21.5 Payment History
 
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
@@ -3877,7 +3776,7 @@ Auth: Bearer token
 }
 ```
 
-### 22.6 Webhook Endpoint (Backend-Only)
+### 21.6 Webhook Endpoint (Backend-Only)
 
 ```
 POST /api/auth/payments/webhook/
@@ -3888,7 +3787,7 @@ Auth: None (signature verification via X-Razorpay-Signature header)
 > Events handled: `payment.captured`, `payment.failed`, `subscription.activated`,
 > `subscription.charged`, `subscription.cancelled`, `subscription.completed`, `subscription.halted`.
 
-### 22.7 TypeScript Types
+### 21.7 TypeScript Types
 
 ```typescript
 interface RazorpayResponse {
@@ -3961,7 +3860,7 @@ interface PaymentHistoryEntry {
 }
 ```
 
-### 22.8 Integration Recipe — Payment Flow
+### 21.8 Integration Recipe — Payment Flow
 
 ```typescript
 import { loadScript } from './utils'; // loads Razorpay checkout.js
@@ -4038,7 +3937,7 @@ const cancelSubscription = async () => {
 
 ---
 
-## 23. Quick Reference — All Endpoints
+## 22. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -4058,7 +3957,7 @@ const cancelSubscription = async () => {
 | **Wallet & Plans** |||||
 | GET | `/api/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
 | GET | `/api/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
-| POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§22) |
+| POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§21) |
 | GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
 | POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
 | **Razorpay Payments** |||||
@@ -4083,13 +3982,6 @@ const cancelSubscription = async () => {
 | **Resume** |||||
 | GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (with `file_url` for download) |
 | DELETE | `/api/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
-| **Jobs** |||||
-| GET | `/api/jobs/` | ✅ | Readonly (120/hr) | List tracked jobs (filterable by `?relevance=`) |
-| POST | `/api/jobs/` | ✅ | Readonly (120/hr) | Create tracked job |
-| GET | `/api/jobs/<uuid:id>/` | ✅ | Readonly (120/hr) | Retrieve single job |
-| DELETE | `/api/jobs/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete tracked job |
-| POST | `/api/jobs/<uuid:id>/relevant/` | ✅ | Readonly (120/hr) | Mark job as relevant |
-| POST | `/api/jobs/<uuid:id>/irrelevant/` | ✅ | Readonly (120/hr) | Mark job as irrelevant |
 | **Resume Generation** |||||
 | POST | `/api/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
 | GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
@@ -4114,6 +4006,18 @@ const cancelSubscription = async () => {
 ---
 
 ## Changelog
+
+### v0.17.0 — Unified Job Alerts Architecture
+
+- **Job model removed**: The manual job tracker (`/api/jobs/`) has been removed. All job discovery is now handled exclusively through Smart Job Alerts.
+- **Firecrawl replaces SerpAPI/Adzuna**: Job crawling now uses Firecrawl for web scraping. The `source` field on discovered jobs is now `"firecrawl"` (previously `"serpapi"` or `"adzuna"`).
+- **CrawlSource admin model**: Admins can configure crawl sources (job boards and company career pages) via Django Admin.
+- **Admin-configurable crawl schedule**: The crawl schedule is now managed via `django-celery-beat` instead of a hardcoded 6-hour interval. Default: daily at 20:30 UTC.
+- **pgvector matching**: Job matching uses OpenAI embeddings with pgvector cosine-similarity instead of LLM scoring.
+- **`priority_companies` preference**: New preference field to boost matches from preferred companies. Allowed preference keys: `excluded_companies`, `priority_companies`, `remote_ok`, `location`, `salary_min`.
+- **`feedback_reason` field**: `POST .../feedback/` now accepts an optional `feedback_reason` (free-text) alongside `user_feedback`.
+- **Feedback learning loop**: Past feedback (relevant/irrelevant with reasons) now trains the matching algorithm — boosting/penalising companies and keywords for future runs.
+- **TypeScript type changes**: `JobAlertPreferences` updated (removed `location_filter`/`date_filter`, added `priority_companies`/`remote_ok`/`location`/`salary_min`). `JobMatch` now includes `feedback_reason`. `DiscoveredJob.source` changed from union type to `string`.
 
 ### v0.15.0 — Edge Case Fixes
 

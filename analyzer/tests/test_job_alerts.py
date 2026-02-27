@@ -1,14 +1,13 @@
 """
-Tests for Phase 11 — Smart Job Alerts.
+Tests for Smart Job Alerts (Phase 11 + Phase 12 cleanup).
 
 Covers:
   - JobAlert CRUD endpoints (plan gating, quota, create, detail, update, delete)
   - JobAlertMatch list + feedback endpoints
   - Manual run endpoint
   - Job search profile extraction task
-  - Job source providers (mocked)
   - Job matcher service (mocked LLM)
-  - Discover jobs task (mocked sources)
+  - Crawl jobs task (mocked sources)
 """
 import uuid
 from datetime import timedelta
@@ -238,7 +237,7 @@ class JobAlertMatchTests(TestCase):
             seniority='senior',
         )
         self.dj = DiscoveredJob.objects.create(
-            source='serpapi',
+            source='firecrawl',
             external_id='test-job-1',
             url='https://example.com/job/1',
             title='Senior Python Developer',
@@ -304,20 +303,20 @@ class JobAlertMatchTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
-    @patch('analyzer.tasks.discover_jobs_for_alert_task')
-    def test_manual_run_trigger(self, mock_discover):
-        mock_discover.delay.return_value = MagicMock()
+    @patch('analyzer.tasks.crawl_jobs_for_alert_task')
+    def test_manual_run_trigger(self, mock_crawl):
+        mock_crawl.delay.return_value = MagicMock()
         resp = self.client.post(f'/api/job-alerts/{self.alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
-        mock_discover.delay.assert_called_once_with(str(self.alert.id))
+        mock_crawl.delay.assert_called_once_with(str(self.alert.id))
 
-    @patch('analyzer.tasks.discover_jobs_for_alert_task')
-    def test_manual_run_inactive_alert(self, mock_discover):
+    @patch('analyzer.tasks.crawl_jobs_for_alert_task')
+    def test_manual_run_inactive_alert(self, mock_crawl):
         self.alert.is_active = False
         self.alert.save(update_fields=['is_active'])
         resp = self.client.post(f'/api/job-alerts/{self.alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        mock_discover.delay.assert_not_called()
+        mock_crawl.delay.assert_not_called()
 
 
 class JobSearchProfileExtractionTest(TestCase):
@@ -367,82 +366,46 @@ class JobSearchProfileExtractionTest(TestCase):
 
 
 class JobSourceProvidersTest(TestCase):
-    """Test job source providers with mocked API responses."""
+    """Test Firecrawl job source with mocked API responses."""
 
-    @patch('analyzer.services.job_sources.serpapi_source.requests.get')
-    def test_serpapi_source(self, mock_get):
-        from analyzer.services.job_sources.serpapi_source import SerpAPIJobSource
+    @patch('analyzer.services.job_sources.firecrawl_source.FirecrawlJobSource._extract_via_llm')
+    @patch('firecrawl.FirecrawlApp')
+    def test_firecrawl_source(self, MockFirecrawl, mock_extract):
+        """Firecrawl source scrapes page and extracts jobs via LLM."""
+        from analyzer.services.job_sources.firecrawl_source import FirecrawlJobSource
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'jobs_results': [
-                {
-                    'job_id': 'test-123',
-                    'title': 'Python Developer',
-                    'company_name': 'Acme Corp',
-                    'location': 'London, UK',
-                    'description': 'Build awesome things with Python...',
-                    'related_links': [{'link': 'https://example.com/job'}],
-                    'detected_extensions': {'salary': '$120k'},
-                },
-            ],
-        }
-        mock_get.return_value = mock_response
+        # Mock scrape result (markdown must be >100 chars to pass content check)
+        mock_app = MagicMock()
+        mock_result = MagicMock()
+        mock_result.markdown = (
+            '# Jobs Page\n\n'
+            '## Senior Python Developer at Acme Corp\n'
+            'Location: London, UK | Salary: $120k | Posted: 2 days ago\n'
+            'Build awesome things with Python and Django. ' * 3
+        )
+        mock_app.scrape.return_value = mock_result
+        MockFirecrawl.return_value = mock_app
 
-        source = SerpAPIJobSource(api_key='test-key')
-        results = source.search(queries=['Python Developer'], location='London')
+        # Mock LLM extraction
+        mock_extract.return_value = [
+            {
+                'title': 'Senior Python Developer',
+                'company': 'Acme Corp',
+                'location': 'London, UK',
+                'url': 'https://example.com/job/123',
+                'salary': '$120k',
+                'snippet': 'Build awesome things...',
+            },
+        ]
 
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].source, 'serpapi')
-        self.assertEqual(results[0].title, 'Python Developer')
+        with self.settings(FIRECRAWL_API_KEY='test-key'):
+            source = FirecrawlJobSource()
+            results = source.search(queries=['Python Developer'], location='London')
+
+        self.assertGreaterEqual(len(results), 1)
+        self.assertEqual(results[0].source, 'firecrawl')
+        self.assertEqual(results[0].title, 'Senior Python Developer')
         self.assertEqual(results[0].company, 'Acme Corp')
-        self.assertEqual(results[0].external_id, 'test-123')
-
-    @patch('analyzer.services.job_sources.adzuna_source.requests.get')
-    def test_adzuna_source(self, mock_get):
-        from analyzer.services.job_sources.adzuna_source import AdzunaJobSource
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'results': [
-                {
-                    'id': 98765,
-                    'title': 'Django Developer',
-                    'company': {'display_name': 'TechCo'},
-                    'location': {'display_name': 'Manchester'},
-                    'description': 'Django web development...',
-                    'redirect_url': 'https://adzuna.com/job/98765',
-                    'salary_min': 45000,
-                    'salary_max': 65000,
-                    'created': '2026-02-25T00:00:00Z',
-                },
-            ],
-        }
-        mock_get.return_value = mock_response
-
-        source = AdzunaJobSource(app_id='test-id', app_key='test-key', country='gb')
-        results = source.search(queries=['Django Developer'], location='Manchester')
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].source, 'adzuna')
-        self.assertEqual(results[0].title, 'Django Developer')
-        self.assertEqual(results[0].company, 'TechCo')
-        self.assertEqual(results[0].external_id, '98765')
-
-    def test_serpapi_no_key(self):
-        from analyzer.services.job_sources.serpapi_source import SerpAPIJobSource
-        source = SerpAPIJobSource(api_key='')
-        results = source.search(queries=['Python'])
-        self.assertEqual(results, [])
-
-    def test_adzuna_no_key(self):
-        from analyzer.services.job_sources.adzuna_source import AdzunaJobSource
-        source = AdzunaJobSource(app_id='', app_key='')
-        results = source.search(queries=['Python'])
-        self.assertEqual(results, [])
-
 
 class JobMatcherServiceTest(TestCase):
     """Test the LLM batch matcher with mocked LLM responses."""
@@ -465,12 +428,12 @@ class JobMatcherServiceTest(TestCase):
     @patch('analyzer.services.job_matcher.OpenAI')
     def test_match_jobs_success(self, MockOpenAI):
         dj1 = DiscoveredJob.objects.create(
-            source='serpapi', external_id='match-1',
+            source='firecrawl', external_id='match-1',
             url='https://example.com/1', title='Python Dev',
             company='Acme',
         )
         dj2 = DiscoveredJob.objects.create(
-            source='serpapi', external_id='match-2',
+            source='firecrawl', external_id='match-2',
             url='https://example.com/2', title='Java Dev',
             company='OtherCo',
         )
@@ -493,12 +456,12 @@ class JobMatcherServiceTest(TestCase):
         self.assertEqual(above_threshold[0]['score'], 85)
 
 
-class DiscoverJobsTaskTest(TestCase):
-    """Test the periodic discover_jobs_task with mocked sources."""
+class CrawlJobsDailyTaskTest(TestCase):
+    """Test the daily crawl_jobs_daily_task with mocked sources."""
 
     def setUp(self):
         _ensure_plans()
-        self.user = User.objects.create_user(username='discoveruser', password='StrongPass123!')
+        self.user = User.objects.create_user(username='crawluser', password='StrongPass123!')
         _give_credits(self.user)
         _set_plan(self.user, 'pro')
         self.resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
@@ -508,7 +471,7 @@ class DiscoverJobsTaskTest(TestCase):
             resume=self.resume,
             frequency='daily',
             is_active=True,
-            next_run_at=timezone.now() - timedelta(hours=1),  # Due
+            next_run_at=timezone.now() - timedelta(hours=1),
         )
         self.profile = JobSearchProfile.objects.create(
             resume=self.resume,
@@ -518,23 +481,23 @@ class DiscoverJobsTaskTest(TestCase):
             locations=['Remote'],
         )
 
-    @patch('analyzer.tasks.match_jobs_task')
+    @patch('analyzer.tasks.match_all_alerts_task')
     @patch('analyzer.services.job_sources.factory.get_job_sources')
-    def test_discover_creates_jobs_and_chains_matcher(self, mock_sources, mock_match):
+    def test_crawl_creates_jobs_and_chains_matcher(self, mock_sources, mock_match):
         from analyzer.services.job_sources.base import RawJobListing
 
         mock_source = MagicMock()
         mock_source.name.return_value = 'MockSource'
         mock_source.search.return_value = [
             RawJobListing(
-                source='serpapi',
+                source='firecrawl',
                 external_id='disc-1',
                 url='https://example.com/job/disc-1',
                 title='Backend Dev',
                 company='GoodCo',
             ),
             RawJobListing(
-                source='serpapi',
+                source='firecrawl',
                 external_id='disc-2',
                 url='https://example.com/job/disc-2',
                 title='Python Lead',
@@ -544,68 +507,27 @@ class DiscoverJobsTaskTest(TestCase):
         mock_sources.return_value = [mock_source]
         mock_match.delay.return_value = MagicMock()
 
-        from analyzer.tasks import discover_jobs_task
-        discover_jobs_task()
+        from analyzer.tasks import crawl_jobs_daily_task
+        crawl_jobs_daily_task()
 
         # Verify DiscoveredJob records created
         self.assertEqual(DiscoveredJob.objects.count(), 2)
 
-        # Verify match_jobs_task was chained
+        # Verify match_all_alerts_task was chained
         mock_match.delay.assert_called_once()
-        _, call_kwargs = mock_match.delay.call_args
-        # Should pass alert_id and list of job_ids
-        call_args = mock_match.delay.call_args[0]
-        self.assertEqual(call_args[0], str(self.alert.id))
-        self.assertEqual(len(call_args[1]), 2)
 
-        # Verify alert timestamps updated
-        self.alert.refresh_from_db()
-        self.assertIsNotNone(self.alert.last_run_at)
-        self.assertIsNotNone(self.alert.next_run_at)
-
-    @patch('analyzer.tasks.match_jobs_task')
+    @patch('analyzer.tasks.match_all_alerts_task')
     @patch('analyzer.services.job_sources.factory.get_job_sources')
-    def test_discover_respects_excluded_companies(self, mock_sources, mock_match):
-        from analyzer.services.job_sources.base import RawJobListing
+    def test_crawl_skips_when_no_active_alerts(self, mock_sources, mock_match):
+        """If no active alerts, no crawl should happen."""
+        self.alert.is_active = False
+        self.alert.save(update_fields=['is_active'])
 
-        self.alert.preferences = {'excluded_companies': ['BadCorp']}
-        self.alert.save(update_fields=['preferences'])
+        from analyzer.tasks import crawl_jobs_daily_task
+        crawl_jobs_daily_task()
 
-        mock_source = MagicMock()
-        mock_source.name.return_value = 'MockSource'
-        mock_source.search.return_value = [
-            RawJobListing(
-                source='serpapi', external_id='excl-1',
-                url='https://example.com/excl-1', title='Dev',
-                company='BadCorp',
-            ),
-            RawJobListing(
-                source='serpapi', external_id='excl-2',
-                url='https://example.com/excl-2', title='Dev',
-                company='GoodCorp',
-            ),
-        ]
-        mock_sources.return_value = [mock_source]
-        mock_match.delay.return_value = MagicMock()
-
-        from analyzer.tasks import discover_jobs_task
-        discover_jobs_task()
-
-        # Only 1 job should be saved (BadCorp excluded)
-        self.assertEqual(DiscoveredJob.objects.count(), 1)
-        self.assertEqual(DiscoveredJob.objects.first().company, 'GoodCorp')
-
-    @patch('analyzer.services.job_sources.factory.get_job_sources')
-    def test_discover_skips_alert_without_profile(self, mock_sources):
-        """If search profile doesn't exist, skip alert and update next_run_at."""
-        self.profile.delete()
-
-        from analyzer.tasks import discover_jobs_task
-        discover_jobs_task()
-
-        # Alert should still be updated
-        self.alert.refresh_from_db()
-        self.assertIsNotNone(self.alert.next_run_at)
+        mock_sources.assert_not_called()
+        mock_match.delay.assert_not_called()
 
 
 class EdgeCaseTests(TestCase):
@@ -677,8 +599,8 @@ class EdgeCaseTests(TestCase):
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @patch('analyzer.tasks.discover_jobs_for_alert_task')
-    def test_manual_run_insufficient_credits(self, mock_discover):
+    @patch('analyzer.tasks.crawl_jobs_for_alert_task')
+    def test_manual_run_insufficient_credits(self, mock_crawl):
         """Manual run with 0 credits should return 402."""
         from accounts.models import Wallet
         wallet = Wallet.objects.get(user=self.user)
@@ -697,7 +619,7 @@ class EdgeCaseTests(TestCase):
         )
         resp = self.client.post(f'/api/job-alerts/{alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_402_PAYMENT_REQUIRED)
-        mock_discover.delay.assert_not_called()
+        mock_crawl.delay.assert_not_called()
 
     def test_create_alert_for_other_users_resume(self):
         """Cannot create alert for another user's resume."""

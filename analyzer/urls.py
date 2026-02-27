@@ -5,12 +5,13 @@ from .views import (
     RetryAnalysisView, AnalysisDeleteView, AnalysisPDFExportView,
     AnalysisStatusView, ResumeListView, ResumeDeleteView,
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
-    JobListCreateView, JobDetailView, JobRelevanceView,
     GenerateResumeView, GeneratedResumeStatusView,
     GeneratedResumeDownloadView, GeneratedResumeListView,
     # Phase 11 — Smart Job Alerts
     JobAlertListCreateView, JobAlertDetailView,
     JobAlertMatchListView, JobAlertMatchFeedbackView, JobAlertManualRunView,
+    # Phase 12 — Notifications
+    NotificationListView, NotificationUnreadCountView, NotificationMarkReadView,
 )
 
 urlpatterns = [
@@ -29,13 +30,6 @@ urlpatterns = [
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
-    # Manually tracked jobs (pre-existing)
-    path('jobs/', JobListCreateView.as_view(), name='job-list-create'),
-    path('jobs/<uuid:pk>/', JobDetailView.as_view(), name='job-detail'),
-    path('jobs/<uuid:pk>/relevant/', JobRelevanceView.as_view(), name='job-relevant',
-         kwargs={'relevance': 'relevant'}),
-    path('jobs/<uuid:pk>/irrelevant/', JobRelevanceView.as_view(), name='job-irrelevant',
-         kwargs={'relevance': 'irrelevant'}),
     # Generated resumes
     path('generated-resumes/', GeneratedResumeListView.as_view(), name='generated-resume-list'),
     # Phase 11 — Smart Job Alerts
@@ -44,4 +38,8 @@ urlpatterns = [
     path('job-alerts/<uuid:pk>/matches/', JobAlertMatchListView.as_view(), name='job-alert-matches'),
     path('job-alerts/<uuid:pk>/matches/<uuid:match_pk>/feedback/', JobAlertMatchFeedbackView.as_view(), name='job-alert-match-feedback'),
     path('job-alerts/<uuid:pk>/run/', JobAlertManualRunView.as_view(), name='job-alert-run'),
+    # Phase 12 — Notifications
+    path('notifications/', NotificationListView.as_view(), name='notification-list'),
+    path('notifications/unread-count/', NotificationUnreadCountView.as_view(), name='notification-unread-count'),
+    path('notifications/mark-read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
 ]

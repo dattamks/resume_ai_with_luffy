@@ -202,6 +202,8 @@ CELERY_TASK_SOFT_TIME_LIMIT = 540  # 9 min soft limit
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 # Celery Beat — periodic tasks
+# Note: 'crawl-jobs-daily' schedule is managed via Django Admin
+# (django_celery_beat PeriodicTask). Seeded by `seed_crawl_schedule` command.
 CELERY_BEAT_SCHEDULE = {
     'cleanup-stale-analyses': {
         'task': 'analyzer.tasks.cleanup_stale_analyses',
@@ -210,11 +212,6 @@ CELERY_BEAT_SCHEDULE = {
     'flush-expired-tokens': {
         'task': 'analyzer.tasks.flush_expired_tokens',
         'schedule': 86400.0,  # once per day
-    },
-    # Phase 11 — Smart Job Alerts
-    'discover-jobs': {
-        'task': 'analyzer.tasks.discover_jobs_task',
-        'schedule': 21600.0,  # every 6 hours
     },
 }
 
@@ -297,6 +294,21 @@ AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
 
 # Firecrawl
 FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')
+
+# ── Phase 12: Firecrawl + pgvector job crawling ──────────────────────────────
+EMBEDDING_MODEL = config('EMBEDDING_MODEL', default='openai/text-embedding-3-small')
+JOB_MATCH_THRESHOLD = config('JOB_MATCH_THRESHOLD', default=0.60, cast=float)
+MAX_CRAWL_JOBS_PER_RUN = config('MAX_CRAWL_JOBS_PER_RUN', default=200, cast=int)
+JOB_CRAWL_SOURCES = [
+    {
+        'name': 'LinkedIn',
+        'url_template': 'https://www.linkedin.com/jobs/search/?keywords={query}&location={location}&f_TPR=r86400',
+    },
+    {
+        'name': 'Indeed',
+        'url_template': 'https://www.indeed.com/jobs?q={query}&l={location}&fromage=1',
+    },
+]
 
 # Max resume file size: 5MB
 MAX_RESUME_SIZE_MB = config('MAX_RESUME_SIZE_MB', default=5, cast=int)

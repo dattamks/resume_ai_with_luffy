@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, Job, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -292,61 +292,6 @@ class SharedAnalysisSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-# ── Job serializers ────────────────────────────────────────────────────────
-
-class JobSerializer(serializers.ModelSerializer):
-    """Full read serializer for Job model."""
-    resume_filename = serializers.CharField(
-        source='resume.original_filename', read_only=True, default=None,
-    )
-
-    class Meta:
-        model = Job
-        fields = (
-            'id', 'job_url', 'title', 'company', 'description',
-            'relevance', 'source', 'resume', 'resume_filename',
-            'created_at', 'updated_at',
-        )
-        read_only_fields = ('id', 'created_at', 'updated_at', 'resume_filename')
-
-
-class JobCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating a new tracked job."""
-    resume_id = serializers.UUIDField(required=False, write_only=True)
-
-    class Meta:
-        model = Job
-        fields = (
-            'id', 'job_url', 'title', 'company', 'description',
-            'source', 'resume_id',
-        )
-        read_only_fields = ('id',)
-
-    def validate_job_url(self, value):
-        if value:
-            from urllib.parse import urlparse
-            parsed = urlparse(value)
-            if parsed.scheme not in ('http', 'https', ''):
-                raise serializers.ValidationError('Only http:// and https:// URLs are allowed.')
-        return value
-
-    def create(self, validated_data):
-        user = self.context['request'].user
-        resume_id = validated_data.pop('resume_id', None)
-
-        if resume_id:
-            try:
-                resume = Resume.objects.get(id=resume_id, user=user)
-            except Resume.DoesNotExist:
-                raise serializers.ValidationError(
-                    {'resume_id': 'Resume not found or does not belong to you.'}
-                )
-            validated_data['resume'] = resume
-
-        validated_data['user'] = user
-        return super().create(validated_data)
-
-
 class GeneratedResumeSerializer(serializers.ModelSerializer):
     """Read-only serializer for generated resume status and download."""
     file_url = serializers.SerializerMethodField()
@@ -416,16 +361,16 @@ class JobMatchSerializer(serializers.ModelSerializer):
         model = JobMatch
         fields = (
             'id', 'job', 'relevance_score', 'match_reason',
-            'user_feedback', 'created_at',
+            'user_feedback', 'feedback_reason', 'created_at',
         )
         read_only_fields = ('id', 'job', 'relevance_score', 'match_reason', 'created_at')
 
 
 class JobMatchFeedbackSerializer(serializers.ModelSerializer):
-    """Write-only — update user_feedback on a match."""
+    """Write-only — update user_feedback and optional feedback_reason on a match."""
     class Meta:
         model = JobMatch
-        fields = ('user_feedback',)
+        fields = ('user_feedback', 'feedback_reason')
 
     def validate_user_feedback(self, value):
         valid = {c[0] for c in JobMatch.FEEDBACK_CHOICES} - {JobMatch.FEEDBACK_PENDING}
@@ -493,6 +438,17 @@ class JobAlertCreateSerializer(serializers.ModelSerializer):
     def validate_preferences(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError('preferences must be a JSON object.')
+        # Validate known preference keys
+        allowed = {'remote_ok', 'location', 'salary_min', 'excluded_companies', 'priority_companies'}
+        unknown = set(value.keys()) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f'Unknown preference keys: {", ".join(sorted(unknown))}. '
+                f'Allowed: {", ".join(sorted(allowed))}'
+            )
+        for list_key in ('excluded_companies', 'priority_companies'):
+            if list_key in value and not isinstance(value[list_key], list):
+                raise serializers.ValidationError(f'{list_key} must be a list of strings.')
         return value
 
 
@@ -505,5 +461,39 @@ class JobAlertUpdateSerializer(serializers.ModelSerializer):
     def validate_preferences(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError('preferences must be a JSON object.')
+        allowed = {'remote_ok', 'location', 'salary_min', 'excluded_companies', 'priority_companies'}
+        unknown = set(value.keys()) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f'Unknown preference keys: {", ".join(sorted(unknown))}. '
+                f'Allowed: {", ".join(sorted(allowed))}'
+            )
+        for list_key in ('excluded_companies', 'priority_companies'):
+            if list_key in value and not isinstance(value[list_key], list):
+                raise serializers.ValidationError(f'{list_key} must be a list of strings.')
         return value
+
+
+# ── Phase 12: Notifications ──────────────────────────────────────────────────
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Read-only serializer for in-app notifications."""
+    class Meta:
+        model = None  # Set dynamically to avoid circular import at import time
+        fields = (
+            'id', 'title', 'body', 'link', 'is_read',
+            'notification_type', 'metadata', 'created_at',
+        )
+        read_only_fields = fields
+
+    def __init__(self, *args, **kwargs):
+        from .models import Notification
+        self.Meta.model = Notification
+        super().__init__(*args, **kwargs)
+
+
+class NotificationMarkReadSerializer(serializers.Serializer):
+    """Mark one or all notifications as read."""
+    notification_id = serializers.UUIDField(required=False, help_text='Specific notification ID. Omit to mark all as read.')
+    mark_all = serializers.BooleanField(required=False, default=False)
 

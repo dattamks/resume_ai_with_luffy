@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, Job, GeneratedResume
+from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume
 
 
 @admin.register(Resume)
@@ -40,14 +40,6 @@ class LLMResponseAdmin(admin.ModelAdmin):
     search_fields = ('model_used',)
 
 
-@admin.register(Job)
-class JobAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'title', 'company', 'relevance', 'source', 'created_at')
-    list_filter = ('relevance', 'source')
-    search_fields = ('user__username', 'title', 'company', 'job_url')
-    readonly_fields = ('id', 'created_at', 'updated_at')
-
-
 @admin.register(GeneratedResume)
 class GeneratedResumeAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'analysis', 'template', 'format', 'status', 'created_at')
@@ -58,7 +50,7 @@ class GeneratedResumeAdmin(admin.ModelAdmin):
 
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
 
-from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun  # noqa: E402
+from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun, CrawlSource  # noqa: E402
 
 
 @admin.register(JobSearchProfile)
@@ -98,4 +90,48 @@ class JobAlertRunAdmin(admin.ModelAdmin):
     list_display = ('id', 'job_alert', 'jobs_discovered', 'jobs_matched', 'notification_sent', 'credits_used', 'duration_seconds', 'created_at')
     list_filter = ('notification_sent',)
     readonly_fields = ('id', 'created_at')
+
+
+@admin.register(CrawlSource)
+class CrawlSourceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'source_type', 'is_active', 'priority', 'last_crawled_at', 'created_at')
+    list_filter = ('source_type', 'is_active')
+    search_fields = ('name', 'url_template')
+    readonly_fields = ('id', 'last_crawled_at', 'created_at', 'updated_at')
+    ordering = ('priority', 'name')
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'source_type', 'url_template', 'is_active', 'priority'),
+        }),
+        ('Status', {
+            'fields': ('last_crawled_at', 'created_at', 'updated_at'),
+        }),
+    )
+
+
+# ── Phase 12: Notifications & Dedup ──────────────────────────────────────────
+
+from .models import SentAlert, Notification  # noqa: E402
+
+
+@admin.register(SentAlert)
+class SentAlertAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'discovered_job', 'channel', 'sent_at')
+    list_filter = ('channel',)
+    search_fields = ('user__username',)
+    readonly_fields = ('id', 'sent_at')
+    list_per_page = 50
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'title_short', 'notification_type', 'is_read', 'created_at')
+    list_filter = ('notification_type', 'is_read')
+    search_fields = ('user__username', 'title')
+    readonly_fields = ('id', 'metadata', 'created_at')
+    list_per_page = 50
+
+    @admin.display(description='Title')
+    def title_short(self, obj):
+        return obj.title[:60]
 

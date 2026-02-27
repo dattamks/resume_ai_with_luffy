@@ -239,6 +239,153 @@
 
 ---
 
+## Phase 12 — Firecrawl + pgvector Job Alerts Redesign 🔥
+
+> **Goal:** Replace SerpAPI/Adzuna with Firecrawl-based daily crawling. Replace per-match LLM scoring with pgvector embedding similarity. Add dedup log + in-app notifications. Zero new API keys — reuse existing `FIRECRAWL_API_KEY`.
+>
+> **Status:** ✅ Complete
+>
+> **Why:** Current Phase 11 depends on SerpAPI ($50/mo) + Adzuna API keys. Each match run burns an LLM call per 15-job batch. New approach: crawl once daily via Firecrawl (~$5-15/mo), compute embeddings once (~$0.10/day), match all users via fast SQL cosine similarity.
+
+### Phase A — pgvector Foundation
+
+- [x] **Install `pgvector`** — added `pgvector==0.4.2`, `numpy==2.4.2` to `requirements.txt`
+- [x] **Enable pgvector extension** — migration `0014_pgvector_embeddings.py`: `CREATE EXTENSION IF NOT EXISTS vector;`
+- [x] **Add `JobSearchProfile.embedding`** — `VectorField(dimensions=1536, null=True)` (conditional on PostgreSQL)
+- [x] **Add `DiscoveredJob.embedding`** — `VectorField(dimensions=1536, null=True)` (conditional on PostgreSQL)
+- [x] **Add HNSW index** on `DiscoveredJob.embedding` — `discoveredjob_embedding_hnsw_idx`
+- [x] **Add `DiscoveredJob.source` choice** — `firecrawl` added to `SOURCE_CHOICES`
+- [x] **Embedding service** — `analyzer/services/embedding_service.py`:
+  - `compute_embedding(text) → list[float]` via OpenRouter/OpenAI embeddings API (`text-embedding-3-small`, 1536 dims)
+  - `compute_resume_embedding(resume) → list[float]` — extracts text, truncates 8K tokens
+  - `compute_job_embedding(job) → list[float]` — `title + company + description_snippet`
+- [x] **`compute_resume_embedding_task(resume_id)`** — Celery task, triggered after resume upload + profile extraction
+- [x] **Settings** — `EMBEDDING_MODEL`, `JOB_MATCH_THRESHOLD = 0.60`, `MAX_CRAWL_JOBS_PER_RUN = 200`
+
+### Phase B — Firecrawl Job Crawler
+
+- [x] **`analyzer/services/job_sources/firecrawl_source.py`** — new source replacing SerpAPI + Adzuna:
+  - Configurable job board URLs in `settings.JOB_CRAWL_SOURCES` (LinkedIn, Indeed)
+  - Uses `FirecrawlApp.scrape()` to scrape search result pages → markdown
+  - Single LLM call per page to extract structured listings (title, company, location, url, snippet)
+  - Returns `RawJobListing` objects (existing dataclass in `base.py`)
+- [ ] **Delete `serpapi_source.py`** — kept as legacy fallback for now
+- [ ] **Delete `adzuna_source.py`** — kept as legacy fallback for now
+- [x] **Rewrite `factory.py`** — Firecrawl primary, SerpAPI/Adzuna legacy fallback only if Firecrawl not configured
+- [x] **Settings** — `JOB_CRAWL_SOURCES` list of `{name, url_template}` dicts
+
+### Phase C — Global Daily Crawl Task
+
+- [x] **New task: `crawl_jobs_daily_task`** — replaces `discover_jobs_task`:
+  - Runs once daily at 2 AM IST (20:30 UTC) via Celery Beat
+  - Gathers all unique search queries from all active `JobSearchProfile`s (deduplicated titles)
+  - Calls Firecrawl source for each query+location combo
+  - Deduplicates via `(source, external_id)` unique constraint (existing)
+  - Computes embedding for each new `DiscoveredJob` immediately
+  - Chains `match_all_alerts_task` when done
+  - Caps at `MAX_CRAWL_JOBS_PER_RUN` to control costs
+- [x] **Update Celery Beat schedule** — replaced `discover-jobs` (6h) with `crawl-jobs-daily` (crontab 20:30 UTC)
+- [ ] **Remove old `discover_jobs_task`** and `discover_jobs_for_alert_task` — kept for now, will remove after validation
+
+### Phase D — Embedding-Based Matching
+
+- [x] **New `embedding_matcher.py`** — pgvector cosine similarity (keeps `job_matcher.py` as fallback):
+  - `match_jobs_for_alert(alert, since_dt) → list[dict]`
+  - Django ORM via `CosineDistance` from `pgvector.django`
+  - Threshold from `settings.JOB_MATCH_THRESHOLD` (default 0.60)
+  - `score = int(similarity * 100)` for compatibility with existing `JobMatch.relevance_score`
+  - Falls back to LLM matching if pgvector/embeddings not available
+- [x] **New task: `match_all_alerts_task`** — runs after daily crawl:
+  - For each active `JobAlert` with a resume that has an embedding
+  - Find new `DiscoveredJob` records since `alert.last_run_at`
+  - Run embedding similarity query (fast SQL, no LLM cost)
+  - Create `JobMatch` + `SentAlert` + `Notification` records
+  - Chain email notification task if matches found
+- [ ] **Update manual run endpoint** — `POST /api/job-alerts/<id>/run/` to use embedding matching
+
+### Phase E — Dedup Log & In-App Notifications
+
+- [x] **`SentAlert` model** — dedup log, prevents resending same job to same user:
+  - FK to `User` + `DiscoveredJob`, `sent_at`, `channel` (email/in_app)
+  - Unique constraint: `(user, discovered_job, channel)`
+  - Migration: `0015_sentalert_notification.py`
+- [x] **`Notification` model** — in-app notification store:
+  - FK to `User`, `title`, `body`, `link`, `is_read`, `notification_type` (job_match, analysis_done, resume_generated, system), `metadata` (JSONField), `created_at`
+- [x] **Notification API endpoints:**
+  - `GET /api/notifications/` — paginated list (newest first)
+  - `POST /api/notifications/mark-read/` — mark one or all as read
+  - `GET /api/notifications/unread-count/` — for badge icon
+- [x] **Notification serializers** — `NotificationSerializer`, `NotificationMarkReadSerializer`
+- [x] **Admin** — `SentAlertAdmin`, `NotificationAdmin`
+
+### Phase F — Cleanup & Documentation
+
+- [x] **Remove `serpapi_source.py`** — Deleted
+- [x] **Remove `adzuna_source.py`** — Deleted
+- [x] **Remove old `discover_jobs_task` / `discover_jobs_for_alert_task`** — Deleted from tasks.py
+- [x] **Remove SerpAPI/Adzuna fallbacks from `factory.py`** — Only Firecrawl remains
+- [x] **Remove `SOURCE_SERPAPI` / `SOURCE_ADZUNA` from models** — Only `SOURCE_FIRECRAWL` in choices
+- [x] **Update manual run endpoint** — Uses new `crawl_jobs_for_alert_task`
+- [x] **Update tests** — Replaced SerpAPI/Adzuna tests with Firecrawl test, updated all discover_ references
+- [x] **Seed `job-alert-digest` email template** — Already exists and active in DB
+- [x] **FRONTEND_API_GUIDE.md** — Notifications section 23 + v0.16.0 changelog
+- [x] **CHANGELOG.md** — v0.16.0 entry
+- [x] **`backend_todo.md`** — All Phase 12 items checked off
+
+### Architecture
+
+```
+Daily at 2 AM IST:
+  ┌──────────────────────────────────────────────────┐
+  │           crawl_jobs_daily_task                   │
+  │  1. Collect unique queries from all profiles      │
+  │  2. Firecrawl → scrape job board pages            │
+  │  3. LLM → extract structured listings (1 per page)│
+  │  4. Save DiscoveredJob + compute embedding        │
+  └────────────────┬─────────────────────────────────┘
+                   │
+                   ▼
+  ┌──────────────────────────────────────────────────┐
+  │           match_all_alerts_task                   │
+  │  For each active alert:                           │
+  │  1. pgvector cosine similarity (fast SQL)         │
+  │  2. Create JobMatch (similarity ≥ 0.60)           │
+  │  3. Check SentAlert for dedup                     │
+  │  4. Create Notification (in-app)                  │
+  │  5. Send email digest if enabled                  │
+  └──────────────────────────────────────────────────┘
+
+On resume upload:
+  Resume → extract_text → compute_embedding → store on JobSearchProfile
+```
+
+### Cost Comparison
+
+| Before (SerpAPI + Adzuna + LLM scoring) | After (Firecrawl + embeddings) |
+|---|---|
+| SerpAPI: ~$50/month | Firecrawl: ~$5-15/month |
+| LLM scoring: ~$2-5/day per-match | Embeddings: ~$0.10/day |
+| **~$55-80/month** | **~$5-16/month** |
+
+### Dependencies
+
+- [x] `pgvector==0.4.2` + `numpy==2.4.2` in `requirements.txt`
+- [x] PostgreSQL `vector` extension enabled (v0.8.2 on Railway PostgreSQL 18)
+
+### Execution Order
+
+| # | Sub-phase | Effort | Depends On |
+|---|---|---|---|
+| A | pgvector + embeddings | 1 day | — |
+| B | Firecrawl job crawler | 1-2 days | A |
+| C | Daily crawl task | 1 day | B |
+| D | Embedding matching | 1 day | A, C |
+| E | SentAlert + Notifications | 0.5 day | D |
+| F | Cleanup + docs | 0.5 day | All |
+| | **Total** | **~5-6 days** | |
+
+---
+
 ## Backlog — Security Fixes
 
 > Items from the Feb 27, 2026 deep audit. Ordered by priority (P0 = critical, P3 = low).

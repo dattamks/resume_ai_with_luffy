@@ -13,15 +13,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle, WriteThrottle
-from .models import ResumeAnalysis, Resume, Job, GeneratedResume, JobAlert, JobMatch, DiscoveredJob
+from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
     ResumeSerializer,
     SharedAnalysisSerializer,
-    JobSerializer,
-    JobCreateSerializer,
     GeneratedResumeSerializer,
     GeneratedResumeCreateSerializer,
     JobAlertSerializer,
@@ -30,6 +28,8 @@ from .serializers import (
     JobMatchSerializer,
     JobMatchFeedbackSerializer,
     JobAlertRunSerializer,
+    NotificationSerializer,
+    NotificationMarkReadSerializer,
 )
 from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task
 
@@ -536,90 +536,6 @@ class SharedAnalysisView(APIView):
         return Response(serializer.data)
 
 
-# ── Job endpoints ─────────────────────────────────────────────────────────
-
-class JobListCreateView(APIView):
-    """
-    GET  /api/jobs/             — List user's tracked jobs (filterable by relevance).
-    POST /api/jobs/             — Create a new tracked job.
-    """
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
-
-    def get(self, request):
-        qs = Job.objects.filter(user=request.user).select_related('resume')
-
-        # Optional filtering by relevance
-        relevance = request.query_params.get('relevance')
-        if relevance in dict(Job.RELEVANCE_CHOICES):
-            qs = qs.filter(relevance=relevance)
-
-        serializer = JobSerializer(qs, many=True)
-        return Response(serializer.data)
-
-    def post(self, request):
-        serializer = JobCreateSerializer(
-            data=request.data, context={'request': request},
-        )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        job = serializer.save()
-        return Response(JobSerializer(job).data, status=status.HTTP_201_CREATED)
-
-
-class JobDetailView(APIView):
-    """
-    GET    /api/jobs/<uuid:id>/  — Retrieve a single job.
-    DELETE /api/jobs/<uuid:id>/  — Delete a tracked job.
-    """
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
-
-    def _get_job(self, request, pk):
-        try:
-            return Job.objects.select_related('resume').get(pk=pk, user=request.user)
-        except Job.DoesNotExist:
-            return None
-
-    def get(self, request, pk):
-        job = self._get_job(request, pk)
-        if not job:
-            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(JobSerializer(job).data)
-
-    def delete(self, request, pk):
-        job = self._get_job(request, pk)
-        if not job:
-            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
-        job.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class JobRelevanceView(APIView):
-    """
-    POST /api/jobs/<uuid:id>/relevant/    — Mark job as relevant.
-    POST /api/jobs/<uuid:id>/irrelevant/  — Mark job as irrelevant.
-    """
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
-
-    def post(self, request, pk, relevance):
-        if relevance not in ('relevant', 'irrelevant'):
-            return Response(
-                {'detail': 'Invalid relevance value.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            job = Job.objects.get(pk=pk, user=request.user)
-        except Job.DoesNotExist:
-            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        job.relevance = relevance
-        job.save(update_fields=['relevance', 'updated_at'])
-        return Response(JobSerializer(job).data)
-
-
 # ── Resume Generation ────────────────────────────────────────────────────
 
 class GenerateResumeView(APIView):
@@ -1018,9 +934,9 @@ class JobAlertManualRunView(APIView):
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
-        # Fire dedicated single-alert discovery task
-        from .tasks import discover_jobs_for_alert_task
-        discover_jobs_for_alert_task.delay(str(alert.id))
+        # Fire Firecrawl-based crawl for this single alert
+        from .tasks import crawl_jobs_for_alert_task
+        crawl_jobs_for_alert_task.delay(str(alert.id))
 
         logger.info('Manual job alert run triggered: alert=%s user=%s', alert.id, request.user.id)
 
@@ -1031,4 +947,58 @@ class JobAlertManualRunView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+# ── Phase 12: Notification Views ─────────────────────────────────────────────
+
+
+class NotificationListView(ListAPIView):
+    """GET /api/notifications/ — paginated list of user's notifications."""
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+
+
+class NotificationUnreadCountView(APIView):
+    """GET /api/notifications/unread-count/ — unread notification count for badge."""
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request):
+        count = Notification.objects.filter(
+            user=request.user, is_read=False,
+        ).count()
+        return Response({'unread_count': count})
+
+
+class NotificationMarkReadView(APIView):
+    """POST /api/notifications/mark-read/ — mark one or all notifications as read."""
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def post(self, request):
+        serializer = NotificationMarkReadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        notification_id = serializer.validated_data.get('notification_id')
+        mark_all = serializer.validated_data.get('mark_all', False)
+
+        if notification_id:
+            updated = Notification.objects.filter(
+                id=notification_id, user=request.user, is_read=False,
+            ).update(is_read=True)
+            return Response({'marked_read': updated})
+        elif mark_all:
+            updated = Notification.objects.filter(
+                user=request.user, is_read=False,
+            ).update(is_read=True)
+            return Response({'marked_read': updated})
+        else:
+            return Response(
+                {'detail': 'Provide notification_id or set mark_all=true.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 

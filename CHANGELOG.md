@@ -5,6 +5,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.0] — 2026-02-27
+
+### Phase 12: Firecrawl + pgvector Job Alerts Redesign
+
+### Added
+- **pgvector embeddings** — Resume and job embeddings computed via `text-embedding-3-small` (1536 dims). Stored on `JobSearchProfile.embedding` and `DiscoveredJob.embedding` with HNSW index for fast cosine similarity.
+- **`embedding_service.py`** — `compute_embedding()`, `compute_resume_embedding()`, `compute_job_embedding()` via OpenRouter embeddings API.
+- **`embedding_matcher.py`** — pgvector `CosineDistance` SQL matching. Falls back to LLM matcher if pgvector unavailable. Threshold: 60% similarity.
+- **Firecrawl job crawler** — `firecrawl_source.py` scrapes LinkedIn + Indeed job board pages, extracts structured listings via single LLM call per page.
+- **`crawl_jobs_daily_task`** — Daily crawl at 2 AM IST (20:30 UTC). Gathers queries from all active profiles, crawls, saves, embeds, chains matching.
+- **`crawl_jobs_for_alert_task`** — Single-alert manual crawl (used by `POST /api/job-alerts/<id>/run/`). Includes credit deduction, crawling, embedding, matching, and notification in one task.
+- **`match_all_alerts_task`** — Runs after daily crawl. For each active alert: embedding match → JobMatch → SentAlert dedup → Notification → email digest.
+- **`compute_resume_embedding_task`** — Triggered after profile extraction. Stores embedding on `JobSearchProfile`.
+- **`SentAlert` model** — Dedup log preventing resending same job to same user per channel.
+- **`Notification` model** — In-app notification store for bell/badge. Types: `job_match`, `analysis_done`, `resume_generated`, `system`.
+- **Notification API endpoints:** `GET /api/notifications/`, `GET /api/notifications/unread-count/`, `POST /api/notifications/mark-read/`.
+- **Settings:** `EMBEDDING_MODEL`, `JOB_MATCH_THRESHOLD`, `MAX_CRAWL_JOBS_PER_RUN`, `JOB_CRAWL_SOURCES`.
+- **Migrations:** `0014_pgvector_embeddings`, `0015_sentalert_notification`.
+
+### Removed
+- **`serpapi_source.py`** — SerpAPI job source deleted (replaced by Firecrawl).
+- **`adzuna_source.py`** — Adzuna job source deleted (replaced by Firecrawl).
+- **`discover_jobs_task`** — Old periodic task removed (replaced by `crawl_jobs_daily_task`).
+- **`discover_jobs_for_alert_task`** — Old manual run task removed (replaced by `crawl_jobs_for_alert_task`).
+- **SerpAPI/Adzuna fallbacks from `factory.py`** — Only Firecrawl source remains.
+- **`SOURCE_SERPAPI` / `SOURCE_ADZUNA`** — Removed from `DiscoveredJob.SOURCE_CHOICES`.
+
+### Changed
+- **Manual run endpoint** — `POST /api/job-alerts/<id>/run/` now uses `crawl_jobs_for_alert_task` (Firecrawl + embedding matching) instead of `discover_jobs_for_alert_task`.
+- **Celery Beat schedule** — Replaced `discover-jobs` (6h interval) with `crawl-jobs-daily` (crontab 20:30 UTC).
+- **Cost reduction** — ~$55-80/month (SerpAPI + Adzuna + LLM scoring) → ~$5-16/month (Firecrawl + embeddings).
+
+---
+
 ## [0.13.1] — 2026-02-27
 
 ### Payment Linkage Audit — Security & Correctness Fixes

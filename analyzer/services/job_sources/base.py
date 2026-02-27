@@ -18,7 +18,7 @@ class RawJobListing:
     Normalised job listing returned by any BaseJobSource implementation.
     Maps cleanly to the DiscoveredJob model fields.
     """
-    source: str                                # 'serpapi' | 'adzuna'
+    source: str                                # 'firecrawl'
     external_id: str                           # Unique ID from the source API
     url: str                                   # Direct apply / listing URL
     title: str = ''
