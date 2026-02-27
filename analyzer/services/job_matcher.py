@@ -188,8 +188,8 @@ def _score_batch(batch, titles, skills, seniority, industries, experience_years)
         try:
             scored = json.loads(repaired)
         except json.JSONDecodeError as exc:
-            logger.warning('Job matcher LLM returned non-JSON: %s…', raw[:200])
-            raise ValueError(f'LLM returned non-JSON: {raw[:200]}') from exc
+            logger.warning('Job matcher LLM returned non-JSON (raw length=%d)', len(raw))
+            raise ValueError(f'LLM returned non-JSON (raw length={len(raw)})') from exc
 
     if not isinstance(scored, list):
         logger.warning('Job matcher LLM returned non-list: %s', type(scored))

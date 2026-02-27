@@ -6,6 +6,7 @@ Scopes (configured in settings.DEFAULT_THROTTLE_RATES):
     user      – authenticated per-user (global)    (default 200/hr)
     analyze   – resume analysis writes             (default 10/hr)
     readonly  – authenticated read-only endpoints  (default 120/hr)
+    write     – authenticated write endpoints      (default 60/hr)
     auth      – auth-related anon endpoints        (default 20/hr)
 """
 from rest_framework.throttling import SimpleRateThrottle, UserRateThrottle
@@ -19,6 +20,16 @@ class AnalyzeThrottle(UserRateThrottle):
 class ReadOnlyThrottle(UserRateThrottle):
     """Applies to authenticated read-only endpoints (list, detail, dashboard)."""
     scope = 'readonly'
+
+
+class WriteThrottle(UserRateThrottle):
+    """Applies to authenticated write endpoints (delete, share, etc.)."""
+    scope = 'write'
+
+
+class PaymentThrottle(UserRateThrottle):
+    """Applies to payment-related endpoints — prevents Razorpay API abuse."""
+    scope = 'payment'
 
 
 class AuthEndpointThrottle(SimpleRateThrottle):

@@ -471,8 +471,9 @@ class RazorpayPayment(models.Model):
 
 class RazorpaySubscription(models.Model):
     """
-    Tracks the active Razorpay subscription for each user.
-    OneToOne — each user can have at most one active subscription.
+    Tracks Razorpay subscriptions for each user.
+    ForeignKey — keeps audit trail of all subscriptions (active + historical).
+    Only one subscription should be in an active status at a time (enforced in service layer).
     """
     STATUS_CREATED = 'created'
     STATUS_AUTHENTICATED = 'authenticated'
@@ -493,7 +494,7 @@ class RazorpaySubscription(models.Model):
         (STATUS_EXPIRED, 'Expired'),
     ]
 
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='razorpay_subscription')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='razorpay_subscriptions')
     plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name='razorpay_subscriptions')
 
     # Razorpay identifiers
@@ -565,3 +566,20 @@ def create_user_profile(sender, instance, created, **kwargs):
                 description=f'Initial {free_plan.name} plan credits',
             )
             logger.info('Wallet created for user=%s with %d credits', instance.username, initial_credits)
+
+
+class WebhookEvent(models.Model):
+    """
+    Tracks processed webhook event IDs for replay protection.
+    Razorpay may deliver the same event multiple times — storing the event_id
+    lets us reject duplicates at the application level.
+    """
+    event_id = models.CharField(max_length=255, unique=True, db_index=True)
+    event_type = models.CharField(max_length=100, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.event_type} — {self.event_id}'

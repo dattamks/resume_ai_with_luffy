@@ -8,10 +8,13 @@ Uses raw `requests` — no extra pypi package required.
 """
 import hashlib
 import logging
+import re
+from datetime import timedelta
 from typing import List
 
 import requests
 from django.conf import settings
+from django.utils import timezone
 
 from .base import BaseJobSource, RawJobListing
 
@@ -24,6 +27,38 @@ _DATE_FILTER_MAP = {
 }
 
 _SERPAPI_ENDPOINT = 'https://serpapi.com/search.json'
+
+# Pattern for "X days/hours ago" style dates from Google Jobs
+_RELATIVE_DATE_RE = re.compile(r'(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago', re.IGNORECASE)
+
+_UNIT_TO_TIMEDELTA_KWARGS = {
+    'second': 'seconds',
+    'minute': 'minutes',
+    'hour': 'hours',
+    'day': 'days',
+    'week': 'weeks',
+}
+
+
+def _parse_relative_date(text: str) -> str | None:
+    """Convert 'X days ago' to ISO-8601 string, or return None on failure."""
+    if not text:
+        return None
+    m = _RELATIVE_DATE_RE.search(text)
+    if not m:
+        return None
+    amount = int(m.group(1))
+    unit = m.group(2).lower()
+    kwarg = _UNIT_TO_TIMEDELTA_KWARGS.get(unit)
+    if kwarg:
+        dt = timezone.now() - timedelta(**{kwarg: amount})
+    elif unit == 'month':
+        dt = timezone.now() - timedelta(days=amount * 30)
+    elif unit == 'year':
+        dt = timezone.now() - timedelta(days=amount * 365)
+    else:
+        return None
+    return dt.isoformat()
 
 
 class SerpAPIJobSource(BaseJobSource):
@@ -99,7 +134,7 @@ class SerpAPIJobSource(BaseJobSource):
                     location=job.get('location', ''),
                     salary_range=salary,
                     description_snippet=job.get('description', '')[:500],
-                    posted_at=detected_ext.get('posted_at'),
+                    posted_at=_parse_relative_date(detected_ext.get('posted_at', '')),
                     raw_data=job,
                 ))
 

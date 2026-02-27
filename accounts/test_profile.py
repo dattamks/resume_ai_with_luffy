@@ -124,7 +124,7 @@ class DeleteAccountTests(TestCase):
 
     def test_delete_account(self):
         user_id = self.user.id
-        resp = self.client.delete('/api/auth/me/')
+        resp = self.client.delete('/api/auth/me/', {'password': 'StrongPass123!'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(User.objects.filter(id=user_id).exists())
 
@@ -142,7 +142,7 @@ class DeleteAccountTests(TestCase):
             jd_input_type='text',
             jd_text='dev',
         )
-        resp = self.client.delete('/api/auth/me/')
+        resp = self.client.delete('/api/auth/me/', {'password': 'StrongPass123!'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         # User + all owned objects are gone
         self.assertEqual(Resume.objects.filter(user=self.user).count(), 0)

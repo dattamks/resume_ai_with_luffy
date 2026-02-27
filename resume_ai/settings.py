@@ -235,6 +235,8 @@ REST_FRAMEWORK = {
         'user': config('USER_THROTTLE_RATE', default='200/hour'),
         'analyze': config('ANALYZE_THROTTLE_RATE', default='10/hour'),
         'readonly': config('READONLY_THROTTLE_RATE', default='120/hour'),
+        'write': config('WRITE_THROTTLE_RATE', default='60/hour'),
+        'payment': config('PAYMENT_THROTTLE_RATE', default='30/hour'),
         'auth': config('AUTH_THROTTLE_RATE', default='20/hour'),
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
@@ -252,6 +254,8 @@ if TESTING:
         'user': '10000/minute',
         'analyze': '10000/minute',
         'readonly': '10000/minute',
+        'write': '10000/minute',
+        'payment': '10000/minute',
         'auth': '10000/minute',
     }
 
@@ -267,7 +271,8 @@ SIMPLE_JWT = {
 # Origins must not have a trailing slash or path (django-corsheaders requirement).
 _cors_raw = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173,http://127.0.0.1:5173')
 CORS_ALLOWED_ORIGINS = [o.strip().rstrip('/') for o in _cors_raw.split(',') if o.strip()]
-CORS_ALLOW_CREDENTIALS = True
+# CORS_ALLOW_CREDENTIALS not needed — auth is JWT-based (Authorization header),
+# not cookie-based. Removing reduces attack surface.
 
 # HTTPS / security headers (only enforced when not in DEBUG mode)
 if not DEBUG:
@@ -278,7 +283,8 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000  # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    SECURE_BROWSER_XSS_FILTER = True
+    # Note: SECURE_BROWSER_XSS_FILTER removed — X-XSS-Protection header is deprecated
+    # since Django 4.1 and can introduce vulnerabilities in modern browsers.
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
 
@@ -320,6 +326,16 @@ RAZORPAY_KEY_ID = config('RAZORPAY_KEY_ID', default='rzp_test_placeholder')
 RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default='placeholder_secret')
 RAZORPAY_WEBHOOK_SECRET = config('RAZORPAY_WEBHOOK_SECRET', default='webhook_placeholder_secret')
 RAZORPAY_CURRENCY = 'INR'
+
+# Refuse to start in production with placeholder Razorpay credentials
+if not DEBUG and RAZORPAY_KEY_ID == 'rzp_test_placeholder':
+    import warnings
+    warnings.warn(
+        'Razorpay credentials are still set to placeholder values. '
+        'Set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET '
+        'environment variables for production.',
+        stacklevel=1,
+    )
 
 # Password reset token expiry (seconds) — default 1 hour
 PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int)

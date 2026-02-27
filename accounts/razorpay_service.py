@@ -17,7 +17,7 @@ import time
 
 import razorpay
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
 logger = logging.getLogger('accounts')
@@ -57,78 +57,72 @@ def create_subscription(user, plan_slug: str) -> dict:
     if plan.price == 0:
         raise ValueError('Cannot create a subscription for a free plan.')
 
-    # Check if user already has an active subscription
-    existing = RazorpaySubscription.objects.filter(
-        user=user,
-        status__in=[
-            RazorpaySubscription.STATUS_CREATED,
-            RazorpaySubscription.STATUS_AUTHENTICATED,
-            RazorpaySubscription.STATUS_ACTIVE,
-            RazorpaySubscription.STATUS_PENDING,
-        ],
-    ).first()
-    if existing:
-        raise ValueError(
-            f'You already have an active subscription (ID: {existing.razorpay_subscription_id}). '
-            'Cancel it first before creating a new one.'
+    # Atomic check + create to prevent concurrent subscription race.
+    # select_for_update() locks existing rows so two parallel requests
+    # can't both pass the "no active subscription" check.
+    with transaction.atomic():
+        existing = RazorpaySubscription.objects.select_for_update().filter(
+            user=user,
+            status__in=[
+                RazorpaySubscription.STATUS_CREATED,
+                RazorpaySubscription.STATUS_AUTHENTICATED,
+                RazorpaySubscription.STATUS_ACTIVE,
+                RazorpaySubscription.STATUS_PENDING,
+            ],
+        ).first()
+        if existing:
+            raise ValueError(
+                f'You already have an active subscription (ID: {existing.razorpay_subscription_id}). '
+                'Cancel it first before creating a new one.'
+            )
+
+        # Old cancelled/completed/expired/halted subscriptions are preserved
+        # for audit trail — no longer hard-deleted.
+
+        # Razorpay plan_id mapping — in production, store this in the Plan model
+        # or a separate config. For now, use a convention: plan_{slug}_monthly
+        razorpay_plan_id = _get_razorpay_plan_id(plan)
+
+        client = _get_client()
+
+        amount_paise = int(plan.price * 100)
+
+        try:
+            rz_subscription = client.subscription.create({
+                'plan_id': razorpay_plan_id,
+                'total_count': 12,  # Max 12 billing cycles (1 year), auto-renews
+                'quantity': 1,
+                'notes': {
+                    'user_id': str(user.id),
+                    'username': user.username,
+                    'plan_slug': plan.slug,
+                },
+            })
+        except Exception as e:
+            logger.error('Razorpay subscription creation failed: user=%s plan=%s error=%s',
+                         user.username, plan_slug, str(e))
+            raise ValueError(f'Payment gateway error: {str(e)}')
+
+        # Store local subscription record
+        subscription = RazorpaySubscription.objects.create(
+            user=user,
+            plan=plan,
+            razorpay_subscription_id=rz_subscription['id'],
+            razorpay_plan_id=razorpay_plan_id,
+            status=RazorpaySubscription.STATUS_CREATED,
+            short_url=rz_subscription.get('short_url', ''),
         )
 
-    # Remove old cancelled/completed/expired/halted subscriptions to allow re-subscribe
-    # (OneToOneField constraint: only one RazorpaySubscription per user)
-    RazorpaySubscription.objects.filter(
-        user=user,
-        status__in=[
-            RazorpaySubscription.STATUS_CANCELLED,
-            RazorpaySubscription.STATUS_COMPLETED,
-            RazorpaySubscription.STATUS_EXPIRED,
-            RazorpaySubscription.STATUS_HALTED,
-        ],
-    ).delete()
-
-    # Razorpay plan_id mapping — in production, store this in the Plan model
-    # or a separate config. For now, use a convention: plan_{slug}_monthly
-    razorpay_plan_id = _get_razorpay_plan_id(plan)
-
-    client = _get_client()
-
-    amount_paise = int(plan.price * 100)
-
-    try:
-        rz_subscription = client.subscription.create({
-            'plan_id': razorpay_plan_id,
-            'total_count': 12,  # Max 12 billing cycles (1 year), auto-renews
-            'quantity': 1,
-            'notes': {
-                'user_id': str(user.id),
-                'username': user.username,
-                'plan_slug': plan.slug,
-            },
-        })
-    except Exception as e:
-        logger.error('Razorpay subscription creation failed: user=%s plan=%s error=%s',
-                     user.username, plan_slug, str(e))
-        raise ValueError(f'Payment gateway error: {str(e)}')
-
-    # Store local subscription record
-    subscription = RazorpaySubscription.objects.create(
-        user=user,
-        plan=plan,
-        razorpay_subscription_id=rz_subscription['id'],
-        razorpay_plan_id=razorpay_plan_id,
-        status=RazorpaySubscription.STATUS_CREATED,
-        short_url=rz_subscription.get('short_url', ''),
-    )
-
-    # Create a payment record for tracking
-    RazorpayPayment.objects.create(
-        user=user,
-        payment_type=RazorpayPayment.PAYMENT_TYPE_SUBSCRIPTION,
-        razorpay_subscription_id=rz_subscription['id'],
-        amount=amount_paise,
-        currency=settings.RAZORPAY_CURRENCY,
-        status=RazorpayPayment.STATUS_CREATED,
-        notes={'plan_slug': plan.slug, 'subscription_id': rz_subscription['id']},
-    )
+        # Create a payment record for tracking
+        RazorpayPayment.objects.create(
+            user=user,
+            payment_type=RazorpayPayment.PAYMENT_TYPE_SUBSCRIPTION,
+            razorpay_subscription_id=rz_subscription['id'],
+            amount=amount_paise,
+            currency=settings.RAZORPAY_CURRENCY,
+            status=RazorpayPayment.STATUS_CREATED,
+            notes={'plan_slug': plan.slug, 'subscription_id': rz_subscription['id']},
+        )
 
     logger.info(
         'Subscription created: user=%s plan=%s rz_sub_id=%s',
@@ -337,7 +331,26 @@ def get_subscription_status(user) -> dict:
     from .models import RazorpaySubscription
 
     try:
-        subscription = RazorpaySubscription.objects.select_related('plan').get(user=user)
+        # With ForeignKey, user can have multiple subscriptions (historical).
+        # Return the latest active one, or the most recent overall.
+        subscription = RazorpaySubscription.objects.select_related('plan').filter(
+            user=user,
+        ).order_by(
+            # Active/pending statuses first, then by most recent
+            models.Case(
+                models.When(status__in=[
+                    RazorpaySubscription.STATUS_ACTIVE,
+                    RazorpaySubscription.STATUS_AUTHENTICATED,
+                    RazorpaySubscription.STATUS_PENDING,
+                    RazorpaySubscription.STATUS_CREATED,
+                ], then=0),
+                default=1,
+                output_field=models.IntegerField(),
+            ),
+            '-created_at',
+        ).first()
+        if not subscription:
+            raise RazorpaySubscription.DoesNotExist
         return {
             'has_subscription': True,
             'subscription_id': subscription.razorpay_subscription_id,
@@ -708,13 +721,16 @@ def _handle_subscription_charged(payload: dict) -> dict:
     except User.DoesNotExist:
         return {'status': 'skipped', 'reason': 'user not found'}
 
-    # Idempotency
-    if payment_id and RazorpayPayment.objects.filter(
-        razorpay_payment_id=payment_id, credits_granted=True,
-    ).exists():
-        return {'status': 'already_processed', 'payment_id': payment_id}
+    # Idempotency check is inside the transaction block below (with select_for_update)
+    # to prevent race conditions between concurrent webhook deliveries.
 
     with transaction.atomic():
+        # Idempotency — must be inside atomic with lock to prevent double-grant
+        if payment_id and RazorpayPayment.objects.select_for_update().filter(
+            razorpay_payment_id=payment_id, credits_granted=True,
+        ).exists():
+            return {'status': 'already_processed', 'payment_id': payment_id}
+
         try:
             subscription = RazorpaySubscription.objects.select_for_update().get(
                 razorpay_subscription_id=sub_id,

@@ -197,7 +197,6 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'quick_wins',
             'summary',
             'ai_provider_used',
-            'celery_task_id',
             'report_pdf_url',
             'share_token',
             'share_url',
@@ -322,6 +321,14 @@ class JobCreateSerializer(serializers.ModelSerializer):
             'source', 'resume_id',
         )
         read_only_fields = ('id',)
+
+    def validate_job_url(self, value):
+        if value:
+            from urllib.parse import urlparse
+            parsed = urlparse(value)
+            if parsed.scheme not in ('http', 'https', ''):
+                raise serializers.ValidationError('Only http:// and https:// URLs are allowed.')
+        return value
 
     def create(self, validated_data):
         user = self.context['request'].user

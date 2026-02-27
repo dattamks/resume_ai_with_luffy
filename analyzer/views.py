@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle
+from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle, WriteThrottle
 from .models import ResumeAnalysis, Resume, Job, GeneratedResume, JobAlert, JobMatch, DiscoveredJob
 from .serializers import (
     ResumeAnalysisCreateSerializer,
@@ -124,52 +124,57 @@ class RetryAnalysisView(APIView):
     throttle_classes = [AnalyzeThrottle]
 
     def post(self, request, pk):
-        try:
-            analysis = ResumeAnalysis.objects.get(id=pk, user=request.user)
-        except ResumeAnalysis.DoesNotExist:
-            return Response(
-                {'detail': 'Analysis not found.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        from django.db import transaction
 
-        if analysis.status == ResumeAnalysis.STATUS_DONE:
-            return Response(
-                {'detail': 'This analysis is already complete.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        with transaction.atomic():
+            try:
+                analysis = ResumeAnalysis.objects.select_for_update().get(
+                    id=pk, user=request.user
+                )
+            except ResumeAnalysis.DoesNotExist:
+                return Response(
+                    {'detail': 'Analysis not found.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-        if analysis.status == ResumeAnalysis.STATUS_PROCESSING:
-            return Response(
-                {'detail': 'This analysis is already being processed.'},
-                status=status.HTTP_409_CONFLICT,
-            )
+            if analysis.status == ResumeAnalysis.STATUS_DONE:
+                return Response(
+                    {'detail': 'This analysis is already complete.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        # ── Credit check for retry — deduct upfront ──
-        from accounts.services import deduct_credits, InsufficientCreditsError
-        try:
-            credit_result = deduct_credits(
-                request.user,
-                'resume_analysis',
-                description=f'Retry analysis #{analysis.id}',
-                reference_id=str(analysis.id),
-            )
-        except InsufficientCreditsError as e:
-            return Response(
-                {
-                    'detail': 'Insufficient credits.',
-                    'balance': e.balance,
-                    'cost': e.cost,
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
+            if analysis.status == ResumeAnalysis.STATUS_PROCESSING:
+                return Response(
+                    {'detail': 'This analysis is already being processed.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
-        logger.info('Retrying analysis id=%s from step=%s', analysis.id, analysis.pipeline_step)
+            # ── Credit check for retry — deduct upfront ──
+            from accounts.services import deduct_credits, InsufficientCreditsError
+            try:
+                credit_result = deduct_credits(
+                    request.user,
+                    'resume_analysis',
+                    description=f'Retry analysis #{analysis.id}',
+                    reference_id=str(analysis.id),
+                )
+            except InsufficientCreditsError as e:
+                return Response(
+                    {
+                        'detail': 'Insufficient credits.',
+                        'balance': e.balance,
+                        'cost': e.cost,
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
 
-        # Reset status to processing but keep pipeline_step (so it resumes from there)
-        analysis.status = ResumeAnalysis.STATUS_PROCESSING
-        analysis.error_message = ''
-        analysis.credits_deducted = True
-        analysis.save(update_fields=['status', 'error_message', 'credits_deducted'])
+            logger.info('Retrying analysis id=%s from step=%s', analysis.id, analysis.pipeline_step)
+
+            # Reset status to processing but keep pipeline_step (so it resumes from there)
+            analysis.status = ResumeAnalysis.STATUS_PROCESSING
+            analysis.error_message = ''
+            analysis.credits_deducted = True
+            analysis.save(update_fields=['status', 'error_message', 'credits_deducted'])
 
         # Dispatch to Celery worker
         run_analysis_task.delay(analysis.id, request.user.id)
@@ -224,7 +229,7 @@ class AnalysisDeleteView(APIView):
     Keeps lightweight metadata (ats_score, jd_role, etc.) for analytics.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
+    throttle_classes = [WriteThrottle]
 
     def delete(self, request, pk):
         try:
@@ -442,7 +447,7 @@ class DashboardStatsView(APIView):
             'total_analyses': total,
             'active_analyses': active,
             'deleted_analyses': deleted,
-            'average_ats_score': round(avg_ats, 1) if avg_ats else None,
+            'average_ats_score': round(avg_ats, 1) if avg_ats is not None else None,
             'score_trend': score_trend,
             'top_roles': top_roles,
             'analyses_per_month': monthly,
@@ -457,7 +462,7 @@ class AnalysisShareView(APIView):
     DELETE /api/analyses/<id>/share/  — Revoke the share token.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
+    throttle_classes = [WriteThrottle]
 
     def post(self, request, pk):
         try:

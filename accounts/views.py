@@ -109,6 +109,11 @@ class MeView(APIView):
         return Response(UserSerializer(request.user).data)
 
     def delete(self, request):
+        from .serializers import DeleteAccountSerializer
+        serializer = DeleteAccountSerializer(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
         user = request.user
         logger.warning('Account deletion requested for user=%s (id=%s)', user.username, user.id)
 
@@ -130,21 +135,12 @@ class MeView(APIView):
         except Exception:
             pass  # best-effort; user is being deleted anyway
 
-        # Bulk soft-delete all active analyses (clears heavy data, keeps analytics)
-        # FK-linked ScrapeResult/LLMResponse are cascade-deleted by user.delete() below.
-        from analyzer.models import ResumeAnalysis
-        ResumeAnalysis.objects.filter(user=user, deleted_at__isnull=True).update(
-            deleted_at=timezone.now(),
-            resume_text='',
-            resolved_jd='',
-            jd_text='',
-        )
-
-        # Hard-delete user (cascades to Resume, ScrapeResult, LLMResponse via FK)
+        # Hard-delete user (cascades to Resume, ScrapeResult, LLMResponse, analyses via FK)
+        # Note: no need to soft-delete analyses separately — user.delete() cascades.
         user.delete()
 
         logger.info('Account deleted: username=%s', user.username)
-        return Response({'detail': 'Account permanently deleted.'}, status=status.HTTP_204_NO_CONTENT)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ChangePasswordView(APIView):
@@ -165,6 +161,14 @@ class ChangePasswordView(APIView):
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save(update_fields=['password'])
 
+        # Invalidate all existing JWT sessions so the old tokens can't be reused
+        try:
+            tokens = OutstandingToken.objects.filter(user=request.user)
+            for token in tokens:
+                BlacklistedToken.objects.get_or_create(token=token)
+        except Exception:
+            pass  # best-effort
+
         logger.info('Password changed for user=%s', request.user.username)
 
         # Send confirmation email (best-effort)
@@ -173,7 +177,7 @@ class ChangePasswordView(APIView):
             recipient=request.user.email,
             context={
                 'username': request.user.username,
-                'changed_at': datetime.now().strftime('%B %d, %Y at %I:%M %p'),
+                'changed_at': timezone.now().strftime('%B %d, %Y at %I:%M %p'),
             },
             fail_silently=True,
         )

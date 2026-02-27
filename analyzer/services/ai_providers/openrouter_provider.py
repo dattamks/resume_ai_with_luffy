@@ -30,7 +30,7 @@ class OpenRouterProvider(AIProvider):
 
     def analyze(self, resume_text: str, job_description: str) -> dict:
         prompt = self._build_prompt(resume_text, job_description)
-        max_tokens = getattr(settings, 'AI_MAX_TOKENS', 4096)
+        max_tokens = getattr(settings, 'AI_MAX_TOKENS', 8192)
 
         messages = [
             {'role': 'system', 'content': SYSTEM_PROMPT},
@@ -51,7 +51,11 @@ class OpenRouterProvider(AIProvider):
         elapsed = time.time() - req_start
         logger.info('OpenRouter: response received in %.2fs', elapsed)
 
-        raw = response.choices[0].message.content.strip()
+        raw = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
+        if not raw:
+            raise ValueError(
+                'OpenRouter returned an empty response (content moderation refusal or empty choices).'
+            )
 
         # Strip markdown code fences (```json ... ```) that LLMs often wrap around JSON
         fence_match = _MD_FENCE_RE.match(raw)
@@ -67,13 +71,13 @@ class OpenRouterProvider(AIProvider):
             try:
                 data = json.loads(repaired_str)
             except json.JSONDecodeError:
-                logger.error('OpenRouter JSON repair failed: %s', raw[:500])
+                logger.error('OpenRouter JSON repair failed (raw length=%d)', len(raw))
                 raise ValueError('OpenRouter returned non-JSON response and repair failed.')
 
         try:
             validate_ai_response(data)
         except ValueError as exc:
-            logger.error('OpenRouter response failed schema validation: %s | raw=%s', exc, raw[:500])
+            logger.error('OpenRouter response failed schema validation: %s (raw length=%d)', exc, len(raw))
             raise
 
         return {

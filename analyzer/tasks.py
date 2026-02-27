@@ -106,11 +106,17 @@ def run_analysis_task(self, analysis_id, user_id):
             _set_analysis_cache(analysis)
         except Exception:
             pass
-        # Refund credits on failure
-        _refund_analysis_credits(analysis)
-        # Re-raise for Celery retry (ConnectionError etc.)
-        if isinstance(exc, (ConnectionError, OSError)):
+
+        is_retriable = isinstance(exc, (ConnectionError, OSError))
+        will_retry = is_retriable and self.request.retries < self.max_retries
+
+        if will_retry:
+            # Don't refund — the task will be retried and may succeed.
+            # Credits stay deducted until final success or final failure.
             raise
+        else:
+            # Final failure — refund credits
+            _refund_analysis_credits(analysis)
 
 
 def _refund_analysis_credits(analysis):
@@ -202,23 +208,28 @@ def cleanup_stale_analyses():
     This catches cases where a Celery worker died mid-pipeline.
     Also refunds credits for these stale analyses.
     """
+    from django.db import transaction
     from .models import ResumeAnalysis
 
     cutoff = timezone.now() - timezone.timedelta(minutes=30)
-    stale = ResumeAnalysis.objects.filter(
-        status=ResumeAnalysis.STATUS_PROCESSING,
-        updated_at__lt=cutoff,
-    )
 
-    # Refund credits for each stale analysis before bulk-updating
-    for analysis in stale.filter(credits_deducted=True):
-        _refund_analysis_credits(analysis)
+    # Atomic: refund + update must happen together so the queryset doesn't
+    # change between the refund loop and the bulk status update.
+    with transaction.atomic():
+        stale = ResumeAnalysis.objects.select_for_update().filter(
+            status=ResumeAnalysis.STATUS_PROCESSING,
+            updated_at__lt=cutoff,
+        )
 
-    count = stale.update(
-        status=ResumeAnalysis.STATUS_FAILED,
-        pipeline_step=ResumeAnalysis.STEP_FAILED,
-        error_message='Analysis timed out (worker may have crashed). Please retry.',
-    )
+        # Refund credits for each stale analysis before bulk-updating
+        for analysis in stale.filter(credits_deducted=True):
+            _refund_analysis_credits(analysis)
+
+        count = stale.update(
+            status=ResumeAnalysis.STATUS_FAILED,
+            pipeline_step=ResumeAnalysis.STEP_FAILED,
+            error_message='Analysis timed out (worker may have crashed). Please retry.',
+        )
     if count:
         logger.info('Marked %d stale analyses as failed', count)
 
@@ -451,14 +462,18 @@ def discover_jobs_task():
 
     now = timezone.now()
 
-    # Lock rows to prevent concurrent processing by multiple workers
+    # Lock rows and immediately bump next_run_at to prevent concurrent
+    # workers from re-processing the same alerts after the transaction ends.
     with transaction.atomic():
-        due_alert_ids = list(
+        due_alerts_qs = (
             JobAlert.objects
             .select_for_update(skip_locked=True)
             .filter(is_active=True, next_run_at__lte=now)
-            .values_list('id', flat=True)
         )
+        due_alert_ids = list(due_alerts_qs.values_list('id', flat=True))
+        if due_alert_ids:
+            # Claim by advancing next_run_at (will be set properly after processing)
+            JobAlert.objects.filter(id__in=due_alert_ids).update(next_run_at=now + timezone.timedelta(hours=6))
 
     if not due_alert_ids:
         logger.info('discover_jobs_task: no due alerts')
@@ -520,6 +535,11 @@ def discover_jobs_task():
 
                 # Skip listings with no URL
                 if not listing.url:
+                    continue
+
+                # Skip listings with no external_id — str(None) would create
+                # collisions via the unique constraint on (source, external_id).
+                if not listing.external_id:
                     continue
 
                 posted_at = None

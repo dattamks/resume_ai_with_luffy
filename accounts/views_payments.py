@@ -25,6 +25,7 @@ from .serializers import (
     CreateTopUpOrderSerializer,
     VerifyTopUpSerializer,
 )
+from .throttles import PaymentThrottle
 
 logger = logging.getLogger('accounts')
 
@@ -38,6 +39,7 @@ class CreateSubscriptionView(APIView):
     Response: { "subscription_id", "key_id", "amount", "currency", ... }
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def post(self, request):
         serializer = CreateSubscriptionSerializer(data=request.data)
@@ -66,6 +68,7 @@ class VerifySubscriptionView(APIView):
     }
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def post(self, request):
         serializer = VerifySubscriptionSerializer(data=request.data)
@@ -93,6 +96,7 @@ class CancelSubscriptionView(APIView):
     Cancel the user's active subscription (at end of billing cycle).
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def post(self, request):
         from .razorpay_service import cancel_subscription
@@ -111,6 +115,7 @@ class SubscriptionStatusView(APIView):
     Get the current subscription status.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def get(self, request):
         from .razorpay_service import get_subscription_status
@@ -128,6 +133,7 @@ class CreateTopUpOrderView(APIView):
     Response: { "order_id", "key_id", "amount", "currency", ... }
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def post(self, request):
         serializer = CreateTopUpOrderSerializer(data=request.data)
@@ -156,6 +162,7 @@ class VerifyTopUpView(APIView):
     }
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def post(self, request):
         serializer = VerifyTopUpSerializer(data=request.data)
@@ -220,7 +227,32 @@ class RazorpayWebhookView(APIView):
         event = body.get('event', '')
         payload = body.get('payload', {})
 
-        logger.info('Webhook received: event=%s', event)
+        # Razorpay sends a unique top-level event ID in each webhook delivery.
+        # Fall back to constructing one from event + entity ID if missing.
+        event_id = body.get('event_id', '') or body.get('id', '')
+        if not event_id:
+            # Build a deterministic ID from event type + payment/subscription entity ID
+            entity_id = (
+                payload.get('payment', {}).get('entity', {}).get('id', '')
+                or payload.get('subscription', {}).get('entity', {}).get('id', '')
+                or 'unknown'
+            )
+            event_id = f'{event}:{entity_id}'
+
+        # ── Replay protection: reject duplicate event deliveries ──
+        from .models import WebhookEvent
+        _, created = WebhookEvent.objects.get_or_create(
+            event_id=event_id,
+            defaults={'event_type': event},
+        )
+        if not created:
+            logger.info('Webhook duplicate skipped: event_id=%s event=%s', event_id, event)
+            return Response(
+                {'status': 'duplicate', 'event_id': event_id},
+                status=status.HTTP_200_OK,
+            )
+
+        logger.info('Webhook received: event=%s event_id=%s', event, event_id)
 
         # Process the event
         result = handle_webhook_event(event, payload)
@@ -235,13 +267,14 @@ class PaymentHistoryView(APIView):
     Returns the user's payment history.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
 
     def get(self, request):
         from .razorpay_service import get_payment_history
 
         limit = request.query_params.get('limit', 20)
         try:
-            limit = min(int(limit), 100)
+            limit = max(1, min(int(limit), 100))
         except (TypeError, ValueError):
             limit = 20
 

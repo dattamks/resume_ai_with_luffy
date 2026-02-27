@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.13.1
+> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.15.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -424,17 +424,36 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 🔒 Requires auth. **Permanently** deletes the authenticated user's account and all associated data.
 
+> ⚠️ **Breaking change (v0.14.0):** Password confirmation is now **required**. Send a JSON body with the `password` field.
+
+**Request (JSON):**
+```json
+{
+  "password": "CurrentPassword123!"
+}
+```
+
 **What happens on delete:**
-1. All outstanding JWT tokens are blacklisted.
-2. All active analyses are soft-deleted (heavy data cleared, metadata kept).
-3. User row is hard-deleted (cascades to Resume, ScrapeResult, LLMResponse, Job rows).
+1. Password is verified against the authenticated user.
+2. Any active Razorpay subscription is cancelled.
+3. All outstanding JWT tokens are blacklisted.
+4. All active analyses are soft-deleted (heavy data cleared, metadata kept).
+5. User row is hard-deleted (cascades to Resume, ScrapeResult, LLMResponse, Job rows).
 
 **Response (204 No Content):**
 ```json
 { "detail": "Account permanently deleted." }
 ```
 
-> ⚠️ **This action is irreversible.** Show a confirmation dialog before calling.
+**Errors:**
+
+| Code | Condition | Example Response |
+|------|-----------|------------------|
+| 400  | Missing password | `{ "password": ["This field is required."] }` |
+| 400  | Wrong password | `{ "password": ["Password is incorrect."] }` |
+| 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
+
+> ⚠️ **This action is irreversible.** Show a confirmation dialog that collects the user's password before calling.
 
 ---
 
@@ -463,7 +482,7 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 | 400  | Weak new password | `{ "new_password": ["This password is too common."] }` |
 | 401  | Not authenticated | `{ "detail": "Authentication credentials were not provided." }` |
 
-> **Note:** After changing password, existing tokens remain valid until they expire. The frontend may want to re-login the user.
+> **Note (v0.14.0):** After changing password, **all existing JWT tokens are blacklisted**. The frontend must re-authenticate the user (redirect to login or use the refresh token from the current session, which will fail). Store the new credentials and re-login automatically.
 > **Email:** A confirmation email (HTML template `password-changed`) is sent to the user after a successful password change.
 
 ---
@@ -847,7 +866,7 @@ After receiving 202, begin [polling for status](#14-polling-for-analysis-status)
 
 ### DELETE `/api/analyses/<id>/delete/` — Soft-Delete Analysis
 
-🔒 Requires auth. **Throttled:** `readonly` scope (120/hour).
+🔒 Requires auth. **Throttled:** `write` scope (60/hour).
 
 Performs a **soft-delete** — the analysis row is preserved in the database with lightweight metadata for analytics, but is removed from all list/detail views.
 
@@ -1096,7 +1115,7 @@ Allow users to generate a public, read-only link for a completed analysis. Anyon
 
 ### POST `/api/analyses/<id>/share/` — Generate Share Link
 
-🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Only works on **completed** (`status: "done"`) analyses.
+🔒 Requires auth. **Throttled:** `write` scope (60/hour). Only works on **completed** (`status: "done"`) analyses.
 
 **Idempotent:** If a share token already exists, returns the existing token (200). Otherwise creates a new one (201).
 
@@ -1129,7 +1148,7 @@ showToast('Share link copied!');
 
 ### DELETE `/api/analyses/<id>/share/` — Revoke Share Link
 
-🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Immediately revokes the share token — the public link stops working.
+🔒 Requires auth. **Throttled:** `write` scope (60/hour). Immediately revokes the share token — the public link stops working.
 
 **Request:** Empty body.
 
@@ -1225,7 +1244,7 @@ showToast('Share link copied!');
 | `section_feedback`     | array           | `[{ section_name, score, feedback[], ats_flags[] }]`     |
 | `sentence_suggestions` | array           | `[{ original, suggested, reason }]`                      |
 | `formatting_flags`     | string[]        | ATS formatting issues found in the resume                |
-| `quick_wins`           | array           | `[{ priority (1-3), action }]` — always exactly 3 items |
+| `quick_wins`           | array           | `[{ priority (1-3), action }]` — 1–3 items |
 | `summary`              | string          | 2-3 sentence overall summary                             |
 | `ai_provider_used`     | string          | AI model identifier                                      |
 | `created_at`           | datetime        | When analysis was submitted                              |
@@ -1477,7 +1496,6 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
   ],
   "summary": "Strong Python background with relevant experience. Key gaps in DevOps/cloud skills. With targeted keyword additions and bullet point improvements, this resume has strong potential.",
   "ai_provider_used": "OpenRouterProvider",
-  "celery_task_id": "abc-123-def",
   "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
   "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
@@ -1516,10 +1534,9 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
 | `section_feedback`     | array \| null   | `[{ section_name, score (0-100), feedback[], ats_flags[] }]` — per-section analysis |
 | `sentence_suggestions` | array \| null   | `[{ original, suggested, reason }]` — up to 10 weak sentences flagged |
 | `formatting_flags`     | string[] \| null| ATS formatting issues found (e.g., multi-column layout, tables) |
-| `quick_wins`           | array \| null   | `[{ priority (1-3), action }]` — always exactly 3 items  |
+| `quick_wins`           | array \| null   | `[{ priority (1-3), action }]` — 1–3 items  |
 | `summary`              | string          | 2-3 sentence overall summary of quality and fit          |
 | `ai_provider_used`     | string          | AI model identifier (e.g., `"OpenRouterProvider"`)       |
-| `celery_task_id`       | string          | Background task ID (for debugging)                       |
 | `report_pdf_url`       | string \| null  | URL to pre-generated PDF report in R2                    |
 | `share_token`          | UUID \| null    | Share token (null if not shared)                         |
 | `share_url`            | string \| null  | Public share URL (null if not shared)                    |
@@ -1730,7 +1747,7 @@ The AI returns the following JSON structure. These fields are stored in `llm_res
 | `sentence_suggestions[].suggested` | string | Improved version of the sentence |
 | `sentence_suggestions[].reason` | string | Explanation (e.g., `"Restructured to quantify impact and added action verb"`) |
 | **`formatting_flags`** | **string[]** | **ATS formatting issues (e.g., multi-column, tables, images)** |
-| **`quick_wins`** | **array** | **Top 3 priority actions — always exactly 3 items** |
+| **`quick_wins`** | **array** | **Top 1–3 priority actions** |
 | `quick_wins[].priority` | int (1-3) | Priority level (1 = highest) |
 | `quick_wins[].action` | string | Specific action to take |
 | **`summary`** | **string** | **2-3 sentence overall summary of resume quality and fit** |
@@ -1830,7 +1847,7 @@ const { items, totalPages, hasNext } = await fetchPage('/analyses/', 1);
 
 ## 13. Rate Limiting
 
-Every endpoint is throttled. Five scopes exist, each overridable via environment variable:
+Every endpoint is throttled. Six scopes exist, each overridable via environment variable:
 
 | Scope | Default Limit | Env Var Override | Applied To |
 |-------|---------------|------------------|------------|
@@ -1838,7 +1855,9 @@ Every endpoint is throttled. Five scopes exist, each overridable via environment
 | `user` (per user) | 200 / hour | `USER_THROTTLE_RATE` | All authenticated requests (global default) |
 | `auth` (IP-based) | 20 / hour | `AUTH_THROTTLE_RATE` | Register, Login, Forgot-password, Reset-password |
 | `analyze` (per user) | 10 / hour | `ANALYZE_THROTTLE_RATE` | `POST /api/analyze/`, `POST /api/analyses/<id>/retry/` |
-| `readonly` (per user) | 120 / hour | `READONLY_THROTTLE_RATE` | All authenticated read/write endpoints except analyze |
+| `readonly` (per user) | 120 / hour | `READONLY_THROTTLE_RATE` | All authenticated read endpoints |
+| `write` (per user) | 60 / hour | `WRITE_THROTTLE_RATE` | Analysis delete, share toggle |
+| `payment` (per user) | 30 / hour | `PAYMENT_THROTTLE_RATE` | All Razorpay payment endpoints (subscribe, verify, cancel, topup, history) |
 
 When rate-limited, the API returns:
 
@@ -2276,7 +2295,7 @@ interface LLMParsedResponse {
   section_feedback: SectionFeedbackItem[];
   sentence_suggestions: SentenceSuggestion[];  // max 10
   formatting_flags: string[];
-  quick_wins: QuickWin[];                   // always exactly 3
+  quick_wins: QuickWin[];                   // 1–3 items
   summary: string;                          // 2-3 sentence summary
 }
 
@@ -2310,7 +2329,6 @@ interface AnalysisDetail {
   quick_wins: QuickWin[] | null;
   summary: string;
   ai_provider_used: string;
-  celery_task_id: string;
   report_pdf_url: string | null;
   share_token: string | null;                 // UUID
   share_url: string | null;
@@ -3652,6 +3670,8 @@ Full Razorpay payment gateway integration for **plan subscriptions** (recurring)
 
 **Step 1 — Create subscription:**
 
+🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
+
 ```
 POST /api/auth/payments/subscribe/
 Auth: Bearer token
@@ -3714,6 +3734,8 @@ Body: {
 
 ### 22.2 Cancel Subscription
 
+🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
+
 ```
 POST /api/auth/payments/subscribe/cancel/
 Auth: Bearer token
@@ -3730,6 +3752,8 @@ Auth: Bearer token
 ```
 
 ### 22.3 Subscription Status
+
+🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
 GET /api/auth/payments/subscribe/status/
@@ -3754,6 +3778,8 @@ Auth: Bearer token
 ### 22.4 Credit Top-Up (One-Time Purchase)
 
 **Step 1 — Create top-up order:**
+
+🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
 POST /api/auth/payments/topup/
@@ -3817,10 +3843,18 @@ Body: {
 
 ### 22.5 Payment History
 
+🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
+
 ```
 GET /api/auth/payments/history/?limit=20
 Auth: Bearer token
 ```
+
+**Query params:**
+
+| Param   | Type | Default | Description |
+|---------|------|---------|-------------|
+| `limit` | int  | 20      | Number of records to return. Clamped to **1–100** server-side. |
 
 **Response (200):**
 ```json
@@ -4028,24 +4062,24 @@ const cancelSubscription = async () => {
 | GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
 | POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
 | **Razorpay Payments** |||||
-| POST | `/api/auth/payments/subscribe/` | ✅ | User (200/hr) | Create Razorpay subscription |
-| POST | `/api/auth/payments/subscribe/verify/` | ✅ | User (200/hr) | Verify subscription payment |
-| POST | `/api/auth/payments/subscribe/cancel/` | ✅ | User (200/hr) | Cancel subscription |
-| GET | `/api/auth/payments/subscribe/status/` | ✅ | User (200/hr) | Subscription status |
-| POST | `/api/auth/payments/topup/` | ✅ | User (200/hr) | Create top-up order |
-| POST | `/api/auth/payments/topup/verify/` | ✅ | User (200/hr) | Verify top-up payment |
+| POST | `/api/auth/payments/subscribe/` | ✅ | Payment (30/hr) | Create Razorpay subscription |
+| POST | `/api/auth/payments/subscribe/verify/` | ✅ | Payment (30/hr) | Verify subscription payment |
+| POST | `/api/auth/payments/subscribe/cancel/` | ✅ | Payment (30/hr) | Cancel subscription |
+| GET | `/api/auth/payments/subscribe/status/` | ✅ | Payment (30/hr) | Subscription status |
+| POST | `/api/auth/payments/topup/` | ✅ | Payment (30/hr) | Create top-up order |
+| POST | `/api/auth/payments/topup/verify/` | ✅ | Payment (30/hr) | Verify top-up payment |
 | POST | `/api/auth/payments/webhook/` | ❌ | None (signature) | Razorpay webhook receiver |
-| GET | `/api/auth/payments/history/` | ✅ | User (200/hr) | Payment history |
+| GET | `/api/auth/payments/history/` | ✅ | Payment (30/hr) | Payment history |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
 | GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (paginated) |
 | GET | `/api/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
 | GET | `/api/analyses/<id>/status/` | ✅ | Readonly (120/hr) | Poll status (lightweight) |
 | POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
-| DELETE | `/api/analyses/<id>/delete/` | ✅ | Readonly (120/hr) | Soft-delete analysis |
+| DELETE | `/api/analyses/<id>/delete/` | ✅ | Write (60/hr) | Soft-delete analysis |
 | GET | `/api/analyses/<id>/export-pdf/` | ✅ | Readonly (120/hr) | Download PDF report |
-| POST | `/api/analyses/<id>/share/` | ✅ | Readonly (120/hr) | Generate public share link |
-| DELETE | `/api/analyses/<id>/share/` | ✅ | Readonly (120/hr) | Revoke share link |
+| POST | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Generate public share link |
+| DELETE | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Revoke share link |
 | **Resume** |||||
 | GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (with `file_url` for download) |
 | DELETE | `/api/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
@@ -4077,6 +4111,24 @@ const cancelSubscription = async () => {
 | **System** |||||
 | GET | `/api/health/` | ❌ | None | Health check |
 
+---
 
+## Changelog
 
+### v0.15.0 — Edge Case Fixes
 
+- **New `write` throttle scope (60/hour):** Analysis delete (`DELETE /api/analyses/<id>/delete/`), share create (`POST /api/analyses/<id>/share/`), and share revoke (`DELETE /api/analyses/<id>/share/`) now use the stricter `write` scope instead of `readonly`.
+- **`quick_wins` count is 1–3:** Previously documented as "always exactly 3 items"; the backend now validates and accepts 1–3 items.
+- **Payment history `limit` clamped:** The `limit` query parameter on `GET /api/auth/payments/history/` is now clamped server-side to **1–100**.
+- **`section_feedback[].score` clamped 0–100:** Scores outside range are now clamped by the backend.
+- **`overall_grade` always uppercase:** The backend normalises the LLM response to uppercase (`A`–`F`).
+- **Subscription model:** Users can now have multiple historical subscriptions. The subscription status endpoint always returns the latest active subscription.
+- **`posted_at` on discovered jobs:** Now returns ISO-8601 dates (previously could be relative strings like "3 days ago").
+- **Salary currency:** Discovered jobs now include the correct currency symbol based on country (e.g., `£` for GB, `$` for US, `₹` for IN).
+
+### v0.14.0 — Security Hardening
+
+- **Account deletion requires password** (`DELETE /api/auth/profile/`)
+- **`celery_task_id` removed** from analysis responses
+- **`payment` throttle scope** added (30/hour) for all payment endpoints
+- **Session invalidation** on password change — all existing tokens blacklisted

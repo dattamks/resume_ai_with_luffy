@@ -21,6 +21,13 @@ logger = logging.getLogger('analyzer')
 
 _ADZUNA_BASE = 'https://api.adzuna.com/v1/api/jobs'
 
+# Map Adzuna country codes to currency symbols
+_COUNTRY_CURRENCY = {
+    'gb': '£', 'us': '$', 'au': 'A$', 'ca': 'C$', 'in': '₹',
+    'de': '€', 'fr': '€', 'nl': '€', 'it': '€', 'es': '€', 'at': '€',
+    'br': 'R$', 'za': 'R', 'sg': 'S$', 'nz': 'NZ$', 'pl': 'zł',
+}
+
 
 class AdzunaJobSource(BaseJobSource):
     """Fetches job listings from the Adzuna API."""
@@ -68,11 +75,12 @@ class AdzunaJobSource(BaseJobSource):
 
             for job in data.get('results', []):
                 job_id = str(job.get('id', ''))
+                currency = _COUNTRY_CURRENCY.get(self.country, '$')
                 salary_parts = []
                 if job.get('salary_min'):
-                    salary_parts.append(f"£{job['salary_min']:.0f}")
+                    salary_parts.append(f"{currency}{job['salary_min']:.0f}")
                 if job.get('salary_max'):
-                    salary_parts.append(f"£{job['salary_max']:.0f}")
+                    salary_parts.append(f"{currency}{job['salary_max']:.0f}")
                 salary = '–'.join(salary_parts)
 
                 all_listings.append(RawJobListing(

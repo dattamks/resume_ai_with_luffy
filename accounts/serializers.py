@@ -186,6 +186,17 @@ class UpdateUserSerializer(serializers.ModelSerializer):
         return instance
 
 
+class DeleteAccountSerializer(serializers.Serializer):
+    """Requires password confirmation before account deletion."""
+    password = serializers.CharField(write_only=True)
+
+    def validate_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Password is incorrect.')
+        return value
+
+
 class ChangePasswordSerializer(serializers.Serializer):
     """Validates current password and sets a new one."""
     current_password = serializers.CharField(write_only=True)

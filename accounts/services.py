@@ -55,15 +55,16 @@ def check_balance(user, action_slug: str) -> dict:
     """
     Check if user has enough credits for an action.
     Returns dict with has_enough, balance, cost.
+
+    Note: This is an advisory read — the authoritative check happens inside
+    deduct_credits() which uses select_for_update(). Between this read and
+    the actual deduction, the balance may change due to concurrent requests.
     """
     from .models import Wallet
 
     cost = get_credit_cost(action_slug)
-    try:
-        wallet = Wallet.objects.get(user=user)
-        balance = wallet.balance
-    except Wallet.DoesNotExist:
-        balance = 0
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+    balance = wallet.balance
 
     return {
         'has_enough': balance >= cost,
@@ -89,7 +90,7 @@ def deduct_credits(user, action_slug: str, description: str = '', reference_id: 
         # Free action — no wallet interaction needed
         return {'balance_before': 0, 'balance_after': 0, 'cost': 0}
 
-    wallet = Wallet.objects.select_for_update().get(user=user)
+    wallet, _ = Wallet.objects.select_for_update().get_or_create(user=user)
     balance_before = wallet.balance
 
     if balance_before < cost:
@@ -289,9 +290,13 @@ def subscribe_plan(user, plan_slug: str) -> dict:
         }
 
     current_order = current_plan.display_order if current_plan else 0
+    current_price = current_plan.price if current_plan else 0
     new_order = new_plan.display_order
+    new_price = new_plan.price
 
-    if new_order > current_order:
+    # Use (display_order, price) tuple for unambiguous comparison.
+    # Prevents same display_order from falling to the downgrade branch.
+    if (new_order, new_price) > (current_order, current_price):
         # ── Upgrade ──
         profile.plan = new_plan
         profile.plan_valid_until = timezone.now() + timezone.timedelta(days=30)

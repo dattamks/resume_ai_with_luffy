@@ -16,7 +16,8 @@ import re
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
-from django.template import Template, Context
+from django.template import Context
+from django.template.engine import Engine
 
 logger = logging.getLogger('accounts')
 
@@ -24,6 +25,21 @@ logger = logging.getLogger('accounts')
 class EmailTemplateNotFound(Exception):
     """Raised when the requested email template slug does not exist or is inactive."""
     pass
+
+
+# Sandboxed Django template engine — no built-in tags/filters loaded.
+# This prevents {% load %}, {% include %}, {% url %}, {% ssi %}, etc.
+# Only variable substitution ({{ var }}) and basic filters are allowed.
+_sandboxed_engine = Engine(
+    builtins=[],       # no built-in tag libraries
+    libraries={},      # no tag libraries available to {% load %}
+)
+
+
+def _render_template(source: str, context: Context) -> str:
+    """Render a template string using the sandboxed engine."""
+    tpl = _sandboxed_engine.from_string(source)
+    return tpl.render(context)
 
 
 def strip_html(html: str) -> str:
@@ -81,13 +97,13 @@ def send_templated_email(
 
     template_context = Context(ctx)
 
-    # Render subject + body via Django's template engine
-    rendered_subject = Template(template.subject).render(template_context).strip()
-    rendered_html = Template(template.html_body).render(template_context)
+    # Render subject + body via sandboxed template engine (no {% load %} etc.)
+    rendered_subject = _render_template(template.subject, template_context).strip()
+    rendered_html = _render_template(template.html_body, template_context)
 
     # Plain-text: use explicit plain_text_body if provided, else auto-strip HTML
     if template.plain_text_body.strip():
-        rendered_plain = Template(template.plain_text_body).render(template_context)
+        rendered_plain = _render_template(template.plain_text_body, template_context)
     else:
         rendered_plain = strip_html(rendered_html)
 

@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     UserProfile, NotificationPreference, EmailTemplate, Plan,
     Wallet, WalletTransaction, CreditCost,
-    RazorpayPayment, RazorpaySubscription,
+    RazorpayPayment, RazorpaySubscription, WebhookEvent,
 )
 
 
@@ -150,3 +150,12 @@ class RazorpaySubscriptionAdmin(admin.ModelAdmin):
         'status', 'current_start', 'current_end', 'short_url',
         'created_at', 'updated_at',
     )
+
+
+@admin.register(WebhookEvent)
+class WebhookEventAdmin(admin.ModelAdmin):
+    list_display = ('event_id', 'event_type', 'created_at')
+    list_filter = ('event_type',)
+    search_fields = ('event_id',)
+    readonly_fields = ('event_id', 'event_type', 'created_at')
+    list_per_page = 50

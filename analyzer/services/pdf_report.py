@@ -3,6 +3,7 @@ PDF report generation for resume analysis results.
 Uses ReportLab (pure Python — no native C dependencies).
 """
 import io
+from xml.sax.saxutils import escape as _xml_escape
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -48,6 +49,13 @@ def _bar_color(value):
 
 def _grade_color(grade):
     return GRADE_COLORS.get(grade.upper(), COLOR_GRAY_500)
+
+
+def _safe(text):
+    """Escape XML/HTML special chars so ReportLab Paragraph doesn't interpret them."""
+    if not text:
+        return ''
+    return _xml_escape(str(text))
 
 
 # ── Styles ───────────────────────────────────────────────────────────────────
@@ -199,7 +207,7 @@ def _keyword_pills(keywords, style_name, styles):
     """Render keywords as a comma-separated paragraph (pill-style)."""
     if not keywords:
         return []
-    text = ' &nbsp;·&nbsp; '.join(f'<b>{kw}</b>' for kw in keywords)
+    text = ' &nbsp;·&nbsp; '.join(f'<b>{_safe(kw)}</b>' for kw in keywords)
     return [Paragraph(text, styles[style_name])]
 
 
@@ -253,7 +261,7 @@ def generate_analysis_pdf(analysis):
 
     left_parts = [Paragraph('Resume Analysis Report', styles['Title_Custom'])]
     if role_line:
-        left_parts.append(Paragraph(role_line, styles['Subtitle']))
+        left_parts.append(Paragraph(_safe(role_line), styles['Subtitle']))
     ts = analysis.created_at.strftime('%B %d, %Y at %I:%M %p')
     provider = analysis.ai_provider_used or 'AI'
     left_parts.append(Paragraph(f'{ts}  ·  via {provider}', styles['Timestamp']))
@@ -292,7 +300,7 @@ def generate_analysis_pdf(analysis):
     if analysis.summary:
         story.append(Spacer(1, 8))
         story.append(Paragraph('Summary', styles['SectionHeading']))
-        story.append(Paragraph(analysis.summary, styles['SummaryBody']))
+        story.append(Paragraph(_safe(analysis.summary), styles['SummaryBody']))
 
     # ── Keyword analysis ─────────────────────────────────────────────────
     missing = kw.get('missing_keywords', [])
@@ -319,7 +327,7 @@ def generate_analysis_pdf(analysis):
         if recs:
             story.append(Paragraph('Recommended Actions:', styles['SmallLabel']))
             for r in recs:
-                story.append(Paragraph(f'• {r}', styles['BulletItem']))
+                story.append(Paragraph(f'• {_safe(r)}', styles['BulletItem']))
 
     # ── Section feedback ─────────────────────────────────────────────────
     if sections:
@@ -327,13 +335,13 @@ def generate_analysis_pdf(analysis):
         for sec in sections:
             name = sec.get('section_name', '')
             score = sec.get('score', '')
-            heading_text = f'{name.upper()}  —  {score}/100'
+            heading_text = f'{_safe(name).upper()}  —  {_safe(str(score))}/100'
             block = [Paragraph(heading_text, styles['SubHeading'])]
 
             for fb in sec.get('feedback', []):
-                block.append(Paragraph(f'• {fb}', styles['BulletItem']))
+                block.append(Paragraph(f'• {_safe(fb)}', styles['BulletItem']))
             for fl in sec.get('ats_flags', []):
-                block.append(Paragraph(f'⚠ {fl}', styles['BulletItemRed']))
+                block.append(Paragraph(f'⚠ {_safe(fl)}', styles['BulletItemRed']))
 
             story.append(KeepTogether(block))
             story.append(Spacer(1, 4))
@@ -347,16 +355,16 @@ def generate_analysis_pdf(analysis):
             block = []
             block.append(Paragraph('ORIGINAL', styles['SmallLabel']))
             block.append(Paragraph(
-                f'<strike>{item.get("original", "")}</strike>', styles['OriginalText'],
+                f'<strike>{_safe(item.get("original", ""))}</strike>', styles['OriginalText'],
             ))
             block.append(Spacer(1, 2))
             block.append(Paragraph('SUGGESTED', ParagraphStyle(
                 '_sg', fontSize=8, textColor=COLOR_GREEN, fontName='Helvetica-Bold',
             )))
-            block.append(Paragraph(item.get('suggested', ''), styles['SuggestedText']))
+            block.append(Paragraph(_safe(item.get('suggested', '')), styles['SuggestedText']))
             if item.get('reason'):
                 block.append(Spacer(1, 2))
-                block.append(Paragraph(item['reason'], styles['ReasonText']))
+                block.append(Paragraph(_safe(item['reason']), styles['ReasonText']))
             block.append(Spacer(1, 6))
             story.append(KeepTogether(block))
 
@@ -364,7 +372,7 @@ def generate_analysis_pdf(analysis):
     if flags:
         story.append(Paragraph('Formatting Issues', styles['SectionHeading']))
         for f in flags:
-            story.append(Paragraph(f'⚠ {f}', styles['BulletItemRed']))
+            story.append(Paragraph(f'⚠ {_safe(f)}', styles['BulletItemRed']))
 
     # ── Quick wins ───────────────────────────────────────────────────────
     if wins:
@@ -373,7 +381,7 @@ def generate_analysis_pdf(analysis):
             priority = w.get('priority', '')
             action = w.get('action', '')
             story.append(Paragraph(
-                f'<b>{priority}.</b>  {action}', styles['BulletItem'],
+                f'<b>{_safe(priority)}.</b>  {_safe(action)}', styles['BulletItem'],
             ))
 
     # ── Footer ───────────────────────────────────────────────────────────
