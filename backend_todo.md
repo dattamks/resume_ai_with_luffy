@@ -2,6 +2,15 @@
 
 > Backend-only task tracker. Frontend tasks tracked separately.
 
+### Priority Legend
+
+| Tag | Meaning | Count |
+|-----|---------|-------|
+| 🔴 IMMEDIATE | Next sprint — implement now | 7 |
+| 🟡 P2 | Important — implement soon | 6 |
+| 🔵 P3 | Important — plan for later | 2 |
+| ⚪ DEFERRED | Backlog — revisit in future | 12 |
+
 ---
 
 ## Completed Phases
@@ -215,7 +224,7 @@
 
 - [x] Existing `Job` model stays as "manually tracked jobs" (user-created via POST /api/jobs/)
 - [x] `DiscoveredJob` + `JobMatch` = system-discovered pipeline
-- [ ] Frontend shows tabs: "My Jobs" vs "Discovered Jobs" *(frontend task)*
+- [ ] **⚪ DEFERRED** — Frontend shows tabs: "My Jobs" vs "Discovered Jobs" *(frontend task)*
 
 ### Tests
 
@@ -413,14 +422,14 @@ On resume upload:
 - [x] **SSRF bypass via DNS rebinding** — `jd_fetcher.py` validates URLs against private IPs at validation time, but Firecrawl uses its own DNS resolution later. **Fix:** Documented as accepted risk (Firecrawl is a hosted service). Existing SSRF protection already comprehensive.
 - [x] **Health check leaks DB error details** — `views_health.py` L26 returns `str(exc)` with raw error messages (hostnames, ports) to unauthenticated callers. **Fix:** Returns generic `"Database connection failed."`, logs full error server-side.
 - [x] **Email enumeration via forgot-password** — Already returns same 200 response regardless of email existence. No change needed.
-- [ ] **Webhook IP allowlisting missing** — Only HMAC verification. If secret leaks, any IP can send fake events. **Fix:** Add middleware/decorator to check against Razorpay's published IP ranges. *(deferred — infra/reverse-proxy task)*
+- [ ] **⚪ DEFERRED — Webhook IP allowlisting missing** — Only HMAC verification. If secret leaks, any IP can send fake events. **Fix:** Add middleware/decorator to check against Razorpay's published IP ranges. *(deferred — infra/reverse-proxy task)*
 
 ### P3 — Low Security
 
 - [x] **Razorpay secrets have plaintext defaults** — `settings.py` L300-302: `'rzp_test_placeholder'`. **Fix:** Added `warnings.warn()` in production when placeholder credentials detected.
 - [x] **`CORS_ALLOW_CREDENTIALS = True` unnecessary** — Auth is JWT-based. **Fix:** Removed — JWT uses Authorization header, not cookies.
 - [x] **`SECURE_BROWSER_XSS_FILTER` deprecated** — Django 4.1+: `X-XSS-Protection` header can introduce vulnerabilities. **Fix:** Removed from production security settings with explanatory comment.
-- [ ] **No CSP or Permissions-Policy headers** — **Fix:** Add `django-csp` middleware or set via reverse proxy. *(deferred — frontend/reverse-proxy task)*
+- [ ] **⚪ DEFERRED — No CSP or Permissions-Policy headers** — **Fix:** Add `django-csp` middleware or set via reverse proxy. *(deferred — frontend/reverse-proxy task)*
 - [x] **`celery_task_id` and `resume_file` path exposed in API** — `ResumeAnalysisDetailSerializer` leaks these (excluded from `SharedAnalysisSerializer` confirming they're sensitive). **Fix:** Removed `celery_task_id` from API response.
 - [x] **`JobCreateSerializer` has no URL validation / SSRF prevention** — `job_url` field has no scheme validation. **Fix:** Added URL scheme validation (http/https only).
 
@@ -527,8 +536,8 @@ On resume upload:
 
 ### Jobs Feature
 
-- [ ] **Job match scoring** — when user creates a Job, auto-compare JD to their best resume via lightweight LLM prompt
-- [ ] **Scheduled re-analysis** — Celery Beat task to rerun analysis weekly with same resume + JD (track improvement over time)
+- [ ] **⚪ DEFERRED — Job match scoring** — when user creates a Job, auto-compare JD to their best resume via lightweight LLM prompt
+- [ ] **⚪ DEFERRED — Scheduled re-analysis** — Celery Beat task to rerun analysis weekly with same resume + JD (track improvement over time)
 
 ### Infrastructure
 
@@ -537,7 +546,7 @@ On resume upload:
 ### Code Quality
 
 - [x] **Consolidate inline imports** — Moved `from accounts.services import ...` to top-level in `analyzer/views.py` (9 inline → 1 top-level). `tasks.py` kept inline per Celery best practice.
-- [ ] **Standardize error response format** — Some views use `raise_exception=True`, others return `serializer.errors` manually. Pick one pattern.
+- [ ] **⚪ DEFERRED — Standardize error response format** — Some views use `raise_exception=True`, others return `serializer.errors` manually. Pick one pattern.
 - [x] **`except (ValueError, Exception)` cleanup** — No longer present in codebase *(already cleaned up)*
 - [x] **PDF file validation** — Added `_validate_pdf_magic()` checking `%PDF` magic bytes before processing *(v0.23.0)*
 - [x] **DOCX renderer lacks input sanitization** — Added `_safe()` to strip control chars/null bytes from all user data *(v0.23.0)*
@@ -578,7 +587,7 @@ On resume upload:
 ### P3 — Low
 
 - [x] **Account deletion cascade** — Tests verify wallet + transaction cleanup *(v0.23.0)*
-- [ ] **Serializer edge cases** — No tests for `RegisterSerializer` with blank email, duplicate email, invalid country code/mobile number
+- [ ] **⚪ DEFERRED — Serializer edge cases** — No tests for `RegisterSerializer` with blank email, duplicate email, invalid country code/mobile number
 
 ---
 
@@ -588,27 +597,27 @@ On resume upload:
 
 ### High Value
 
-- [ ] **AI provider fallback / multi-provider** — If OpenRouter is down, analyses fail completely. Add fallback to direct Anthropic or OpenAI API. Requires: provider config model, priority/health tracking, circuit breaker pattern.
-- [ ] **Token usage tracking & cost dashboard** — Track `prompt_tokens`/`completion_tokens` per analysis from `response.usage`. Store on `LLMResponse` model. Surface admin cost dashboard. Alert on budget thresholds.
-- [ ] **Streaming LLM responses** — Use SSE/WebSocket to stream partial analysis results to frontend instead of waiting 60-120s. Requires: Django Channels or SSE endpoint, frontend streaming client.
-- [ ] **Email verification on registration** — Set `user.is_active = False` until email link clicked. Requires: verification token model, send/verify/resend endpoints, new email template, auth flow changes.
+- [ ] **⚪ DEFERRED — AI provider fallback / multi-provider** — If OpenRouter is down, analyses fail completely. Add fallback to direct Anthropic or OpenAI API. Requires: provider config model, priority/health tracking, circuit breaker pattern.
+- [ ] **🔴 IMMEDIATE — Token usage tracking & cost dashboard** — Track `prompt_tokens`/`completion_tokens` per analysis from `response.usage`. Store on `LLMResponse` model. Surface admin cost dashboard. Alert on budget thresholds.
+- [ ] **⚪ DEFERRED — Streaming LLM responses** — Use SSE/WebSocket to stream partial analysis results to frontend instead of waiting 60-120s. Requires: Django Channels or SSE endpoint, frontend streaming client.
+- [ ] **🔴 IMMEDIATE — Email verification on registration** — Set `user.is_active = False` until email link clicked. Requires: verification token model, send/verify/resend endpoints, new email template, auth flow changes.
 - [x] **"Logout all devices"** — `POST /api/auth/logout-all/` blacklists all outstanding tokens *(v0.19.0)*
 
 ### Medium Value
 
-- [ ] **Resume version history** — When user re-uploads modified resume, link to previous versions. Show improvement timeline (ATS score v1→v2→v3).
-- [ ] **Bulk analysis / batch mode** — Analyze one resume against multiple JDs at once (e.g., 5 postings). Compare results side-by-side.
-- [ ] **Interview prep generation** — Leverage analysis gap data to generate likely interview questions customized to resume + JD.
-- [ ] **Cover letter generation** — Extend resume generation pipeline to produce a tailored cover letter from the analysis.
+- [ ] **🔴 IMMEDIATE — Resume version history** — When user re-uploads modified resume, link to previous versions. Show improvement timeline (ATS score v1→v2→v3).
+- [ ] **🔴 IMMEDIATE — Bulk analysis / batch mode** — Analyze one resume against multiple JDs at once (e.g., 5 postings). Compare results side-by-side.
+- [ ] **🔴 IMMEDIATE — Interview prep generation** — Leverage analysis gap data to generate likely interview questions customized to resume + JD.
+- [ ] **🔴 IMMEDIATE — Cover letter generation** — Extend resume generation pipeline to produce a tailored cover letter from the analysis.
 - [x] **Webhook event replay/audit log** — `WebhookEvent` model with unique `event_id` stores all received events *(v0.13.1)*
-- [ ] **Rate limit feedback in API responses** — Include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers so frontend can show proactive warnings.
+- [ ] **🔴 IMMEDIATE — Rate limit feedback in API responses** — Include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers so frontend can show proactive warnings.
 
 ### Lower Value
 
-- [ ] **Hiring trends analytics** — Aggregate anonymized data across users to show trending skills, most-demanded roles, salary ranges by industry.
-- [ ] **Admin analytics dashboard** — System-wide metrics: active users, analyses/day, LLM token costs, error rates.
-- [ ] **Resume template marketplace** — Multiple resume templates beyond `ats_classic`. Premium templates behind higher plans.
-- [ ] **LinkedIn resume import** — Import LinkedIn profile data directly instead of uploading PDF.
+- [ ] **⚪ DEFERRED — Hiring trends analytics** — Aggregate anonymized data across users to show trending skills, most-demanded roles, salary ranges by industry.
+- [ ] **⚪ DEFERRED — Admin analytics dashboard** — System-wide metrics: active users, analyses/day, LLM token costs, error rates.
+- [ ] **🔵 P3 — Resume template marketplace** — Multiple resume templates beyond `ats_classic`. Premium templates behind higher plans.
+- [ ] **🔵 P3 — LinkedIn resume import** — Import LinkedIn profile data directly instead of uploading PDF.
 
 ---
 
@@ -616,14 +625,14 @@ On resume upload:
 
 - [x] **P1: Update `runtime.txt`** — changed to `python-3.12` *(v0.19.0)*
 - [x] **P2: Separate migrations from web start** — Fixed: Removed inline migrate from Procfile web command; entrypoint.sh uses `flock` to serialize concurrent migrations.
-- [ ] **P2: Health check: verify Redis + Celery** — Current check only tests DB. App reports healthy when analysis submissions silently fail.
-- [ ] **P2: Add Sentry or error tracking** — Bare `except` blocks swallow errors with only `logger.exception()`. No alerting.
-- [ ] **P2: Structured logging (JSON format)** — For better log aggregation and search in Railway/Datadog.
-- [ ] **P2: Emit custom metrics** — Prometheus/StatsD for: analysis duration, LLM token usage, credit operations, payment failures.
-- [ ] **P3: Gunicorn timeout alignment** — `--timeout 120` matches Railway's proxy timeout; reduce to `--timeout 110` so Gunicorn responds before proxy kills the connection.
+- [x] **P2: Health check: verify Redis + Celery** — Already implemented: `views_health.py` checks DB, Redis (set/get), and Celery (inspect.ping) *(already in code)*
+- [ ] **🟡 P2 — Add Sentry or error tracking** — Bare `except` blocks swallow errors with only `logger.exception()`. No alerting.
+- [ ] **🟡 P2 — Structured logging (JSON format)** — For better log aggregation and search in Railway/Datadog.
+- [ ] **🟡 P2 — Emit custom metrics** — Prometheus/StatsD for: analysis duration, LLM token usage, credit operations, payment failures.
+- [ ] **🟡 P2 — Gunicorn timeout alignment** — `--timeout 120` matches Railway's proxy timeout; reduce to `--timeout 110` so Gunicorn responds before proxy kills the connection.
 - [x] **P3: Add `--max-tasks-per-child=50`** — Added to Procfile and entrypoint.sh (configurable via `CELERY_MAX_TASKS_PER_CHILD`).
-- [ ] **P3: Celery task monitoring** — Flower or custom task status dashboard.
-- [ ] **P3: API versioning** — URL-based or header-based API versioning for future-proofing.
+- [ ] **🟡 P2 — Celery task monitoring** — Flower or custom task status dashboard.
+- [ ] **🟡 P2 — API versioning** — URL-based or header-based API versioning for future-proofing.
 
 ---
 
@@ -631,7 +640,7 @@ On resume upload:
 
 - [x] **P2: Add `raw_id_fields`** — added on 5 admin models *(v0.19.0)*
 - [x] **P3: `DiscoveredJobAdmin` needs `list_per_page`** — set to 50 *(v0.19.0)*
-- [ ] **P3: Admin dashboard enhancements** — Better admin views for Plan, UserProfile.
+- [ ] **⚪ DEFERRED — Admin dashboard enhancements** — Better admin views for Plan, UserProfile.
 
 ---
 
