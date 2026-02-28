@@ -10,6 +10,17 @@ logger = logging.getLogger('analyzer')
 class PDFExtractor:
     """Extracts plain text from a PDF file (local or remote/R2)."""
 
+    # PDF magic bytes: every valid PDF starts with %PDF
+    _PDF_MAGIC = b'%PDF'
+
+    def _validate_pdf_magic(self, data: bytes) -> None:
+        """Check that the file starts with the PDF magic bytes (%PDF)."""
+        if not data[:4].startswith(self._PDF_MAGIC):
+            raise ValueError(
+                'The uploaded file is not a valid PDF. '
+                'Please upload a PDF document.'
+            )
+
     def extract(self, file_field) -> str:
         """
         Extract all text from a PDF.
@@ -23,7 +34,7 @@ class PDFExtractor:
             Concatenated text of all pages.
 
         Raises:
-            ValueError: If no text could be extracted.
+            ValueError: If no text could be extracted or file is not a PDF.
         """
         text_parts = []
 
@@ -31,17 +42,27 @@ class PDFExtractor:
         if isinstance(file_field, str):
             # Plain file path (backward compat / local dev)
             logger.debug('PDFExtractor: opening local path %s', file_field)
+            # Validate magic bytes for local files
+            with open(file_field, 'rb') as f:
+                self._validate_pdf_magic(f.read(8))
             pdf_source = file_field
         elif hasattr(file_field, 'open'):
             # Django FieldFile — works with local and R2/S3 storage
             logger.debug('PDFExtractor: reading from storage backend')
             try:
                 file_field.open('rb')
-                pdf_source = io.BytesIO(file_field.read())
+                raw = file_field.read()
             finally:
                 file_field.close()
+            self._validate_pdf_magic(raw[:8])
+            pdf_source = io.BytesIO(raw)
         else:
             # Generic file-like object
+            if hasattr(file_field, 'seek'):
+                pos = file_field.tell()
+                header = file_field.read(8)
+                file_field.seek(pos)
+                self._validate_pdf_magic(header)
             pdf_source = file_field
 
         with pdfplumber.open(pdf_source) as pdf:

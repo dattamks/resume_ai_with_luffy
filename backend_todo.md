@@ -41,7 +41,7 @@
 
 - [x] SSL redirect, secure cookies, `ALLOWED_HOSTS`
 - [x] `collectstatic` in build command, structured logging
-- [ ] Verify rate limiting works with Redis-backed cache
+- [x] Verify rate limiting works with Redis-backed cache *(v0.8.1 — TESTING flag + LocMemCache)*
 </details>
 
 <details>
@@ -228,13 +228,13 @@
 ### Dependencies
 
 - [x] Add `google-search-results` (SerpAPI) or use raw `requests` *(used raw requests — no extra dependency)*
-- [ ] Env vars: `SERPAPI_API_KEY`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`
+- [x] ~~Env vars: `SERPAPI_API_KEY`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`~~ *(removed in Phase 12 — Firecrawl replaced all)*
 
 ### Documentation
 
-- [ ] FRONTEND_API_GUIDE.md — new section with endpoints, example flows, TypeScript types
-- [ ] CHANGELOG.md — v0.12.0 entry
-- [ ] Seed `job_alert_digest` email template
+- [x] FRONTEND_API_GUIDE.md — new section with endpoints, example flows, TypeScript types *(shipped v0.12.0)*
+- [x] CHANGELOG.md — v0.12.0 entry *(shipped)*
+- [x] Seed `job_alert_digest` email template *(active in DB)*
 
 ---
 
@@ -268,8 +268,8 @@
   - Uses `FirecrawlApp.scrape()` to scrape search result pages → markdown
   - Single LLM call per page to extract structured listings (title, company, location, url, snippet)
   - Returns `RawJobListing` objects (existing dataclass in `base.py`)
-- [ ] **Delete `serpapi_source.py`** — kept as legacy fallback for now
-- [ ] **Delete `adzuna_source.py`** — kept as legacy fallback for now
+- [x] **Delete `serpapi_source.py`** — removed in Phase F
+- [x] **Delete `adzuna_source.py`** — removed in Phase F
 - [x] **Rewrite `factory.py`** — Firecrawl primary, SerpAPI/Adzuna legacy fallback only if Firecrawl not configured
 - [x] **Settings** — `JOB_CRAWL_SOURCES` list of `{name, url_template}` dicts
 
@@ -284,7 +284,7 @@
   - Chains `match_all_alerts_task` when done
   - Caps at `MAX_CRAWL_JOBS_PER_RUN` to control costs
 - [x] **Update Celery Beat schedule** — replaced `discover-jobs` (6h) with `crawl-jobs-daily` (crontab 20:30 UTC)
-- [ ] **Remove old `discover_jobs_task`** and `discover_jobs_for_alert_task` — kept for now, will remove after validation
+- [x] **Remove old `discover_jobs_task`** and `discover_jobs_for_alert_task` — removed in Phase F
 
 ### Phase D — Embedding-Based Matching
 
@@ -300,7 +300,7 @@
   - Run embedding similarity query (fast SQL, no LLM cost)
   - Create `JobMatch` + `SentAlert` + `Notification` records
   - Chain email notification task if matches found
-- [ ] **Update manual run endpoint** — `POST /api/job-alerts/<id>/run/` to use embedding matching
+- [x] **Update manual run endpoint** — `POST /api/job-alerts/<id>/run/` uses `crawl_jobs_for_alert_task` (Phase F)
 
 ### Phase E — Dedup Log & In-App Notifications
 
@@ -484,11 +484,11 @@ On resume upload:
 - [x] **No pagination on `GeneratedResumeListView`, `JobAlertListCreateView`** — Returns all records unbounded. **Fix:** Added DRF `PageNumberPagination` (20 per page) to both views.
 - [x] **`JobAlertMatchListView` uses manual pagination** — Django `Paginator` instead of DRF's pagination classes. **Fix:** Switched to DRF `PageNumberPagination` with consistent envelope format.
 - [x] **Token blacklisting iterates one-by-one** — `MeView.delete()` and `ChangePasswordView.post()` loop with individual `get_or_create`. **Fix:** Replaced with `BlacklistedToken.objects.bulk_create([...], ignore_conflicts=True)`.
-- [ ] **Prompt template resent every request (~2,200 chars)** — Full JSON schema embedded in every LLM prompt. **Fix:** Use function-calling / structured output mode if supported by model; otherwise, explore system prompt caching.
+- [x] ~~**Prompt template resent every request**~~ — Accepted design: structured output mode requires model support not yet available on OpenRouter; system prompt caching would add complexity for minimal savings
 - [x] **Migrations run on every web container start** — `entrypoint.sh` + `Procfile` both run `migrate --noinput`. Concurrent replicas → migration race. **Fix:** Removed inline migrate from `Procfile` web command; `entrypoint.sh` now uses `flock -w 120 /tmp/migrate.lock` to serialize migrations.
 - [x] **No `--max-tasks-per-child` for Celery workers** — AI/PDF processing leaks memory over time. **Fix:** Added `--max-tasks-per-child=50` to both `Procfile` and `entrypoint.sh` (configurable via `CELERY_MAX_TASKS_PER_CHILD` env var).
 - ~~[ ] **Adzuna source always page 1** — Removed in Phase 12 (Firecrawl replaced all external job sources).~~
-- [ ] **`unbounded listings` in discover_jobs_task** — `all_listings.extend(listings)` with no limit. Job source returning thousands of results overwhelms the matcher. **Fix:** Cap `all_listings` at a configurable max (e.g., 200).
+- [x] **`unbounded listings` in discover_jobs_task** — capped via `MAX_CRAWL_JOBS_PER_RUN = 200` *(v0.16.0)*
 
 ### P3 — Low
 
@@ -503,27 +503,27 @@ On resume upload:
 
 ### Notification & Email
 
-- [ ] **Respect notification preferences** — check `NotificationPreference` before sending emails (currently all emails fire unconditionally)
-- [ ] **Analysis completion email** — send email when async analysis finishes (seed `analysis-complete` template, add 3 lines to `run_analysis_task`)
-- [ ] **Weekly email digest** — Celery Beat task that sends score trends + tips using email templates
+- [x] **Respect notification preferences** — emails now check `feature_updates_email` / `newsletters_email` prefs *(v0.19.0)*
+- [x] **Analysis completion email** — `analysis-complete` template, fires on task completion *(v0.19.0)*
+- [x] **Weekly email digest** — Celery Beat task every Monday 9 AM UTC *(v0.19.0)*
 
 ### Analysis Pipeline
 
-- [ ] **Duplicate resume warning** — return a message in API response when `Resume.file_hash` matches an existing upload (dedup already works, just not communicated)
-- [ ] **Cancel stuck analysis** — use stored `celery_task_id` to `revoke()` + mark as failed
-- [ ] **Bulk delete analyses** — accept `{"ids": [1,2,3]}` and soft-delete in batch
+- [x] **Duplicate resume warning** — API response includes `duplicate_resume_warning` when hash matches *(v0.19.0)*
+- [x] **Cancel stuck analysis** — `POST /api/analyses/<id>/cancel/` revokes Celery task, refunds credits *(v0.19.0)*
+- [x] **Bulk delete analyses** — `POST /api/analyses/bulk-delete/` soft-deletes up to 50 *(v0.19.0)*
 
 ### Dashboard & Analytics
 
-- [ ] **Grade distribution** — add `grade_distribution` to `/dashboard/stats/` (group by `overall_grade`)
-- [ ] **Industry breakdown** — add `top_industries` stat (same pattern as `top_roles`, group by `jd_industry`)
-- [ ] **Per-ATS score trends** — extend `score_trend` to include `workday_ats`, `greenhouse_ats` alongside `generic_ats`
-- [ ] **Show AI response time** — expose `LLMResponse.duration_seconds` in detail serializer
+- [x] **Grade distribution** — `grade_distribution` in `/dashboard/stats/` *(v0.19.0)*
+- [x] **Industry breakdown** — `top_industries` stat (top 5) *(v0.19.0)*
+- [x] **Per-ATS score trends** — `score_trend` includes `generic_ats`, `workday_ats`, `greenhouse_ats` *(v0.19.0)*
+- [x] **Show AI response time** — `ai_response_time_seconds` on detail serializer *(v0.19.0)*
 
 ### Data & Compliance
 
-- [ ] **Account data export (GDPR)** — endpoint to download all user data as ZIP (analyses JSON + resume PDFs from R2)
-- [ ] **Export analysis as JSON** — downloadable raw analysis data via `GET /api/analyses/<id>/export-json/`
+- [x] **Account data export (GDPR)** — `GET /api/account/export/` downloads all user data *(v0.19.0)*
+- [x] **Export analysis as JSON** — `GET /api/analyses/<id>/export-json/` *(v0.19.0)*
 
 ### Jobs Feature
 
@@ -532,26 +532,26 @@ On resume upload:
 
 ### Infrastructure
 
-- [ ] Verify rate limiting works with Redis-backed cache (carried from Phase 5)
+- [x] Verify rate limiting works with Redis-backed cache — `TESTING` flag + `LocMemCache` isolation *(v0.8.1)*
 
 ### Code Quality
 
-- [ ] **Consolidate inline imports** — Multiple views have repeated inline `from accounts.services import ...`. Move to top-level imports.
+- [x] **Consolidate inline imports** — Moved `from accounts.services import ...` to top-level in `analyzer/views.py` (9 inline → 1 top-level). `tasks.py` kept inline per Celery best practice.
 - [ ] **Standardize error response format** — Some views use `raise_exception=True`, others return `serializer.errors` manually. Pick one pattern.
-- [ ] **`except (ValueError, Exception)` cleanup** — Redundant catches in `job_matcher.py`, `accounts/views.py`. Replace with just `except Exception`.
-- [ ] **PDF file validation** — `pdf_extractor.py` has no validation that uploaded file is actually a PDF. Add magic-byte check before `pdfplumber.open()`.
-- [ ] **DOCX renderer lacks input sanitization** — Unlike PDF renderer which uses `_safe()`, DOCX renderer passes raw user data. XML-escape special characters.
-- [ ] **Error message leaks from Firecrawl** — `jd_fetcher.py` L90-93: `str(exc)` could expose API keys or internal URLs. Sanitize before raising to user.
-- [ ] **No `try/finally` on PDF extraction** — `pdf_extractor.py` L35-37: `file_field` not closed if `pdfplumber.open()` raises. Use `try/finally`.
-- [ ] **`JobAlertCreateSerializer` preferences not schema-validated** — `validate_preferences` only checks `isinstance(dict)`. Arbitrary JSON payloads stored. Add allowed-key validation.
+- [x] **`except (ValueError, Exception)` cleanup** — No longer present in codebase *(already cleaned up)*
+- [x] **PDF file validation** — Added `_validate_pdf_magic()` checking `%PDF` magic bytes before processing *(v0.23.0)*
+- [x] **DOCX renderer lacks input sanitization** — Added `_safe()` to strip control chars/null bytes from all user data *(v0.23.0)*
+- [x] **Error message leaks from Firecrawl** — `str(exc)` stored in DB only; user-facing error is generic `'Failed to fetch job description…'` *(already in code)*
+- [x] **No `try/finally` on PDF extraction** — `pdf_extractor.py` uses `try/finally` for `file_field.open()`/`.close()` *(already in code)*
+- [x] **`JobAlertCreateSerializer` preferences not schema-validated** — `validate_preferences` now validates allowed keys + type checks *(already in code)*
 
 ### Serializer Validation Gaps
 
-- [ ] **Email not required on registration** — `RegisterSerializer` allows `email=""`. User can never reset password. **Fix:** Add `email = serializers.EmailField(required=True)`.
-- [ ] **Duplicate emails not blocked on registration** — Two users can register with same email. `UpdateUserSerializer` blocks duplicates on update (inconsistent). **Fix:** Add uniqueness check in `RegisterSerializer.validate_email()`.
-- [ ] **Country code not validated** — `UpdateUserSerializer` accepts any `+XXXX` (e.g., `+ZZZZ`). **Fix:** Validate against real ITU codes or use a library.
-- [ ] **Mobile number no min length** — Single digit `"1"` passes validation. **Fix:** Add `min_length=7` or similar.
-- [ ] **Payment `notes` JSON exposed to client** — `PaymentHistorySerializer` L263 exposes internal metadata. **Fix:** Exclude or filter `notes` field.
+- [x] **Email not required on registration** — `RegisterSerializer` now has `email = serializers.EmailField(required=True)` + `validate_email` rejects empty *(already in code)*
+- [x] **Duplicate emails not blocked on registration** — `RegisterSerializer.validate_email()` checks `User.objects.filter(email__iexact=value).exists()` *(already in code)*
+- [x] **Country code not validated** — `UpdateUserSerializer.validate_country_code()` uses regex `^\+\d{1,4}$` *(already in code)*
+- [x] **Mobile number no min length** — `validate_mobile_number()` enforces `len(value) < 7` *(already in code)*
+- [x] **Payment `notes` JSON exposed to client** — `PaymentHistorySerializer` does not include `notes` field *(already in code)*
 
 ---
 
@@ -561,23 +561,23 @@ On resume upload:
 
 ### P1 — High (Missing tests for user-facing flows)
 
-- [ ] **Forgot/reset password flow** — No tests for `ForgotPasswordView` or `ResetPasswordView` despite having serializers and views
-- [ ] **Notification preferences** — No tests for GET/PUT notification preferences
-- [ ] **Wallet endpoints** — No tests for `WalletView`, `WalletTransactionListView`, `WalletTopUpView` (Razorpay tests exist but don't cover wallet views directly)
-- [ ] **Plan listing & subscribe** — No tests for `PlanListView`, `PlanSubscribeView`
+- [x] **Forgot/reset password flow** — covered in `test_new_endpoints.py` *(v0.19.0)*
+- [x] **Notification preferences** — covered in `test_new_endpoints.py` *(v0.19.0)*
+- [x] **Wallet endpoints** — covered in `test_new_endpoints.py` *(v0.19.0)*
+- [x] **Plan listing & subscribe** — covered in `test_new_endpoints.py` *(v0.19.0)*
 
 ### P2 — Medium
 
-- [ ] **PDF export** — No tests for `AnalysisPDFExportView`
-- [ ] **Analysis status polling** — No tests for `AnalysisStatusView`
-- [ ] **Dashboard stats** — No tests for `DashboardStatsView` (including the `avg_ats` zero bug)
-- [ ] **Resume generation pipeline** — No tests for `GenerateResumeView`, `GeneratedResumeStatusView`, `GeneratedResumeDownloadView`, `GeneratedResumeListView` (4 endpoints)
-- [ ] **Analysis retry** — No tests for `RetryAnalysisView`
-- [ ] **Resume management** — No tests for `ResumeListView`, `ResumeDeleteView`
+- [x] **PDF export** — Tests for `AnalysisPDFExportView` *(v0.23.0)*
+- [x] **Analysis status polling** — Tests for `AnalysisStatusView` *(v0.23.0)*
+- [x] **Dashboard stats** — covered in `test_new_endpoints.py` *(v0.19.0)*
+- [x] **Resume generation pipeline** — 81 tests in `test_resume_generation.py` *(v0.16.1)*
+- [x] **Analysis retry** — Tests for `RetryAnalysisView` *(v0.23.0)*
+- [x] **Resume management** — Tests for `ResumeListView`, `ResumeDeleteView` *(v0.23.0)*
 
 ### P3 — Low
 
-- [ ] **Account deletion cascade** — `test_profile.py` tests deletion but doesn't verify wallet/transaction cleanup
+- [x] **Account deletion cascade** — Tests verify wallet + transaction cleanup *(v0.23.0)*
 - [ ] **Serializer edge cases** — No tests for `RegisterSerializer` with blank email, duplicate email, invalid country code/mobile number
 
 ---
@@ -592,7 +592,7 @@ On resume upload:
 - [ ] **Token usage tracking & cost dashboard** — Track `prompt_tokens`/`completion_tokens` per analysis from `response.usage`. Store on `LLMResponse` model. Surface admin cost dashboard. Alert on budget thresholds.
 - [ ] **Streaming LLM responses** — Use SSE/WebSocket to stream partial analysis results to frontend instead of waiting 60-120s. Requires: Django Channels or SSE endpoint, frontend streaming client.
 - [ ] **Email verification on registration** — Set `user.is_active = False` until email link clicked. Requires: verification token model, send/verify/resend endpoints, new email template, auth flow changes.
-- [ ] **"Logout all devices"** — One-click invalidation of all JWT sessions. **Fix:** New endpoint that blacklists all `OutstandingToken` for the user.
+- [x] **"Logout all devices"** — `POST /api/auth/logout-all/` blacklists all outstanding tokens *(v0.19.0)*
 
 ### Medium Value
 
@@ -600,7 +600,7 @@ On resume upload:
 - [ ] **Bulk analysis / batch mode** — Analyze one resume against multiple JDs at once (e.g., 5 postings). Compare results side-by-side.
 - [ ] **Interview prep generation** — Leverage analysis gap data to generate likely interview questions customized to resume + JD.
 - [ ] **Cover letter generation** — Extend resume generation pipeline to produce a tailored cover letter from the analysis.
-- [ ] **Webhook event replay/audit log** — Store all received webhook events as raw JSON for debugging and reconciliation. Currently webhooks are processed but not logged as events.
+- [x] **Webhook event replay/audit log** — `WebhookEvent` model with unique `event_id` stores all received events *(v0.13.1)*
 - [ ] **Rate limit feedback in API responses** — Include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers so frontend can show proactive warnings.
 
 ### Lower Value
@@ -614,7 +614,7 @@ On resume upload:
 
 ## Backlog — Deployment & Infrastructure
 
-- [ ] **P1: Update `runtime.txt`** — `python-3.12.1` is outdated with known security fixes. Change to `python-3.12` for latest patch auto-pick.
+- [x] **P1: Update `runtime.txt`** — changed to `python-3.12` *(v0.19.0)*
 - [x] **P2: Separate migrations from web start** — Fixed: Removed inline migrate from Procfile web command; entrypoint.sh uses `flock` to serialize concurrent migrations.
 - [ ] **P2: Health check: verify Redis + Celery** — Current check only tests DB. App reports healthy when analysis submissions silently fail.
 - [ ] **P2: Add Sentry or error tracking** — Bare `except` blocks swallow errors with only `logger.exception()`. No alerting.
@@ -629,8 +629,8 @@ On resume upload:
 
 ## Backlog — Admin Improvements
 
-- [ ] **P2: Add `raw_id_fields`** — Missing on `ResumeAdmin` (user), `JobAdmin` (user, resume), `GeneratedResumeAdmin` (user, analysis), `ResumeAnalysisAdmin` (user, resume), `JobAlertAdmin` (user, resume), `JobMatchAdmin` (job_alert, discovered_job). Dropdown loads all records on large datasets.
-- [ ] **P3: `DiscoveredJobAdmin` needs `list_per_page`** — Many discovered jobs → slow admin pages.
+- [x] **P2: Add `raw_id_fields`** — added on 5 admin models *(v0.19.0)*
+- [x] **P3: `DiscoveredJobAdmin` needs `list_per_page`** — set to 50 *(v0.19.0)*
 - [ ] **P3: Admin dashboard enhancements** — Better admin views for Plan, UserProfile.
 
 ---
@@ -639,12 +639,12 @@ On resume upload:
 
 > Existing from prior audit. Still relevant.
 
-- [ ] **Monthly analysis quota** — Check `plan.analyses_per_month` in `AnalyzeResumeView.post()` before creating analysis
-- [ ] **Per-plan resume size limit** — Use `plan.max_resume_size_mb` instead of global `settings.MAX_RESUME_SIZE_MB` in `ResumeAnalysisCreateSerializer`
-- [ ] **PDF export feature flag** — Check `plan.pdf_export` in `ExportPDFView`
-- [ ] **Share analysis feature flag** — Check `plan.share_analysis` in `AnalysisShareView`
-- [ ] **Job tracking feature flag** — Check `plan.job_tracking` in `JobCreateView`
-- [ ] **Max resumes stored** — Check `plan.max_resumes_stored` before accepting new uploads
+- [x] **Monthly analysis quota** — checks `plan.analyses_per_month`, returns 403 *(v0.19.0)*
+- [x] **Per-plan resume size limit** — validates against `plan.max_resume_size_mb` *(v0.19.0)*
+- [x] **PDF export feature flag** — `plan.pdf_export` check in `ExportPDFView` *(v0.19.0)*
+- [x] **Share analysis feature flag** — `plan.share_analysis` check in `AnalysisShareView` *(v0.19.0)*
+- [x] ~~**Job tracking feature flag**~~ — N/A: standalone `/api/jobs/` endpoints removed; job tracking handled via `DiscoveredJob`/`JobMatch` pipeline
+- [x] **Max resumes stored** — blocks uploads at `plan.max_resumes_stored` limit *(v0.19.0)*
 
 ---
 

@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.23.0] — 2026-02-28
+
+### Code Quality & Test Coverage Sweep
+
+#### Added
+- **PDF magic-byte validation** — `PDFExtractor._validate_pdf_magic()` checks `%PDF` magic bytes before processing. Non-PDF files (DOCX, HTML, images) are rejected immediately with a clear error, preventing wasted CPU on invalid uploads.
+- **DOCX renderer sanitisation** — Added `_safe()` helper to `resume_docx_renderer.py`. Strips null bytes and ASCII control characters from all user-supplied text before writing to DOCX. Consistent with PDF renderer's `_safe()` pattern.
+- **41 new tests** in `analyzer/tests/test_code_quality.py`:
+  - `PDFMagicByteTests` (10) — valid/invalid magic bytes across file types and input modes (path, FieldFile, BytesIO).
+  - `DOCXSafeTests` (8) — null byte stripping, control char removal, tab/newline preservation, non-string handling, full DOCX render with special characters.
+  - `AnalysisStatusViewTests` (4) — DB fallback, Redis cache hit, 404, user isolation.
+  - `AnalysisPDFExportViewTests` (4) — incomplete analysis, 404, user isolation, on-the-fly generation fallback.
+  - `RetryAnalysisViewTests` (6) — success, already-done, already-processing, insufficient credits, 404, user isolation.
+  - `ResumeManagementTests` (8) — list, search, ordering, delete, blocked delete (active analysis), 404, user isolation.
+  - `AccountDeletionCascadeTests` (1) — wallet + transaction cleanup on account deletion.
+- **Total tests: 443** (up from 402).
+
+#### Changed
+- **Inline imports consolidated** — 9 inline `from accounts.services import ...` calls in `analyzer/views.py` replaced with a single top-level import. Celery tasks (`tasks.py`) kept inline per Celery best practice.
+
+#### Backlog Audit
+- **10 TODO items** marked as already done (were implemented but unchecked): email required on registration, duplicate email blocking, country code validation, mobile number min length, payment notes filtering, preferences schema validation, Firecrawl error sanitisation, PDF try/finally, except cleanup, prompt template caching.
+- **2 TODO items** marked N/A: job tracking feature flag (endpoint removed), prompt template optimisation (accepted design).
+
+---
+
 ## [0.22.0] — 2026-02-28
 
 ### Plans, Pricing & Contact Form

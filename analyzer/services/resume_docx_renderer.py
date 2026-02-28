@@ -12,6 +12,7 @@ Template: ats_classic — maximally ATS-safe:
 - Consistent spacing
 """
 import io
+from xml.sax.saxutils import escape as xml_escape
 
 from docx import Document
 from docx.shared import Pt, Inches, Cm, RGBColor
@@ -26,6 +27,22 @@ COLOR_SECONDARY = RGBColor(0x16, 0x21, 0x3e)     # Slightly lighter
 COLOR_BODY = RGBColor(0x2c, 0x3e, 0x50)          # Body text
 COLOR_MUTED = RGBColor(0x7f, 0x8c, 0x8d)         # Dates, locations
 COLOR_DIVIDER = RGBColor(0xbd, 0xc3, 0xc7)       # Section dividers
+
+
+# ── Sanitisation ─────────────────────────────────────────────────────────
+
+def _safe(text) -> str:
+    """Sanitise user-supplied text for DOCX.
+
+    python-docx handles XML escaping internally, but we strip control
+    characters and null bytes that could corrupt the DOCX XML.
+    """
+    if not text:
+        return ''
+    s = str(text)
+    # Strip null bytes and ASCII control chars (except tab/newline)
+    s = ''.join(c for c in s if c in ('\t', '\n', '\r') or (ord(c) >= 32))
+    return s
 
 
 # ── Style setup ──────────────────────────────────────────────────────────
@@ -80,7 +97,7 @@ def _add_divider(doc):
 def _build_contact(doc, content):
     """Add contact header: name centered, details below."""
     contact = content.get('contact', {})
-    name = contact.get('name', 'Candidate')
+    name = _safe(contact.get('name', 'Candidate'))
 
     # Name
     p = doc.add_paragraph()
@@ -94,11 +111,11 @@ def _build_contact(doc, content):
     # Contact details line
     parts = []
     if contact.get('email'):
-        parts.append(contact['email'])
+        parts.append(_safe(contact['email']))
     if contact.get('phone'):
-        parts.append(contact['phone'])
+        parts.append(_safe(contact['phone']))
     if contact.get('location'):
-        parts.append(contact['location'])
+        parts.append(_safe(contact['location']))
     if parts:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -110,9 +127,9 @@ def _build_contact(doc, content):
     # Links line
     links = []
     if contact.get('linkedin'):
-        links.append(contact['linkedin'])
+        links.append(_safe(contact['linkedin']))
     if contact.get('portfolio'):
-        links.append(contact['portfolio'])
+        links.append(_safe(contact['portfolio']))
     if links:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -126,7 +143,7 @@ def _build_contact(doc, content):
 
 def _build_summary(doc, content):
     """Add professional summary."""
-    summary = content.get('summary', '')
+    summary = _safe(content.get('summary', ''))
     if not summary:
         return
 
@@ -149,7 +166,7 @@ def _build_experience(doc, content):
     for exp in experience:
         # Job title
         p = doc.add_paragraph()
-        run = p.add_run(exp.get('title', ''))
+        run = p.add_run(_safe(exp.get('title', '')))
         run.font.bold = True
         run.font.size = Pt(10)
         run.font.color.rgb = COLOR_SECONDARY
@@ -157,9 +174,9 @@ def _build_experience(doc, content):
         p.paragraph_format.space_after = Pt(1)
 
         # Company and location
-        company_line = exp.get('company', '')
+        company_line = _safe(exp.get('company', ''))
         if exp.get('location'):
-            company_line += f' — {exp["location"]}'
+            company_line += f' — {_safe(exp["location"])}'
         p = doc.add_paragraph()
         run = p.add_run(company_line)
         run.font.italic = True
@@ -168,8 +185,8 @@ def _build_experience(doc, content):
         p.paragraph_format.space_after = Pt(1)
 
         # Dates
-        start = exp.get('start_date', '')
-        end = exp.get('end_date', '')
+        start = _safe(exp.get('start_date', ''))
+        end = _safe(exp.get('end_date', ''))
         if start or end:
             date_line = f'{start} – {end}' if start and end else (start or end)
             p = doc.add_paragraph()
@@ -181,7 +198,7 @@ def _build_experience(doc, content):
         # Bullets
         for bullet in exp.get('bullets', []):
             p = doc.add_paragraph(style='List Bullet')
-            run = p.add_run(bullet)
+            run = p.add_run(_safe(bullet))
             run.font.size = Pt(9)
             run.font.color.rgb = COLOR_BODY
             p.paragraph_format.space_after = Pt(2)
@@ -200,7 +217,7 @@ def _build_education(doc, content):
     for edu in education:
         # Degree
         p = doc.add_paragraph()
-        run = p.add_run(edu.get('degree', ''))
+        run = p.add_run(_safe(edu.get('degree', '')))
         run.font.bold = True
         run.font.size = Pt(10)
         run.font.color.rgb = COLOR_SECONDARY
@@ -208,9 +225,9 @@ def _build_education(doc, content):
         p.paragraph_format.space_after = Pt(1)
 
         # Institution
-        inst_line = edu.get('institution', '')
+        inst_line = _safe(edu.get('institution', ''))
         if edu.get('location'):
-            inst_line += f' — {edu["location"]}'
+            inst_line += f' — {_safe(edu["location"])}'
         p = doc.add_paragraph()
         run = p.add_run(inst_line)
         run.font.size = Pt(9)
@@ -220,9 +237,9 @@ def _build_education(doc, content):
         # Year and GPA
         details = []
         if edu.get('year'):
-            details.append(edu['year'])
+            details.append(_safe(edu['year']))
         if edu.get('gpa'):
-            details.append(f'GPA: {edu["gpa"]}')
+            details.append(f'GPA: {_safe(edu["gpa"])}')
         if details:
             p = doc.add_paragraph()
             run = p.add_run(' | '.join(details))
@@ -258,7 +275,7 @@ def _build_skills(doc, content):
             run.font.bold = True
             run.font.size = Pt(9)
             run.font.color.rgb = COLOR_SECONDARY
-            run = p.add_run(', '.join(items))
+            run = p.add_run(', '.join(_safe(s) for s in items))
             run.font.size = Pt(9)
             run.font.color.rgb = COLOR_BODY
             p.paragraph_format.space_after = Pt(2)
@@ -275,11 +292,11 @@ def _build_certifications(doc, content):
     _add_divider(doc)
 
     for cert in certs:
-        parts = [cert.get('name', '')]
+        parts = [_safe(cert.get('name', ''))]
         if cert.get('issuer'):
-            parts.append(f'— {cert["issuer"]}')
+            parts.append(f'— {_safe(cert["issuer"])}')
         if cert.get('year'):
-            parts.append(f'({cert["year"]})')
+            parts.append(f'({_safe(cert["year"])})')
 
         p = doc.add_paragraph()
         run = p.add_run(' '.join(parts))
@@ -300,7 +317,7 @@ def _build_projects(doc, content):
     for proj in projects:
         # Project name
         p = doc.add_paragraph()
-        run = p.add_run(proj.get('name', ''))
+        run = p.add_run(_safe(proj.get('name', '')))
         run.font.bold = True
         run.font.size = Pt(9)
         run.font.color.rgb = COLOR_SECONDARY
@@ -310,7 +327,7 @@ def _build_projects(doc, content):
         # Description
         if proj.get('description'):
             p = doc.add_paragraph()
-            run = p.add_run(proj['description'])
+            run = p.add_run(_safe(proj['description']))
             run.font.size = Pt(9)
             run.font.color.rgb = COLOR_BODY
             p.paragraph_format.left_indent = Inches(0.15)
@@ -320,7 +337,7 @@ def _build_projects(doc, content):
         techs = proj.get('technologies', [])
         if techs:
             p = doc.add_paragraph()
-            run = p.add_run(f'Technologies: {", ".join(techs)}')
+            run = p.add_run(f'Technologies: {", ".join(_safe(t) for t in techs)}')
             run.font.italic = True
             run.font.size = Pt(8)
             run.font.color.rgb = COLOR_MUTED
@@ -330,7 +347,7 @@ def _build_projects(doc, content):
         # URL
         if proj.get('url'):
             p = doc.add_paragraph()
-            run = p.add_run(proj['url'])
+            run = p.add_run(_safe(proj['url']))
             run.font.size = Pt(8)
             run.font.color.rgb = COLOR_MUTED
             p.paragraph_format.left_indent = Inches(0.15)

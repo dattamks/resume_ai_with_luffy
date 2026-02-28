@@ -13,6 +13,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle, WriteThrottle
+from accounts.services import (
+    deduct_credits, refund_credits, check_balance,
+    can_use_feature, InsufficientCreditsError,
+)
 from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification
 from .serializers import (
     ResumeAnalysisCreateSerializer,
@@ -102,7 +106,6 @@ class AnalyzeResumeView(APIView):
                 )
 
         # ── Credit check — deduct upfront, refund on failure ──
-        from accounts.services import deduct_credits, InsufficientCreditsError
         try:
             credit_result = deduct_credits(
                 request.user,
@@ -123,7 +126,6 @@ class AnalyzeResumeView(APIView):
         lock_key = f'analyze_lock:{request.user.id}'
         if not cache.add(lock_key, 1, self.IDEMPOTENCY_LOCK_TTL):
             # Refund since we deducted but can't proceed
-            from accounts.services import refund_credits
             refund_credits(request.user, 'resume_analysis', description='Refund: duplicate submission blocked')
             return Response(
                 {'detail': 'An analysis is already being submitted. Please wait.'},
@@ -168,7 +170,6 @@ class AnalyzeResumeView(APIView):
         except Exception:
             # Release lock and refund credits on unexpected errors
             cache.delete(lock_key)
-            from accounts.services import refund_credits
             refund_credits(request.user, 'resume_analysis', description='Refund: analysis creation failed')
             raise
 
@@ -208,7 +209,6 @@ class RetryAnalysisView(APIView):
                 )
 
             # ── Credit check for retry — deduct upfront ──
-            from accounts.services import deduct_credits, InsufficientCreditsError
             try:
                 credit_result = deduct_credits(
                     request.user,
@@ -781,7 +781,6 @@ class GenerateResumeView(APIView):
         fmt = serializer.validated_data['format']
 
         # ── Credit check — deduct upfront, refund on failure ──
-        from accounts.services import deduct_credits, InsufficientCreditsError
         try:
             credit_result = deduct_credits(
                 request.user,
@@ -829,7 +828,6 @@ class GenerateResumeView(APIView):
                 status=status.HTTP_202_ACCEPTED,
             )
         except Exception:
-            from accounts.services import refund_credits
             refund_credits(
                 request.user, 'resume_generation',
                 description='Refund: resume generation creation failed',
@@ -942,7 +940,6 @@ class JobAlertListCreateView(APIView):
 
     def post(self, request):
         # ── Plan gating: Pro only ──
-        from accounts.services import can_use_feature
         if not can_use_feature(request.user, 'job_notifications'):
             return Response(
                 {'detail': 'Job alerts require a Pro plan.'},
@@ -1115,7 +1112,6 @@ class JobAlertManualRunView(APIView):
             )
 
         # Check credits upfront so we don't waste API calls
-        from accounts.services import check_balance
         credit_info = check_balance(request.user, 'job_alert_run')
         if not credit_info['has_enough']:
             return Response(
@@ -1237,7 +1233,6 @@ class AnalysisCancelView(APIView):
 
         # Refund credits
         if analysis.credits_deducted:
-            from accounts.services import refund_credits
             refund_credits(
                 request.user, 'resume_analysis',
                 description=f'Refund: analysis #{analysis.id} cancelled by user',
