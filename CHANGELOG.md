@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.25.1] — 2026-02-28
+
+### Email Template Branding
+
+- **Logo**: All 7 email templates now display the i-Luffy logo (`https://iluffy.in/logo.png`) in the header, linked to `https://iluffy.in`.
+- **Footer links**: Added `https://iluffy.in` landing page link, plus Privacy, Terms, and Data Usage links (`iluffy.in/privacy`, `iluffy.in/terms`, `iluffy.in/data-usage`) to all email footers (HTML + plain text).
+- **Domain separation**: Landing page links → `iluffy.in`; in-app links (dashboard, manage preferences, etc.) → `app.iluffy.in` via `FRONTEND_URL` env var.
+
+---
+
 ## [0.25.0] — 2026-02-28
 
 ### Features — Resume Template Marketplace

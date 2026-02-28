@@ -32,7 +32,7 @@ TEMPLATES = [
           <!-- Header -->
           <tr>
             <td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+              <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
             </td>
           </tr>
           <!-- Body -->
@@ -65,7 +65,13 @@ TEMPLATES = [
           <!-- Footer -->
           <tr>
             <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+                <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+                <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+                <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+              </p>
             </td>
           </tr>
         </table>
@@ -85,7 +91,10 @@ We received a request to reset your password. Click the link below to choose a n
 
 This link expires in {{ expiry_hours }} hour(s). If you did not request this, you can safely ignore this email.
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
     {
         'slug': 'welcome',
@@ -109,7 +118,7 @@ This link expires in {{ expiry_hours }} hour(s). If you did not request this, yo
           <!-- Header -->
           <tr>
             <td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+              <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
             </td>
           </tr>
           <!-- Body -->
@@ -143,7 +152,13 @@ This link expires in {{ expiry_hours }} hour(s). If you did not request this, yo
           <!-- Footer -->
           <tr>
             <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+                <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+                <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+                <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+              </p>
             </td>
           </tr>
         </table>
@@ -167,7 +182,10 @@ Here's what you can do:
 
 Get started: {{ frontend_url }}
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
     {
         'slug': 'password-changed',
@@ -191,7 +209,7 @@ Get started: {{ frontend_url }}
           <!-- Header -->
           <tr>
             <td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+              <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
             </td>
           </tr>
           <!-- Body -->
@@ -212,7 +230,13 @@ Get started: {{ frontend_url }}
           <!-- Footer -->
           <tr>
             <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+                <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+                <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+                <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+              </p>
             </td>
           </tr>
         </table>
@@ -230,7 +254,10 @@ Your password was successfully changed on {{ changed_at }}.
 
 If you did not make this change, please reset your password immediately or contact support.
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
     # ── Analysis Complete ────────────────────────────────────────────────────
     {
@@ -249,7 +276,7 @@ If you did not make this change, please reset your password immediately or conta
       <td align="center" style="padding:40px 0;">
         <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
           <tr><td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
-            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+            <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
           </td></tr>
           <tr><td style="padding:40px;">
             <h2 style="margin:0 0 16px;color:#1a1a2e;font-size:20px;">Your Analysis is Ready!</h2>
@@ -278,7 +305,13 @@ If you did not make this change, please reset your password immediately or conta
             </table>
           </td></tr>
           <tr><td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-            <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+            <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+            <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+            <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+              <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+              <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+              <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+            </p>
           </td></tr>
         </table>
       </td>
@@ -298,7 +331,10 @@ ATS Score: {{ ats_score }}%
 
 View full analysis: {{ frontend_url }}/analyses/{{ analysis_id }}
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
     # ── Weekly Digest ─────────────────────────────────────────────────────────
     {
@@ -317,7 +353,7 @@ View full analysis: {{ frontend_url }}/analyses/{{ analysis_id }}
       <td align="center" style="padding:40px 0;">
         <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
           <tr><td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
-            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+            <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
           </td></tr>
           <tr><td style="padding:40px;">
             <h2 style="margin:0 0 16px;color:#1a1a2e;font-size:20px;">Your Weekly Summary</h2>
@@ -355,7 +391,13 @@ View full analysis: {{ frontend_url }}/analyses/{{ analysis_id }}
             </table>
           </td></tr>
           <tr><td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-            <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+            <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+            <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+            <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+              <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+              <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+              <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+            </p>
           </td></tr>
         </table>
       </td>
@@ -376,7 +418,10 @@ Here's your activity for the past week:
 
 View your dashboard: {{ frontend_url }}/dashboard
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
     # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────
     {
@@ -396,7 +441,7 @@ View your dashboard: {{ frontend_url }}/dashboard
           <!-- Header -->
           <tr>
             <td style="background:linear-gradient(135deg,#1a1a4e 0%,#3d3d9e 100%);padding:32px 40px;">
-              <h1 style="margin:0;color:#fff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+              <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
               <p style="margin:8px 0 0;color:#c8c8f0;font-size:14px;">Smart Job Alerts</p>
             </td>
           </tr>
@@ -443,7 +488,13 @@ View your dashboard: {{ frontend_url }}/dashboard
           <!-- Footer -->
           <tr>
             <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+                <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+                <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+                <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+              </p>
               <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;">
                 <a href="{{ frontend_url }}/job-alerts/{{ alert_id }}/" style="color:#9a9ab0;">Manage alert preferences</a>
               </p>
@@ -472,7 +523,10 @@ Apply: {{ job.url }}
 
 View all matches: {{ frontend_url }}/job-alerts/{{ alert_id }}/
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
     {
         'slug': 'email-verification',
@@ -495,7 +549,7 @@ View all matches: {{ frontend_url }}/job-alerts/{{ alert_id }}/
         <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
           <tr>
             <td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+              <a href="https://iluffy.in" target="_blank" style="text-decoration:none;"><img src="https://iluffy.in/logo.png" alt="{{ app_name }}" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;" /></a>
             </td>
           </tr>
           <tr>
@@ -525,7 +579,13 @@ View all matches: {{ frontend_url }}/job-alerts/{{ alert_id }}/
           </tr>
           <tr>
             <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
-              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. All rights reserved.</p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:12px;"><a href="https://iluffy.in" style="color:#1a56db;text-decoration:none;">iluffy.in</a></p>
+              <p style="margin:8px 0 0;color:#9a9ab0;font-size:11px;">
+                <a href="https://iluffy.in/privacy" style="color:#9a9ab0;text-decoration:none;">Privacy</a> &middot;
+                <a href="https://iluffy.in/terms" style="color:#9a9ab0;text-decoration:none;">Terms</a> &middot;
+                <a href="https://iluffy.in/data-usage" style="color:#9a9ab0;text-decoration:none;">Data Usage</a>
+              </p>
             </td>
           </tr>
         </table>
@@ -545,7 +605,10 @@ Thanks for signing up! Please verify your email address by clicking the link bel
 
 This link expires in 24 hours. If you did not create this account, you can safely ignore this email.
 
-— {{ app_name }}''',
+— {{ app_name }}
+https://iluffy.in
+
+Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
 ]
 
