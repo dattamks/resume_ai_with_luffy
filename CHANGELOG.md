@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.22.0] — 2026-02-28
+
+### Plans, Pricing & Contact Form
+
+#### Added
+- **`original_price` field** on Plan model — stores pre-discount price for strikethrough display on pricing page.
+- **3 default plans seeded** via `seed_plans`: Free (₹0), Pro Monthly (₹399, was ₹599), Pro Yearly (₹3,999, was ₹7,188).
+- **Job alert quota removed** — unlimited alerts when `job_notifications = true`. `max_job_alerts` field kept but deprecated (no longer enforced).
+- **`ContactSubmission` model** — landing-page contact form (name, email, subject, message). Read-only in Django Admin.
+- **`POST /api/auth/contact/`** — public endpoint for contact form submissions (no auth, anon-throttled).
+- **Auto-sync plans to Razorpay** — `post_save` signal on Plan automatically creates a Razorpay plan whenever a paid plan is saved without a `razorpay_plan_id`. Skips free plans, already-synced plans, and test environments.
+- **Admin feedback on new plan creation** — `PlanAdmin.save_model` shows success/failure message for Razorpay sync on new paid plans.
+
+#### Fixed
+- **PostgreSQL `IntegrityError`** on Plan creation via Admin — migration 0014 sets server-side `DEFAULT ''` on `razorpay_plan_id` column.
+
+#### Migrations
+- `accounts/0014_fix_razorpay_plan_id_server_default`
+- `accounts/0015_add_original_price_to_plan`
+- `accounts/0016_add_contact_submission`
+
+#### Tests
+- **402 tests passing** (no regressions).
+
+---
+
 ## [0.21.0] — 2026-02-27
 
 ### Frontend–Backend Gap Fixes (28 items)

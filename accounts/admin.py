@@ -100,9 +100,11 @@ class PlanAdmin(admin.ModelAdmin):
         """
         On save: if price or billing_cycle changed on a paid plan,
         auto-create a new Razorpay plan via API.
+        For new paid plans, the post_save signal handles auto-sync.
         """
         price_changed = False
         billing_changed = False
+        is_new = not change
 
         if change and obj.pk:
             try:
@@ -131,6 +133,20 @@ class PlanAdmin(admin.ModelAdmin):
                     request,
                     f'Plan saved but Razorpay sync failed: {e}. '
                     f'You can retry via Actions → "Sync with Razorpay".',
+                )
+        elif is_new and obj.price > 0:
+            # Signal auto-synced — show feedback
+            obj.refresh_from_db()
+            if obj.razorpay_plan_id:
+                messages.success(
+                    request,
+                    f'Razorpay plan auto-created: {obj.razorpay_plan_id}',
+                )
+            else:
+                messages.warning(
+                    request,
+                    'Plan saved but Razorpay sync failed. '
+                    'Retry via Actions → "Sync with Razorpay".',
                 )
 
     @admin.action(description='📋 Duplicate selected plans')

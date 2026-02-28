@@ -615,6 +615,40 @@ class RazorpaySubscription(models.Model):
 
 # ── Signals — auto-create profile + notification prefs + wallet on user creation ──
 
+@receiver(post_save, sender=Plan)
+def auto_sync_plan_to_razorpay(sender, instance, created, **kwargs):
+    """
+    Auto-create a Razorpay plan whenever a paid Plan is saved without a razorpay_plan_id.
+    Runs on both creation and update. Skips free plans, plans that already have an ID,
+    and test environments.
+    """
+    if instance.price <= 0 or instance.razorpay_plan_id:
+        return
+
+    # Skip in test mode (manage.py test sets this)
+    import sys
+    if 'test' in sys.argv:
+        return
+
+    # Skip if Razorpay credentials are not configured
+    from django.conf import settings
+    if not getattr(settings, 'RAZORPAY_KEY_ID', '') or not getattr(settings, 'RAZORPAY_KEY_SECRET', ''):
+        return
+
+    try:
+        from .razorpay_service import sync_razorpay_plan
+        new_id = sync_razorpay_plan(instance)
+        logger.info(
+            'Razorpay plan auto-synced: plan=%s razorpay_plan_id=%s',
+            instance.slug, new_id,
+        )
+    except Exception as e:
+        logger.warning(
+            'Razorpay auto-sync failed for plan=%s: %s (sync manually via manage.py sync_razorpay_plans)',
+            instance.slug, e,
+        )
+
+
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
     """Create UserProfile, NotificationPreference, and Wallet when a new User is created."""

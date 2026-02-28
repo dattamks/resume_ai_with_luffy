@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-27 &nbsp;|&nbsp; **API version:** v0.22.0
+> **Last updated:** 2026-02-28 &nbsp;|&nbsp; **API version:** v0.22.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -4776,6 +4776,7 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 - **Job alert quota removed**: Unlimited alerts when `job_notifications = true` (no more 403 quota errors). `max_job_alerts` field kept but deprecated.
 - **Contact form endpoint**: `POST /api/auth/contact/` — public, anon-throttled, no auth required
 - **ContactSubmission model**: `name`, `email`, `subject`, `message`, `created_at` — viewable in Django Admin (read-only)
+- **Auto-sync plans to Razorpay**: New paid plans are automatically synced via `post_save` signal. Admin also shows sync feedback on save. Existing "Sync with Razorpay" action available as manual fallback.
 - **PostgreSQL fix**: Migration 0014 sets server-side `DEFAULT ''` on `razorpay_plan_id` column to prevent `IntegrityError` when creating plans via Admin
 
 ### v0.21.0 — Frontend–Backend Gap Fixes
