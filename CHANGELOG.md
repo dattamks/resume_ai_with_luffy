@@ -5,6 +5,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.25.0] — 2026-02-28
+
+### Features — Resume Template Marketplace
+
+#### Added — Resume Template Model & API
+- **`ResumeTemplate` model** — UUID PK, `name`, `slug` (unique), `description`, `category` (professional/creative/academic/executive), `preview_image` (ImageField), `is_premium` (bool), `is_active` (bool), `sort_order` (int). Managed via Django Admin with inline editing.
+- **`GET /api/v1/templates/`** — List active templates. Returns `accessible` flag based on user's plan. Auth required.
+- **`premium_templates` boolean on `Plan` model** — Gates access to premium templates. Default: `false`.
+- **Premium template gating** in `POST /api/v1/analyses/<id>/generate-resume/` — Returns 403 with `is_premium` and `template` slug when user lacks access.
+- **DB-validated template slugs** — Template parameter now validated against active templates in DB (previously hardcoded). Invalid slugs return 400 with list of available options.
+
+#### Added — 5 Resume Templates
+- **`ats_classic`** (free) — Clean ATS-friendly layout with clear section headings (existing, unchanged).
+- **`modern`** (premium) — Contemporary design with teal (#0d7377) color accents and dot-separated contact info.
+- **`executive`** (premium) — Formal serif layout with dark charcoal (#1b2631) tones. Uppercase name, "EXECUTIVE SUMMARY", "PROFESSIONAL EXPERIENCE" headings.
+- **`creative`** (premium) — Vibrant purple (#6c3483) theme with colored section backgrounds, emoji contact icons, and arrow bullets.
+- **`minimal`** (premium) — Generous whitespace, muted grey section titles, no borders or dividers.
+
+#### Added — Infrastructure
+- **Template registry** (`analyzer/services/template_registry.py`) — Central slug-to-renderer mapping with lazy loading. Supports `get_renderer(slug, format)` and `get_available_slugs()`.
+- **`seed_templates` management command** — `python manage.py seed_templates` creates 5 default templates (idempotent, updates on re-run).
+- **`ResumeTemplateAdmin`** — Django Admin with list_display, list_filter, list_editable (is_premium, is_active, sort_order), prepopulated slug.
+- **`tasks.py` updated** — Uses template registry instead of hardcoded renderer imports.
+
+#### Migrations
+- `analyzer/0018_add_resume_template_model` — Creates ResumeTemplate table.
+- `accounts/0018_add_premium_templates_to_plan` — Adds `premium_templates` boolean to Plan.
+
+#### Tests
+- 26 new tests across 7 test classes: model CRUD, registry, renderer output (full/empty/minimal/special-chars), API listing, plan gating (free blocked, pro allowed, inactive rejected), seed command, Plan field.
+
+---
+
 ## [0.24.0] — 2026-02-28
 
 ### Features — Email Verification, Bulk Analysis, Interview Prep, Cover Letter, Rate Limit Headers

@@ -347,8 +347,7 @@ def generate_improved_resume_task(self, generated_resume_id):
     """
     from .models import GeneratedResume, LLMResponse
     from .services.resume_generator import call_llm_for_rewrite
-    from .services.resume_pdf_renderer import render_resume_pdf
-    from .services.resume_docx_renderer import render_resume_docx
+    from .services.template_registry import get_renderer
 
     logger.info('Resume generation task started: id=%s', generated_resume_id)
 
@@ -385,13 +384,13 @@ def generate_improved_resume_task(self, generated_resume_id):
         gen.llm_response = llm_record
         gen.resume_content = result['parsed']
 
-        # Step 4: Render to file
+        # Step 4: Render to file using template registry
+        renderer = get_renderer(gen.template, gen.format)
+        file_bytes = renderer(result['parsed'])
         if gen.format == GeneratedResume.FORMAT_DOCX:
-            file_bytes = render_resume_docx(result['parsed'])
             ext = 'docx'
             content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         else:
-            file_bytes = render_resume_pdf(result['parsed'])
             ext = 'pdf'
             content_type = 'application/pdf'
 

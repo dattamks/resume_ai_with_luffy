@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile, ResumeVersion, InterviewPrep, CoverLetter
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -334,6 +334,39 @@ class GeneratedResumeSerializer(serializers.ModelSerializer):
         return None
 
 
+class ResumeTemplateSerializer(serializers.ModelSerializer):
+    """Read-only serializer for the template marketplace listing."""
+    preview_image_url = serializers.SerializerMethodField()
+    accessible = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeTemplate
+        fields = [
+            'id', 'name', 'slug', 'description', 'category',
+            'preview_image_url', 'is_premium', 'is_active',
+            'sort_order', 'accessible',
+        ]
+        read_only_fields = fields
+
+    def get_preview_image_url(self, obj):
+        if obj.preview_image:
+            return obj.preview_image.url
+        return None
+
+    def get_accessible(self, obj):
+        """Whether the requesting user can use this template."""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return not obj.is_premium
+        if not obj.is_premium:
+            return True
+        # Check user's plan premium_templates flag
+        profile = getattr(request.user, 'profile', None)
+        if profile and profile.plan:
+            return profile.plan.premium_templates
+        return False
+
+
 class GeneratedResumeCreateSerializer(serializers.Serializer):
     """Serializer for requesting a resume generation."""
     template = serializers.SlugField(max_length=50, default='ats_classic')
@@ -343,12 +376,20 @@ class GeneratedResumeCreateSerializer(serializers.Serializer):
     )
 
     def validate_template(self, value):
-        # Currently only ats_classic is supported
-        supported = ('ats_classic',)
-        if value not in supported:
-            raise serializers.ValidationError(
-                f'Template "{value}" is not supported. Available: {", ".join(supported)}'
+        """Validate template exists in DB and is active."""
+        try:
+            template_obj = ResumeTemplate.objects.get(slug=value, is_active=True)
+        except ResumeTemplate.DoesNotExist:
+            active_slugs = list(
+                ResumeTemplate.objects.filter(is_active=True)
+                .values_list('slug', flat=True)
             )
+            raise serializers.ValidationError(
+                f'Template "{value}" is not available. '
+                f'Available: {", ".join(active_slugs) or "none"}'
+            )
+        # Stash the template object for plan gating in the view
+        self._template_obj = template_obj
         return value
 
 

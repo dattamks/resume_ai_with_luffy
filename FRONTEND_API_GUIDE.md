@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-28 &nbsp;|&nbsp; **API version:** v0.23.0
+> **Last updated:** 2026-02-28 &nbsp;|&nbsp; **API version:** v0.25.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -34,7 +34,8 @@
 25. [Interview Prep Generation](#25-interview-prep-generation)
 26. [Cover Letter Generation](#26-cover-letter-generation)
 27. [Resume Version History](#27-resume-version-history)
-28. [Quick Reference — All Endpoints](#28-quick-reference--all-endpoints)
+28. [Resume Templates (Template Marketplace)](#28-resume-templates-template-marketplace)
+29. [Quick Reference — All Endpoints](#29-quick-reference--all-endpoints)
 
 ---
 
@@ -3797,7 +3798,7 @@ Content-Type: application/json
 
 | Field | Type | Default | Options | Description |
 |-------|------|---------|---------|-------------|
-| `template` | `string` | `"ats_classic"` | `ats_classic` | Resume layout template |
+| `template` | `string` | `"ats_classic"` | Any active template slug (see [§28](#28-resume-templates-template-marketplace)) | Resume layout template |
 | `format` | `string` | `"pdf"` | `pdf`, `docx` | Output file format |
 
 **Response — 202 Accepted:**
@@ -3819,6 +3820,7 @@ Content-Type: application/json
 |--------|-----------|------|
 | 400 | Analysis not in `done` status | `{"detail": "Analysis must be complete before generating a resume."}` |
 | 400 | Invalid template/format | `{"template": ["..."], ...}` |
+| 403 | Premium template without paid plan | `{"detail": "Premium template requires a paid plan with premium templates enabled.", "template": "modern", "is_premium": true}` |
 | 402 | Insufficient credits | `{"detail": "...", "balance": 0, "cost": 1}` |
 | 404 | Analysis not found / not owned | Standard 404 |
 
@@ -3918,19 +3920,21 @@ Permanently deletes a generated resume (file removed from R2 storage, DB record 
 ### 19.6 TypeScript Types
 
 ```typescript
-type ResumeTemplate = 'ats_classic';
+// Template slugs are dynamic — fetch from GET /api/v1/templates/
+// Default templates: 'ats_classic' | 'modern' | 'executive' | 'creative' | 'minimal'
+type ResumeTemplateSlug = string;
 type ResumeFormat = 'pdf' | 'docx';
 type GeneratedResumeStatus = 'pending' | 'processing' | 'done' | 'failed';
 
 interface GenerateResumeRequest {
-  template?: ResumeTemplate;
+  template?: ResumeTemplateSlug;
   format?: ResumeFormat;
 }
 
 interface GenerateResumeResponse {
   id: string;
   status: GeneratedResumeStatus;
-  template: ResumeTemplate;
+  template: ResumeTemplateSlug;
   format: ResumeFormat;
   credits_used: number;
   balance: number;
@@ -3939,7 +3943,7 @@ interface GenerateResumeResponse {
 interface GeneratedResume {
   id: string;
   analysis: number;
-  template: ResumeTemplate;
+  template: ResumeTemplateSlug;
   format: ResumeFormat;
   status: GeneratedResumeStatus;
   error_message: string;      // "" when no error, not null
@@ -5115,7 +5119,137 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 
 ---
 
-## 28. Quick Reference — All Endpoints
+## 28. Resume Templates (Template Marketplace)
+
+Browse available resume templates. Each template renders resumes with a distinct visual style. Some templates are **premium** — only users on a plan with `premium_templates: true` can use them.
+
+### 28.1 List Templates
+
+```
+GET /api/v1/templates/
+Authorization: Bearer <token>
+```
+
+Returns all **active** templates, ordered by `sort_order` then `name`.
+
+**Response — 200 OK:**
+
+```json
+{
+  "count": 5,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-...",
+      "name": "ATS Classic",
+      "slug": "ats_classic",
+      "description": "Clean, ATS-friendly layout with clear section headings.",
+      "category": "professional",
+      "preview_image_url": null,
+      "is_premium": false,
+      "is_active": true,
+      "sort_order": 0,
+      "accessible": true
+    },
+    {
+      "id": "e5f6g7h8-...",
+      "name": "Modern",
+      "slug": "modern",
+      "description": "Contemporary design with teal color accents and clean typography.",
+      "category": "professional",
+      "preview_image_url": null,
+      "is_premium": true,
+      "is_active": true,
+      "sort_order": 1,
+      "accessible": false
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `uuid` | Template ID |
+| `name` | `string` | Human-readable template name |
+| `slug` | `string` | URL-safe identifier — pass this as `template` when generating a resume |
+| `description` | `string` | Short description of the template style |
+| `category` | `string` | One of: `professional`, `creative`, `academic`, `executive` |
+| `preview_image_url` | `string\|null` | URL to a preview image (if uploaded by admin) |
+| `is_premium` | `boolean` | Whether this template requires a premium plan |
+| `is_active` | `boolean` | Always `true` in list responses (inactive templates are filtered out) |
+| `sort_order` | `integer` | Display order (lower = first) |
+| `accessible` | `boolean` | Whether the requesting user can use this template — based on plan |
+
+### 28.2 Default Templates
+
+| Slug | Name | Category | Premium | Description |
+|------|------|----------|---------|-------------|
+| `ats_classic` | ATS Classic | professional | ❌ | Clean ATS-friendly layout |
+| `modern` | Modern | professional | ✅ | Teal accents, contemporary design |
+| `executive` | Executive | executive | ✅ | Serif fonts, formal charcoal tones |
+| `creative` | Creative | creative | ✅ | Purple accents, vibrant design |
+| `minimal` | Minimal | professional | ✅ | Whitespace-heavy, distraction-free |
+
+### 28.3 Plan Gating
+
+- **Free templates** (`is_premium: false`): Available to all users.
+- **Premium templates** (`is_premium: true`): Only available when the user's plan has `premium_templates: true`.
+- When a user attempts to generate a resume with a premium template they don't have access to, the API returns **403**:
+
+```json
+{
+  "detail": "Premium template requires a paid plan with premium templates enabled.",
+  "template": "modern",
+  "is_premium": true
+}
+```
+
+### 28.4 TypeScript Types
+
+```typescript
+type TemplateCategory = 'professional' | 'creative' | 'academic' | 'executive';
+
+interface ResumeTemplate {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  category: TemplateCategory;
+  preview_image_url: string | null;
+  is_premium: boolean;
+  is_active: boolean;
+  sort_order: number;
+  accessible: boolean;
+}
+```
+
+### 28.5 Frontend Integration Recipe
+
+```typescript
+// 1. Fetch available templates
+const { data: templates } = await api.get('/templates/');
+
+// 2. Display templates — use `accessible` to show lock icon on premium
+templates.results.forEach(tmpl => {
+  console.log(`${tmpl.name} ${tmpl.accessible ? '✓' : '🔒'}`);
+});
+
+// 3. Generate resume with chosen template
+const { data } = await api.post(`/analyses/${analysisId}/generate-resume/`, {
+  template: 'modern',  // slug from step 1
+  format: 'pdf',
+});
+
+// 4. Handle 403 for premium templates
+if (data.status === 403) {
+  showUpgradeModal('Upgrade to Pro for premium templates');
+}
+```
+
+---
+
+## 29. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -5187,6 +5321,8 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 | GET | `/api/v1/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
 | GET | `/api/v1/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes (paginated) |
 | DELETE | `/api/v1/generated-resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete a generated resume |
+| **Resume Templates** |||||
+| GET | `/api/v1/templates/` | ✅ | Readonly (120/hr) | List active resume templates (§28) |
 | **Job Alerts** |||||
 | GET | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts (paginated) |
 | POST | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
@@ -5207,6 +5343,21 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 ---
 
 ## Changelog
+
+### v0.25.0 — Resume Template Marketplace
+
+#### Features
+- **Resume Template Marketplace**: 5 resume templates with distinct visual styles — `ats_classic` (free), `modern`, `executive`, `creative`, `minimal` (premium). Templates are stored in the DB (`ResumeTemplate` model) and managed via Django Admin.
+- **New endpoint: `GET /api/v1/templates/`** — Browse active resume templates. Returns `accessible` flag per user's plan. Auth required.
+- **Premium template gating**: Premium templates (`is_premium: true`) require a plan with `premium_templates: true`. Using a premium template without access returns **403** with `is_premium` and `template` in the response body.
+- **`premium_templates` field on Plan model**: Boolean flag controlling access to premium templates. Default: `false`. Managed via Django Admin or seed data.
+- **Template parameter in resume generation is now DB-validated**: `POST /api/v1/analyses/<id>/generate-resume/` validates the `template` slug against active templates in the DB. Invalid or inactive templates return **400** with available slugs listed.
+- **New management command: `seed_templates`** — Seeds 5 default templates (idempotent).
+- **Template renderers**: Each template has dedicated PDF (ReportLab) and DOCX (python-docx) renderers with distinct typography, colors, and layouts.
+
+#### TypeScript Changes
+- `ResumeTemplate` type changed from string literal `'ats_classic'` to `string` (template slugs are now dynamic, fetched from API).
+- New `ResumeTemplate` interface added (§28.4) with `accessible`, `is_premium`, `category`, `preview_image_url` fields.
 
 ### v0.24.0 — Email Verification, Bulk Analysis, Interview Prep, Cover Letter, Infrastructure & API Versioning
 

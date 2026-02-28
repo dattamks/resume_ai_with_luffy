@@ -21,6 +21,8 @@ from .views import (
     ResumeVersionHistoryView, BulkAnalyzeView,
     InterviewPrepView, InterviewPrepStatusView, InterviewPrepListView,
     CoverLetterView, CoverLetterStatusView, CoverLetterListView,
+    # Phase 14 — Resume Templates
+    TemplateListView,
 )
 from .views_celery import (
     CeleryWorkersView, CeleryActiveTasksView, CeleryTaskStatusView,
@@ -83,4 +85,6 @@ urlpatterns = [
     path('admin/celery/tasks/active/', CeleryActiveTasksView.as_view(), name='celery-active-tasks'),
     path('admin/celery/tasks/<str:task_id>/', CeleryTaskStatusView.as_view(), name='celery-task-status'),
     path('admin/celery/queues/', CeleryQueueLengthView.as_view(), name='celery-queues'),
+    # Phase 14 — Resume Templates
+    path('templates/', TemplateListView.as_view(), name='template-list'),
 ]

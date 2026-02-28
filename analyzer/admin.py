@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume, ResumeVersion, InterviewPrep, CoverLetter
+from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
 
 
 @admin.register(Resume)
@@ -171,4 +171,18 @@ class CoverLetterAdmin(admin.ModelAdmin):
     search_fields = ('user__username',)
     readonly_fields = ('id', 'content', 'content_html', 'created_at')
     raw_id_fields = ('user', 'analysis', 'llm_response')
+
+
+# ── Phase 14: Resume Templates ──────────────────────────────────────────────────────
+
+
+@admin.register(ResumeTemplate)
+class ResumeTemplateAdmin(admin.ModelAdmin):
+    list_display = ('name', 'slug', 'category', 'is_premium', 'is_active', 'sort_order', 'updated_at')
+    list_filter = ('is_premium', 'is_active', 'category')
+    list_editable = ('is_premium', 'is_active', 'sort_order')
+    search_fields = ('name', 'slug', 'description')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    prepopulated_fields = {'slug': ('name',)}
+    ordering = ('sort_order', 'name')
 

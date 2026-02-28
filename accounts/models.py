@@ -324,6 +324,10 @@ class Plan(models.Model):
         default=False,
         help_text='Has access to email support.',
     )
+    premium_templates = models.BooleanField(
+        default=False,
+        help_text='Can use premium resume templates.',
+    )
 
     # ── Razorpay Integration ─────────────────────────────────────────────
     razorpay_plan_id = models.CharField(

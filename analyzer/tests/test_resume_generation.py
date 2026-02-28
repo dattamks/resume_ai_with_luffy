@@ -23,7 +23,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 
 from accounts.models import Plan, Wallet
-from analyzer.models import ResumeAnalysis, Resume, GeneratedResume, LLMResponse
+from analyzer.models import ResumeAnalysis, Resume, GeneratedResume, LLMResponse, ResumeTemplate
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -34,6 +34,19 @@ def _ensure_free_plan():
         defaults={
             'name': 'Free', 'billing_cycle': 'free', 'price': 0,
             'credits_per_month': 2,
+        },
+    )
+
+
+def _ensure_ats_template():
+    """Ensure the default ats_classic template exists in the DB."""
+    ResumeTemplate.objects.get_or_create(
+        slug='ats_classic',
+        defaults={
+            'name': 'ATS Classic',
+            'is_premium': False,
+            'is_active': True,
+            'sort_order': 0,
         },
     )
 
@@ -547,6 +560,7 @@ class GenerateResumeViewTests(TestCase):
 
     def setUp(self):
         _ensure_free_plan()
+        _ensure_ats_template()
         self.user = User.objects.create_user(username='genuser', password='StrongPass123!')
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)

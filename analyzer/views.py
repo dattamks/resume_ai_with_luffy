@@ -17,7 +17,7 @@ from accounts.services import (
     deduct_credits, refund_credits, check_balance,
     can_use_feature, InsufficientCreditsError,
 )
-from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification, ResumeVersion, InterviewPrep, CoverLetter
+from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
@@ -40,6 +40,7 @@ from .serializers import (
     CoverLetterSerializer,
     CoverLetterCreateSerializer,
     BulkAnalysisCreateSerializer,
+    ResumeTemplateSerializer,
 )
 from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task, generate_interview_prep_task, generate_cover_letter_task
 
@@ -785,6 +786,21 @@ class GenerateResumeView(APIView):
 
         template = serializer.validated_data['template']
         fmt = serializer.validated_data['format']
+
+        # ── Plan gating for premium templates ──
+        template_obj = getattr(serializer, '_template_obj', None)
+        if template_obj and template_obj.is_premium:
+            profile = getattr(request.user, 'profile', None)
+            has_access = profile and profile.plan and profile.plan.premium_templates
+            if not has_access:
+                return Response(
+                    {
+                        'detail': 'Premium template requires a paid plan with premium templates enabled.',
+                        'template': template,
+                        'is_premium': True,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         # ── Credit check — deduct upfront, refund on failure ──
         try:
@@ -2055,4 +2071,20 @@ class CoverLetterListView(ListAPIView):
 
     def get_queryset(self):
         return CoverLetter.objects.filter(user=self.request.user)
+
+
+# ── Resume Templates ─────────────────────────────────────────────────────
+
+
+class TemplateListView(ListAPIView):
+    """
+    GET /api/v1/templates/
+    List all active resume templates with access info for the requesting user.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+    serializer_class = ResumeTemplateSerializer
+
+    def get_queryset(self):
+        return ResumeTemplate.objects.filter(is_active=True)
 

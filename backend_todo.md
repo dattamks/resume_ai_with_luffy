@@ -8,7 +8,7 @@
 |-----|---------|-------|
 | 🔴 IMMEDIATE | Next sprint — implement now | 0 (all done) |
 | 🟡 P2 | Important — implement soon | 0 (all done) |
-| 🔵 P3 | Important — plan for later | 2 |
+| 🔵 P3 | Important — plan for later | 1 |
 | ⚪ DEFERRED | Backlog — revisit in future | 12 |
 
 ---
@@ -616,7 +616,7 @@ On resume upload:
 
 - [ ] **⚪ DEFERRED — Hiring trends analytics** — Aggregate anonymized data across users to show trending skills, most-demanded roles, salary ranges by industry.
 - [ ] **⚪ DEFERRED — Admin analytics dashboard** — System-wide metrics: active users, analyses/day, LLM token costs, error rates.
-- [ ] **🔵 P3 — Resume template marketplace** — Multiple resume templates beyond `ats_classic`. Premium templates behind higher plans.
+- [x] **🔵 P3 — Resume template marketplace** — 5 templates (ats_classic free + 4 premium), ResumeTemplate model, `premium_templates` plan flag, DB-validated slugs, dedicated PDF/DOCX renderers, admin, seed command. *(v0.25.0)*
 - [ ] **🔵 P3 — LinkedIn resume import** — Import LinkedIn profile data directly instead of uploading PDF.
 
 ---

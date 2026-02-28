@@ -1089,3 +1089,72 @@ class CoverLetter(models.Model):
 
     def __str__(self):
         return f"CoverLetter for analysis #{self.analysis_id} ({self.tone}, {self.status})"
+
+
+# ── Resume Templates ─────────────────────────────────────────────────────────
+
+
+class ResumeTemplate(models.Model):
+    """
+    Admin-managed resume template metadata.
+
+    Each template maps to a pair of renderer modules (PDF + DOCX)
+    registered in the template_registry. Admin controls visibility,
+    ordering, and premium gating via Django Admin.
+    """
+
+    CATEGORY_CHOICES = [
+        ('professional', 'Professional'),
+        ('creative', 'Creative'),
+        ('academic', 'Academic'),
+        ('executive', 'Executive'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=100,
+        help_text='Display name (e.g., "ATS Classic", "Modern Clean").',
+    )
+    slug = models.SlugField(
+        max_length=50,
+        unique=True,
+        help_text='Template identifier used in API calls (e.g., "ats_classic", "modern").',
+    )
+    description = models.TextField(
+        blank=True,
+        help_text='Short description shown on the template marketplace.',
+    )
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default='professional',
+        help_text='Template category for filtering.',
+    )
+    preview_image = models.ImageField(
+        upload_to='template_previews/',
+        blank=True,
+        help_text='Preview thumbnail shown in the template picker.',
+    )
+    is_premium = models.BooleanField(
+        default=False,
+        help_text='Premium templates require a paid plan with premium_templates enabled.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Inactive templates are hidden from the marketplace.',
+    )
+    sort_order = models.IntegerField(
+        default=0,
+        help_text='Display order in the marketplace (lower = first).',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name = 'Resume Template'
+        verbose_name_plural = 'Resume Templates'
+
+    def __str__(self):
+        premium_tag = ' [PREMIUM]' if self.is_premium else ''
+        return f"{self.name}{premium_tag}"
