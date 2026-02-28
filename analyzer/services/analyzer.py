@@ -1,5 +1,6 @@
 import logging
 import time
+from decimal import Decimal
 
 from ..models import ResumeAnalysis, LLMResponse
 from .pdf_extractor import PDFExtractor
@@ -7,6 +8,36 @@ from .jd_fetcher import JDFetcher
 from .ai_providers.factory import get_ai_provider
 
 logger = logging.getLogger('analyzer')
+
+# ── Cost estimation ─────────────────────────────────────────────────────────
+# Approximate pricing per 1M tokens (USD) for common models via OpenRouter.
+# Updated periodically — not exact, just for internal cost tracking.
+_MODEL_PRICING = {
+    'anthropic/claude-3.5-haiku': {'input': 0.80, 'output': 4.00},
+    'anthropic/claude-3-haiku': {'input': 0.25, 'output': 1.25},
+    'anthropic/claude-3.5-sonnet': {'input': 3.00, 'output': 15.00},
+    'openai/gpt-4o-mini': {'input': 0.15, 'output': 0.60},
+    'openai/gpt-4o': {'input': 2.50, 'output': 10.00},
+    'google/gemini-flash-1.5': {'input': 0.075, 'output': 0.30},
+}
+
+
+def _estimate_cost(model: str, prompt_tokens: int | None, completion_tokens: int | None) -> Decimal | None:
+    """Estimate USD cost based on model and token counts. Returns None if unknown."""
+    if not prompt_tokens or not completion_tokens:
+        return None
+    pricing = _MODEL_PRICING.get(model)
+    if not pricing:
+        # Try partial match (model name without provider prefix)
+        for key, val in _MODEL_PRICING.items():
+            if model in key or key in model:
+                pricing = val
+                break
+    if not pricing:
+        return None
+    input_cost = Decimal(str(prompt_tokens)) * Decimal(str(pricing['input'])) / Decimal('1000000')
+    output_cost = Decimal(str(completion_tokens)) * Decimal(str(pricing['output'])) / Decimal('1000000')
+    return (input_cost + output_cost).quantize(Decimal('0.000001'))
 
 
 class ResumeAnalyzer:
@@ -136,6 +167,7 @@ class ResumeAnalyzer:
             user=analysis.user,
             model_used=type(self.ai_provider).__name__,
             status=LLMResponse.STATUS_PENDING,
+            call_purpose='analysis',
         )
         analysis.llm_response = llm_resp
         analysis.pipeline_step = step_name
@@ -149,16 +181,28 @@ class ResumeAnalyzer:
             llm_resp.save(update_fields=['status', 'error_message'])
             raise
 
-        # Persist raw + prompt + parsed atomically
+        # Persist raw + prompt + parsed + token usage atomically
         llm_resp.prompt_sent = result.get('prompt', '')
         llm_resp.raw_response = result.get('raw', '')
         llm_resp.parsed_response = result.get('parsed')
         llm_resp.model_used = result.get('model', type(self.ai_provider).__name__)
         llm_resp.duration_seconds = result.get('duration')
         llm_resp.status = LLMResponse.STATUS_DONE
+
+        # Token usage tracking
+        usage = result.get('usage', {})
+        if usage:
+            llm_resp.prompt_tokens = usage.get('prompt_tokens')
+            llm_resp.completion_tokens = usage.get('completion_tokens')
+            llm_resp.total_tokens = usage.get('total_tokens')
+            llm_resp.estimated_cost_usd = _estimate_cost(
+                llm_resp.model_used, usage.get('prompt_tokens'), usage.get('completion_tokens'),
+            )
+
         llm_resp.save(update_fields=[
             'prompt_sent', 'raw_response', 'parsed_response',
             'model_used', 'duration_seconds', 'status',
+            'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost_usd',
         ])
         logger.debug('LLMResponse saved (id=%s)', llm_resp.id)
 

@@ -474,6 +474,79 @@ View all matches: {{ frontend_url }}/job-alerts/{{ alert_id }}/
 
 — {{ app_name }}''',
     },
+    {
+        'slug': 'email-verification',
+        'name': 'Email Verification',
+        'category': 'auth',
+        'description': 'Sent when a new user registers to verify their email address.',
+        'subject': '{{ app_name }} — Verify Your Email Address',
+        'html_body': '''\
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Email</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f4f4f7;">
+    <tr>
+      <td align="center" style="padding:40px 0;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background-color:#1a56db;padding:30px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{{ app_name }}</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px;">
+              <h2 style="margin:0 0 16px;color:#1a1a2e;font-size:20px;">Verify Your Email Address</h2>
+              <p style="margin:0 0 16px;color:#4a4a68;font-size:15px;line-height:1.6;">
+                Hi <strong>{{ username }}</strong>,
+              </p>
+              <p style="margin:0 0 24px;color:#4a4a68;font-size:15px;line-height:1.6;">
+                Thanks for signing up! Please verify your email address by clicking the button below:
+              </p>
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 24px;">
+                <tr>
+                  <td style="background-color:#1a56db;border-radius:6px;">
+                    <a href="{{ verify_url }}" target="_blank" style="display:inline-block;padding:14px 32px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">
+                      Verify Email
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 16px;color:#4a4a68;font-size:14px;line-height:1.6;">
+                This link expires in <strong>24 hours</strong>. If you did not create this account, you can safely ignore this email.
+              </p>
+              <p style="margin:0 0 8px;color:#9a9ab0;font-size:13px;">If the button doesn't work, copy and paste this URL:</p>
+              <p style="margin:0;word-break:break-all;color:#1a56db;font-size:13px;">{{ verify_url }}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f4f4f7;padding:24px 40px;text-align:center;">
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 {{ app_name }}. All rights reserved.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>''',
+        'plain_text_body': '''\
+{{ app_name }} — Verify Your Email Address
+
+Hi {{ username }},
+
+Thanks for signing up! Please verify your email address by clicking the link below:
+
+{{ verify_url }}
+
+This link expires in 24 hours. If you did not create this account, you can safely ignore this email.
+
+— {{ app_name }}''',
+    },
 ]
 
 

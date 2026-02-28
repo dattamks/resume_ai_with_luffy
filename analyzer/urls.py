@@ -17,6 +17,10 @@ from .views import (
     JobAlertMatchListView, JobAlertMatchFeedbackView, JobAlertManualRunView,
     # Phase 12 — Notifications
     NotificationListView, NotificationUnreadCountView, NotificationMarkReadView,
+    # Phase 13 — New features
+    ResumeVersionHistoryView, BulkAnalyzeView,
+    InterviewPrepView, InterviewPrepStatusView, InterviewPrepListView,
+    CoverLetterView, CoverLetterStatusView, CoverLetterListView,
 )
 
 urlpatterns = [
@@ -60,4 +64,14 @@ urlpatterns = [
     path('notifications/', NotificationListView.as_view(), name='notification-list'),
     path('notifications/unread-count/', NotificationUnreadCountView.as_view(), name='notification-unread-count'),
     path('notifications/mark-read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
+    # Phase 13 — Resume Version History
+    path('resumes/<uuid:pk>/versions/', ResumeVersionHistoryView.as_view(), name='resume-version-history'),
+    # Phase 13 — Bulk Analysis
+    path('analyze/bulk/', BulkAnalyzeView.as_view(), name='analyze-bulk'),
+    # Phase 13 — Interview Prep
+    path('analyses/<int:pk>/interview-prep/', InterviewPrepView.as_view(), name='interview-prep'),
+    path('interview-preps/', InterviewPrepListView.as_view(), name='interview-prep-list'),
+    # Phase 13 — Cover Letter
+    path('analyses/<int:pk>/cover-letter/', CoverLetterView.as_view(), name='cover-letter'),
+    path('cover-letters/', CoverLetterListView.as_view(), name='cover-letter-list'),
 ]

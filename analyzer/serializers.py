@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile, ResumeVersion, InterviewPrep, CoverLetter
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -58,6 +58,7 @@ class LLMResponseSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'parsed_response',
             'model_used', 'status', 'error_message', 'duration_seconds',
+            'prompt_tokens', 'completion_tokens', 'total_tokens',
             'created_at',
         )
         read_only_fields = fields
@@ -523,4 +524,136 @@ class NotificationMarkReadSerializer(serializers.Serializer):
     """Mark one or all notifications as read."""
     notification_id = serializers.UUIDField(required=False, help_text='Specific notification ID. Omit to mark all as read.')
     mark_all = serializers.BooleanField(required=False, default=False)
+
+
+# ── Resume Version History ───────────────────────────────────────────────────
+
+class ResumeVersionSerializer(serializers.ModelSerializer):
+    """Read-only serializer for resume version history."""
+    resume_filename = serializers.CharField(source='resume.original_filename', read_only=True)
+    resume_id = serializers.UUIDField(source='resume.id', read_only=True)
+    previous_resume_id = serializers.UUIDField(source='previous_resume.id', read_only=True, default=None)
+
+    class Meta:
+        model = ResumeVersion
+        fields = (
+            'id', 'resume_id', 'resume_filename', 'previous_resume_id',
+            'version_number', 'change_summary',
+            'best_ats_score', 'best_grade', 'created_at',
+        )
+        read_only_fields = fields
+
+
+# ── Interview Prep ───────────────────────────────────────────────────────────
+
+class InterviewPrepSerializer(serializers.ModelSerializer):
+    """Read-only serializer for interview prep results."""
+
+    class Meta:
+        model = InterviewPrep
+        fields = (
+            'id', 'analysis', 'questions', 'tips',
+            'status', 'error_message', 'created_at',
+        )
+        read_only_fields = fields
+
+
+class InterviewPrepCreateSerializer(serializers.Serializer):
+    """No extra fields needed — analysis ID comes from URL."""
+    pass
+
+
+# ── Cover Letter ─────────────────────────────────────────────────────────────
+
+class CoverLetterSerializer(serializers.ModelSerializer):
+    """Read-only serializer for cover letter results."""
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CoverLetter
+        fields = (
+            'id', 'analysis', 'tone', 'content', 'content_html',
+            'status', 'error_message', 'file_url', 'created_at',
+        )
+        read_only_fields = fields
+
+    def get_file_url(self, obj):
+        if obj.file:
+            return obj.file.url
+        return None
+
+
+class CoverLetterCreateSerializer(serializers.Serializer):
+    """Serializer for requesting a cover letter generation."""
+    tone = serializers.ChoiceField(
+        choices=[('professional', 'Professional'), ('conversational', 'Conversational'), ('enthusiastic', 'Enthusiastic')],
+        default='professional',
+    )
+
+
+# ── Bulk Analysis ────────────────────────────────────────────────────────────
+
+class BulkAnalysisCreateSerializer(serializers.Serializer):
+    """
+    Analyze one resume against multiple job descriptions at once.
+    """
+    resume_file = serializers.FileField(required=False)
+    resume_id = serializers.UUIDField(required=False)
+    job_descriptions = serializers.ListField(
+        child=serializers.DictField(),
+        min_length=1,
+        max_length=10,
+        help_text='Array of JD objects, each with jd_input_type + corresponding fields.',
+    )
+
+    def validate_resume_file(self, value):
+        max_bytes = settings.MAX_RESUME_SIZE_MB * 1024 * 1024
+        if value.size > max_bytes:
+            raise serializers.ValidationError(
+                f'Resume file must be under {settings.MAX_RESUME_SIZE_MB}MB.'
+            )
+        if not value.name.lower().endswith('.pdf'):
+            raise serializers.ValidationError('Only PDF files are accepted.')
+        header = value.read(4)
+        value.seek(0)
+        if header != b'%PDF':
+            raise serializers.ValidationError(
+                'File content does not appear to be a valid PDF.'
+            )
+        return value
+
+    def validate(self, attrs):
+        resume_file = attrs.get('resume_file')
+        resume_id = attrs.get('resume_id')
+
+        if resume_file and resume_id:
+            raise serializers.ValidationError(
+                'Provide either "resume_file" or "resume_id", not both.'
+            )
+        if not resume_file and not resume_id:
+            raise serializers.ValidationError(
+                'Either "resume_file" or "resume_id" is required.'
+            )
+
+        # Validate each JD entry
+        for i, jd in enumerate(attrs.get('job_descriptions', [])):
+            jd_type = jd.get('jd_input_type')
+            if jd_type not in ('text', 'url', 'form'):
+                raise serializers.ValidationError(
+                    {f'job_descriptions[{i}]': 'jd_input_type must be "text", "url", or "form".'}
+                )
+            if jd_type == 'text' and not jd.get('jd_text'):
+                raise serializers.ValidationError(
+                    {f'job_descriptions[{i}]': 'jd_text is required when jd_input_type is "text".'}
+                )
+            if jd_type == 'url' and not jd.get('jd_url'):
+                raise serializers.ValidationError(
+                    {f'job_descriptions[{i}]': 'jd_url is required when jd_input_type is "url".'}
+                )
+            if jd_type == 'form' and not jd.get('jd_role'):
+                raise serializers.ValidationError(
+                    {f'job_descriptions[{i}]': 'jd_role is required when jd_input_type is "form".'}
+                )
+
+        return attrs
 

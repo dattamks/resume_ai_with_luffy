@@ -19,6 +19,8 @@ _DEFAULT_COSTS = {
     'resume_analysis': 1,
     'resume_generation': 1,
     'job_alert_run': 1,
+    'interview_prep': 1,
+    'cover_letter': 1,
 }
 
 

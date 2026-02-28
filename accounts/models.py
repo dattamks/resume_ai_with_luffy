@@ -105,6 +105,12 @@ class UserProfile(models.Model):
         help_text='LinkedIn profile URL.',
     )
 
+    # ── Email verification ──────────────────────────────────────────────────
+    is_email_verified = models.BooleanField(
+        default=False,
+        help_text='True after user clicks the email verification link. Google OAuth users are auto-verified.',
+    )
+
     class Meta:
         verbose_name = 'User Profile'
         verbose_name_plural = 'User Profiles'
@@ -712,6 +718,51 @@ class ConsentLog(models.Model):
     def __str__(self):
         action = 'agreed' if self.agreed else 'withdrew'
         return f'{self.user.username} {action} {self.get_consent_type_display()} (v{self.version})'
+
+
+class EmailVerificationToken(models.Model):
+    """
+    Short-lived token for email verification.
+    Created on registration, consumed when user clicks the verification link.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='email_verification_tokens')
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Timestamp when the token was used to verify email.',
+    )
+    expires_at = models.DateTimeField(
+        help_text='Token expiry time (default 24 hours after creation).',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Email Verification Token'
+        verbose_name_plural = 'Email Verification Tokens'
+
+    def __str__(self):
+        status = 'used' if self.used_at else 'pending'
+        return f'EmailVerification({self.user.username}, {status})'
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    @property
+    def is_valid(self):
+        return not self.used_at and not self.is_expired
+
+    @classmethod
+    def create_for_user(cls, user, hours_valid=24):
+        """Create a new verification token for a user."""
+        import secrets
+        token = secrets.token_urlsafe(48)
+        return cls.objects.create(
+            user=user,
+            token=token,
+            expires_at=timezone.now() + timezone.timedelta(hours=hours_valid),
+        )
 
 
 class ContactSubmission(models.Model):

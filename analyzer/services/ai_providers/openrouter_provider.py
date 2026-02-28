@@ -56,6 +56,19 @@ class OpenRouterProvider(AIProvider):
         elapsed = time.time() - req_start
         logger.info('OpenRouter: response received in %.2fs', elapsed)
 
+        # Extract token usage from API response
+        usage = {}
+        if hasattr(response, 'usage') and response.usage:
+            usage = {
+                'prompt_tokens': getattr(response.usage, 'prompt_tokens', None),
+                'completion_tokens': getattr(response.usage, 'completion_tokens', None),
+                'total_tokens': getattr(response.usage, 'total_tokens', None),
+            }
+            logger.info(
+                'OpenRouter token usage: prompt=%s completion=%s total=%s',
+                usage.get('prompt_tokens'), usage.get('completion_tokens'), usage.get('total_tokens'),
+            )
+
         raw = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
         if not raw:
             raise ValueError(
@@ -91,4 +104,5 @@ class OpenRouterProvider(AIProvider):
             'prompt': json.dumps(messages),
             'model': self.model,
             'duration': elapsed,
+            'usage': usage,
         }

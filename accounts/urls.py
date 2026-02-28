@@ -8,6 +8,7 @@ from .views import (
     PlanListView, PlanSubscribeView,
     GoogleLoginView, GoogleCompleteView,
     AvatarUploadView, ContactSubmissionView,
+    VerifyEmailView, ResendVerificationEmailView,
 )
 from .views_payments import (
     CreateSubscriptionView, VerifySubscriptionView, CancelSubscriptionView,
@@ -21,6 +22,8 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('logout-all/', LogoutAllDevicesView.as_view(), name='logout-all'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('verify-email/', VerifyEmailView.as_view(), name='verify-email'),
+    path('resend-verification/', ResendVerificationEmailView.as_view(), name='resend-verification'),
     path('me/', MeView.as_view(), name='me'),
     path('avatar/', AvatarUploadView.as_view(), name='avatar-upload'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),

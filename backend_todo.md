@@ -6,7 +6,7 @@
 
 | Tag | Meaning | Count |
 |-----|---------|-------|
-| 🔴 IMMEDIATE | Next sprint — implement now | 7 |
+| 🔴 IMMEDIATE | Next sprint — implement now | 0 (all done) |
 | 🟡 P2 | Important — implement soon | 6 |
 | 🔵 P3 | Important — plan for later | 2 |
 | ⚪ DEFERRED | Backlog — revisit in future | 12 |
@@ -598,19 +598,19 @@ On resume upload:
 ### High Value
 
 - [ ] **⚪ DEFERRED — AI provider fallback / multi-provider** — If OpenRouter is down, analyses fail completely. Add fallback to direct Anthropic or OpenAI API. Requires: provider config model, priority/health tracking, circuit breaker pattern.
-- [ ] **🔴 IMMEDIATE — Token usage tracking & cost dashboard** — Track `prompt_tokens`/`completion_tokens` per analysis from `response.usage`. Store on `LLMResponse` model. Surface admin cost dashboard. Alert on budget thresholds.
+- [x] **🔴 IMMEDIATE — Token usage tracking & cost dashboard** — Track `prompt_tokens`/`completion_tokens` per analysis from `response.usage`. Store on `LLMResponse` model. Surface admin cost dashboard. Alert on budget thresholds. *(implemented — fields on LLMResponse, OpenRouter provider captures usage, cost estimation in analyzer service)*
 - [ ] **⚪ DEFERRED — Streaming LLM responses** — Use SSE/WebSocket to stream partial analysis results to frontend instead of waiting 60-120s. Requires: Django Channels or SSE endpoint, frontend streaming client.
-- [ ] **🔴 IMMEDIATE — Email verification on registration** — Set `user.is_active = False` until email link clicked. Requires: verification token model, send/verify/resend endpoints, new email template, auth flow changes.
+- [x] **🔴 IMMEDIATE — Email verification on registration** — Set `user.is_active = False` until email link clicked. Requires: verification token model, send/verify/resend endpoints, new email template, auth flow changes. *(implemented — EmailVerificationToken model, verify-email + resend-verification endpoints, email template seeded)*
 - [x] **"Logout all devices"** — `POST /api/auth/logout-all/` blacklists all outstanding tokens *(v0.19.0)*
 
 ### Medium Value
 
-- [ ] **🔴 IMMEDIATE — Resume version history** — When user re-uploads modified resume, link to previous versions. Show improvement timeline (ATS score v1→v2→v3).
-- [ ] **🔴 IMMEDIATE — Bulk analysis / batch mode** — Analyze one resume against multiple JDs at once (e.g., 5 postings). Compare results side-by-side.
-- [ ] **🔴 IMMEDIATE — Interview prep generation** — Leverage analysis gap data to generate likely interview questions customized to resume + JD.
-- [ ] **🔴 IMMEDIATE — Cover letter generation** — Extend resume generation pipeline to produce a tailored cover letter from the analysis.
+- [x] **🔴 IMMEDIATE — Resume version history** — When user re-uploads modified resume, link to previous versions. Show improvement timeline (ATS score v1→v2→v3). *(implemented — ResumeVersion model, version chain via previous_resume FK, version history endpoint)*
+- [x] **🔴 IMMEDIATE — Bulk analysis / batch mode** — Analyze one resume against multiple JDs at once (e.g., 5 postings). Compare results side-by-side. *(implemented — POST /api/analyze/bulk/ with up to 10 JDs, atomic credit deduction)*
+- [x] **🔴 IMMEDIATE — Interview prep generation** — Leverage analysis gap data to generate likely interview questions customized to resume + JD. *(implemented — InterviewPrep model, LLM service, Celery task, CRUD endpoints)*
+- [x] **🔴 IMMEDIATE — Cover letter generation** — Extend resume generation pipeline to produce a tailored cover letter from the analysis. *(implemented — CoverLetter model with tone choices, LLM service, Celery task, CRUD endpoints)*
 - [x] **Webhook event replay/audit log** — `WebhookEvent` model with unique `event_id` stores all received events *(v0.13.1)*
-- [ ] **🔴 IMMEDIATE — Rate limit feedback in API responses** — Include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers so frontend can show proactive warnings.
+- [x] **🔴 IMMEDIATE — Rate limit feedback in API responses** — Include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers so frontend can show proactive warnings. *(implemented — HeaderAware throttle classes + RateLimitHeadersMiddleware)*
 
 ### Lower Value
 

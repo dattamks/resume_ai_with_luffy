@@ -29,7 +29,12 @@
 20. [Smart Job Alerts](#20-smart-job-alerts)
 21. [Razorpay Payments](#21-razorpay-payments)
 22. [Landing Page Contact Form](#22-landing-page-contact-form)
-23. [Quick Reference — All Endpoints](#23-quick-reference--all-endpoints)
+23. [Email Verification](#23-email-verification)
+24. [Bulk Analysis](#24-bulk-analysis)
+25. [Interview Prep Generation](#25-interview-prep-generation)
+26. [Cover Letter Generation](#26-cover-letter-generation)
+27. [Resume Version History](#27-resume-version-history)
+28. [Quick Reference — All Endpoints](#28-quick-reference--all-endpoints)
 
 ---
 
@@ -282,7 +287,9 @@ Creates a new user account and returns tokens immediately (auto-login).
 >
 > **Newsletter sync:** When `marketing_opt_in` is `true`, the user's `NotificationPreference.newsletters_email` is automatically set to `true`.
 
-> **Email:** A welcome email (HTML template `welcome`) is sent to the registered email address on successful registration.
+> **Email verification (v0.24.0):** Registration now sends a **verification email** (template `email-verification`) instead of the welcome email. The response includes `email_verification_required: true`. The welcome email is only sent after the user verifies their email via `POST /api/auth/verify-email/`. See [§23 Email Verification](#23-email-verification) for the full flow.
+
+> **New response field:** `is_email_verified` (boolean) is included in the `user` object on registration, login, and `GET /api/auth/me/`. Initially `false` until verified.
 
 ---
 
@@ -2379,10 +2386,36 @@ When rate-limited, the API returns:
 ```http
 HTTP 429 Too Many Requests
 Retry-After: 120
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1709120000
 
 {
   "detail": "Request was throttled. Expected available in 120 seconds."
 }
+```
+
+### Rate Limit Headers (v0.24.0)
+
+All API responses now include rate-limit headers (when DRF throttling is active):
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `X-RateLimit-Limit` | Max allowed requests in the current window | `200` |
+| `X-RateLimit-Remaining` | Requests remaining before throttled | `187` |
+| `X-RateLimit-Reset` | Unix timestamp when the window resets | `1709120000` |
+
+The headers reflect the **most restrictive** throttle scope active on the endpoint. For example, `POST /api/analyze/` has both `user` (200/hr) and `analyze` (10/hr) scopes — the headers will show whichever has fewer remaining requests.
+
+**Frontend usage:**
+```js
+api.interceptors.response.use((response) => {
+  const remaining = response.headers['x-ratelimit-remaining'];
+  const limit = response.headers['x-ratelimit-limit'];
+  if (remaining !== undefined && Number(remaining) < 5) {
+    showToast(`${remaining}/${limit} API requests remaining`, 'warning');
+  }
+  return response;
+});
 ```
 
 **Exempt endpoints (no throttle applied):**
@@ -4689,7 +4722,398 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 
 ---
 
-## 23. Quick Reference — All Endpoints
+## 23. Email Verification
+
+New user accounts require email verification before the welcome email is sent. The registration flow now returns `email_verification_required: true`.
+
+### Flow
+
+```
+Register → verification email sent → user clicks link → POST /verify-email/ → verified → welcome email sent
+```
+
+### `POST /api/auth/verify-email/` — Verify Email
+
+🔓 Public — no auth required. **Throttled:** `auth` scope (20/hour per IP).
+
+**Request:**
+```json
+{
+  "token": "abc123def456..."
+}
+```
+
+**Response (200):**
+```json
+{
+  "detail": "Email verified successfully.",
+  "email": "user@example.com"
+}
+```
+
+**Errors (400):**
+
+| Condition | Message |
+|-----------|---------|
+| Missing token | `"Verification token is required."` |
+| Invalid token | `"Invalid verification token."` |
+| Already used | `"This token has already been used."` |
+| Expired (24h) | `"This verification token has expired. Please request a new one."` |
+
+### `POST /api/auth/resend-verification/` — Resend Verification Email
+
+🔒 Authenticated. **Throttled:** `auth` scope (20/hour per IP).
+
+**Request:** None (empty body).
+
+**Response (200):**
+```json
+{
+  "detail": "Verification email sent."
+}
+```
+
+**Errors (400):**
+```json
+{
+  "detail": "Email is already verified."
+}
+```
+
+### Frontend integration
+
+```js
+// After registration
+if (response.data.email_verification_required) {
+  navigate('/verify-email-pending');
+}
+
+// Verify email (from link in email)
+const verifyEmail = async (token) => {
+  const { data } = await api.post('/api/auth/verify-email/', { token });
+  showToast(data.detail, 'success');
+  navigate('/login');
+};
+
+// Resend verification (authenticated)
+const resendVerification = async () => {
+  await api.post('/api/auth/resend-verification/');
+  showToast('Verification email sent!', 'info');
+};
+```
+
+### `is_email_verified` field
+
+The `user` object in login, register, and `GET /api/auth/me/` responses now includes:
+
+```json
+{
+  "is_email_verified": false
+}
+```
+
+Use this to conditionally show a verification banner in the UI.
+
+---
+
+## 24. Bulk Analysis
+
+Analyze one resume against multiple job descriptions in a single API call. Each JD creates a separate `ResumeAnalysis` and deducts 1 credit.
+
+### `POST /api/analyze/bulk/`
+
+🔒 Authenticated. **Throttled:** `analyze` scope (10/hour). **Parsers:** `multipart/form-data`, `application/json`.
+
+**Request:**
+```json
+{
+  "resume_id": "uuid-of-existing-resume",
+  "job_descriptions": [
+    {
+      "jd_input_type": "text",
+      "jd_text": "Full job description text...",
+      "jd_role": "Backend Engineer",
+      "jd_company": "Acme Corp"
+    },
+    {
+      "jd_input_type": "url",
+      "jd_url": "https://example.com/jobs/123",
+      "jd_role": "Senior Developer"
+    },
+    {
+      "jd_input_type": "form",
+      "jd_role": "Full Stack Engineer",
+      "jd_company": "StartupCo",
+      "jd_skills": "React, Django, PostgreSQL",
+      "jd_experience_years": 3,
+      "jd_industry": "SaaS"
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `resume_file` | File (PDF) | One of `resume_file` / `resume_id` | Upload a new resume |
+| `resume_id` | UUID | One of `resume_file` / `resume_id` | Use existing resume |
+| `job_descriptions` | array | ✅ | 1–10 job description objects |
+
+Each `job_descriptions[i]` follows the same schema as single analysis (`jd_input_type`, `jd_text`, `jd_url`, `jd_role`, `jd_company`, `jd_skills`, `jd_experience_years`, `jd_industry`, `jd_extra_details`).
+
+**Response (202 Accepted):**
+```json
+{
+  "total_requested": 3,
+  "total_created": 3,
+  "analyses": [
+    {
+      "id": 42,
+      "jd_role": "Backend Engineer",
+      "jd_company": "Acme Corp",
+      "status": "processing",
+      "credits_used": 1
+    },
+    {
+      "id": 43,
+      "jd_role": "Senior Developer",
+      "jd_company": "",
+      "status": "processing",
+      "credits_used": 1
+    }
+  ]
+}
+```
+
+**Errors:**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| `400` | Validation errors | Serializer errors dict |
+| `402` | Insufficient credits | `{ "detail", "balance", "total_cost", "cost_per_analysis" }` |
+| `403` | Monthly analysis limit exceeded | `{ "detail", "limit", "used", "requested" }` |
+| `404` | `resume_id` not found | `{ "detail": "Resume not found." }` |
+
+> **Partial success:** If credits run out mid-batch, `total_created < total_requested`. Poll each `analyses[i].id` individually.
+
+---
+
+## 25. Interview Prep Generation
+
+Generate AI-powered interview questions customized to a specific resume + JD analysis. Questions are categorized (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers.
+
+### `POST /api/analyses/<id>/interview-prep/` — Generate Interview Prep
+
+🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Cost:** 1 credit.
+
+**Request:** Empty body (analysis ID from URL).
+
+**Response (202 Accepted):**
+```json
+{
+  "id": "uuid",
+  "status": "processing",
+  "credits_used": 1,
+  "balance": 9
+}
+```
+
+**Idempotency:** If a pending/processing interview prep already exists for this analysis, returns it with `200 OK`.
+
+**Errors:**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| `400` | Analysis not `done` | `{ "detail": "Analysis must be complete before generating interview prep." }` |
+| `402` | Insufficient credits | `{ "detail", "balance", "cost" }` |
+| `404` | Analysis not found | `{ "detail": "Analysis not found." }` |
+
+### `GET /api/analyses/<id>/interview-prep/` — Get Interview Prep Status
+
+🔒 Authenticated. Returns the latest interview prep for this analysis.
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "analysis": 42,
+  "questions": [
+    {
+      "category": "technical",
+      "question": "Can you explain how you would design a REST API for...",
+      "why_asked": "Tests backend architecture knowledge mentioned in JD",
+      "sample_answer": "I would start by...",
+      "difficulty": "medium"
+    }
+  ],
+  "tips": [
+    "Research the company's tech stack before the interview",
+    "Prepare examples of team collaboration from previous roles"
+  ],
+  "status": "done",
+  "error_message": "",
+  "created_at": "2026-02-28T10:00:00Z"
+}
+```
+
+**Error:** `404` if no interview prep exists for this analysis.
+
+### `GET /api/interview-preps/` — List All Interview Preps
+
+🔒 Authenticated. **Throttled:** `readonly` scope (120/hour). **Paginated.**
+
+Returns all interview preps for the authenticated user (newest first).
+
+### Polling
+
+```js
+const generateInterviewPrep = async (analysisId) => {
+  const { data } = await api.post(`/api/analyses/${analysisId}/interview-prep/`);
+  // Poll for completion
+  const poll = setInterval(async () => {
+    const { data: status } = await api.get(`/api/analyses/${analysisId}/interview-prep/`);
+    if (status.status === 'done' || status.status === 'failed') {
+      clearInterval(poll);
+      // Use status.questions and status.tips
+    }
+  }, 3000);
+};
+```
+
+---
+
+## 26. Cover Letter Generation
+
+Generate an AI-powered cover letter tailored to a specific resume + JD analysis. Supports three tone options.
+
+### `POST /api/analyses/<id>/cover-letter/` — Generate Cover Letter
+
+🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Cost:** 1 credit.
+
+**Request:**
+```json
+{
+  "tone": "professional"
+}
+```
+
+| Field | Type | Required | Default | Options |
+|-------|------|----------|---------|---------|
+| `tone` | string | ❌ | `"professional"` | `"professional"`, `"conversational"`, `"enthusiastic"` |
+
+**Response (202 Accepted):**
+```json
+{
+  "id": "uuid",
+  "status": "processing",
+  "tone": "professional",
+  "credits_used": 1,
+  "balance": 8
+}
+```
+
+**Idempotency:** If a pending/processing cover letter with the same tone already exists, returns it with `200 OK`.
+
+**Errors:**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| `400` | Analysis not `done` | `{ "detail": "Analysis must be complete before generating a cover letter." }` |
+| `400` | Invalid tone | Serializer validation errors |
+| `402` | Insufficient credits | `{ "detail", "balance", "cost" }` |
+| `404` | Analysis not found | `{ "detail": "Analysis not found." }` |
+
+### `GET /api/analyses/<id>/cover-letter/` — Get Cover Letter Status
+
+🔒 Authenticated. Returns the latest cover letter for this analysis.
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "analysis": 42,
+  "tone": "professional",
+  "content": "Dear Hiring Manager,\n\nI am writing to express my interest...",
+  "content_html": "<p>Dear Hiring Manager,</p><p>I am writing to express my interest...</p>",
+  "status": "done",
+  "error_message": "",
+  "file_url": null,
+  "created_at": "2026-02-28T10:00:00Z"
+}
+```
+
+**Error:** `404` if no cover letter exists for this analysis.
+
+### `GET /api/cover-letters/` — List All Cover Letters
+
+🔒 Authenticated. **Throttled:** `readonly` scope (120/hour). **Paginated.**
+
+Returns all cover letters for the authenticated user (newest first).
+
+### Polling
+
+```js
+const generateCoverLetter = async (analysisId, tone = 'professional') => {
+  const { data } = await api.post(`/api/analyses/${analysisId}/cover-letter/`, { tone });
+  const poll = setInterval(async () => {
+    const { data: status } = await api.get(`/api/analyses/${analysisId}/cover-letter/`);
+    if (status.status === 'done' || status.status === 'failed') {
+      clearInterval(poll);
+      // Use status.content or status.content_html
+    }
+  }, 3000);
+};
+```
+
+---
+
+## 27. Resume Version History
+
+Track how a resume evolves over time. When a user re-uploads a modified resume with the same filename, a version chain is created automatically.
+
+### `GET /api/resumes/<uuid:id>/versions/` — Get Version History
+
+🔒 Authenticated. **Throttled:** `readonly` scope (120/hour).
+
+**Response (200):**
+```json
+{
+  "resume_id": "uuid",
+  "filename": "my_resume.pdf",
+  "total_versions": 3,
+  "versions": [
+    {
+      "id": "uuid",
+      "resume_id": "uuid",
+      "resume_filename": "my_resume_v3.pdf",
+      "previous_resume_id": "uuid-of-v2",
+      "version_number": 3,
+      "change_summary": "",
+      "best_ats_score": 85,
+      "best_grade": "B+",
+      "created_at": "2026-02-28T10:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "resume_id": "uuid",
+      "resume_filename": "my_resume_v2.pdf",
+      "previous_resume_id": "uuid-of-v1",
+      "version_number": 2,
+      "change_summary": "",
+      "best_ats_score": 72,
+      "best_grade": "C+",
+      "created_at": "2026-02-25T10:00:00Z"
+    }
+  ]
+}
+```
+
+`best_ats_score` and `best_grade` are computed from completed analyses linked to each version's resume. Use the version timeline to show score improvement across iterations.
+
+**Error:** `404` if the resume doesn't exist or doesn't belong to the user.
+
+---
+
+## 28. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -4711,6 +5135,9 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 | POST | `/api/auth/contact/` | ❌ | Anon (per IP) | Landing page contact form submission |
 | GET | `/api/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
 | PUT | `/api/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
+| **Email Verification** |||||
+| POST | `/api/auth/verify-email/` | ❌ | Auth (20/hr IP) | Verify email with token |
+| POST | `/api/auth/resend-verification/` | ✅ | Auth (20/hr IP) | Resend verification email |
 | **Wallet & Plans** |||||
 | GET | `/api/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
 | GET | `/api/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
@@ -4729,6 +5156,7 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 | GET | `/api/auth/payments/history/` | ✅ | Payment (30/hr) | Payment history |
 | **Analysis** |||||
 | POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
+| POST | `/api/analyze/bulk/` | ✅ | Analyze (10/hr) | Bulk analyze: 1 resume × up to 10 JDs |
 | GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (search/filter/sort/paginated) |
 | GET | `/api/analyses/compare/` | ✅ | Readonly (120/hr) | Compare 2–5 analyses side-by-side |
 | GET | `/api/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
@@ -4738,10 +5166,19 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 | GET | `/api/analyses/<id>/export-pdf/` | ✅ | Readonly (120/hr) | Download PDF report |
 | POST | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Generate public share link |
 | DELETE | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Revoke share link |
+| **Interview Prep** |||||
+| POST | `/api/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Generate interview prep (1 credit) |
+| GET | `/api/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Get latest interview prep status |
+| GET | `/api/interview-preps/` | ✅ | Readonly (120/hr) | List all interview preps |
+| **Cover Letter** |||||
+| POST | `/api/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Generate cover letter (1 credit) |
+| GET | `/api/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Get latest cover letter status |
+| GET | `/api/cover-letters/` | ✅ | Readonly (120/hr) | List all cover letters |
 | **Resume** |||||
 | GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (search/sort/paginated) |
 | DELETE | `/api/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
 | POST | `/api/resumes/bulk-delete/` | ✅ | Write (60/hr) | Bulk-delete up to 50 resumes |
+| GET | `/api/resumes/<uuid:id>/versions/` | ✅ | Readonly (120/hr) | Resume version history |
 | **Resume Generation** |||||
 | POST | `/api/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
 | GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
@@ -4768,6 +5205,18 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 ---
 
 ## Changelog
+
+### v0.24.0 — Email Verification, Bulk Analysis, Interview Prep, Cover Letter, Rate Limit Headers
+
+- **Email verification flow**: Registration now sends a verification email instead of a welcome email. Response includes `email_verification_required: true` and `is_email_verified: false`. New endpoints: `POST /api/auth/verify-email/`, `POST /api/auth/resend-verification/`. Welcome email is sent only after verification.
+- **`is_email_verified` field**: Added to user object in register, login, and `GET /api/auth/me/` responses.
+- **Bulk analysis**: `POST /api/analyze/bulk/` — analyze one resume against up to 10 job descriptions in a single call. Returns array of analysis IDs. Each deducts 1 credit.
+- **Interview prep generation**: `POST /api/analyses/<id>/interview-prep/` (1 credit) — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers. `GET` on same URL returns status/results. `GET /api/interview-preps/` lists all.
+- **Cover letter generation**: `POST /api/analyses/<id>/cover-letter/` (1 credit) — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Returns `content` (plain text) and `content_html`. `GET` on same URL returns status/results. `GET /api/cover-letters/` lists all.
+- **Resume version history**: `GET /api/resumes/<uuid>/versions/` — tracks resume evolution with version numbers, `best_ats_score`, and `best_grade` per version. Auto-linked when re-uploading same filename.
+- **Rate limit headers on all responses**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers are now included in every API response. Use to show proactive warnings before users hit 429.
+- **New credit costs**: `interview_prep = 1`, `cover_letter = 1`.
+- **Breaking**: Registration no longer sends welcome email immediately — sends verification email instead. Frontend must handle the verification step.
 
 ### v0.23.0 — Code Quality & Validation Hardening
 

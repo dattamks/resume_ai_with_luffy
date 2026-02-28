@@ -37,7 +37,7 @@ from .serializers import (
     GoogleCompleteSerializer,
 )
 from .email_utils import send_templated_email
-from .models import ConsentLog
+from .models import ConsentLog, EmailVerificationToken
 from .throttles import AuthEndpointThrottle
 
 logger = logging.getLogger('accounts')
@@ -98,11 +98,16 @@ class RegisterView(APIView):
                 prefs.newsletters_email = marketing_opt_in
                 prefs.save(update_fields=['newsletters_email'])
 
-            # Send welcome email (best-effort, don't block registration)
+            # ── Send email verification link ──
+            verification_token = EmailVerificationToken.create_for_user(user)
+            verify_url = f'{settings.FRONTEND_URL}/verify-email?token={verification_token.token}'
             send_templated_email(
-                slug='welcome',
+                slug='email-verification',
                 recipient=user.email,
-                context={'username': user.username},
+                context={
+                    'username': user.username,
+                    'verify_url': verify_url,
+                },
                 fail_silently=True,
             )
 
@@ -110,6 +115,8 @@ class RegisterView(APIView):
                 'user': UserSerializer(user).data,
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
+                'email_verification_required': True,
+                'message': 'Account created. Please check your email to verify your address.',
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -120,6 +127,107 @@ class RegisterView(APIView):
         if xff:
             return xff.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
+
+
+class VerifyEmailView(APIView):
+    """
+    POST /api/auth/verify-email/
+    Verify a user's email address using the token sent during registration.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [AuthEndpointThrottle]
+
+    def post(self, request):
+        token_str = request.data.get('token', '').strip()
+        if not token_str:
+            return Response(
+                {'detail': 'Verification token is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            token = EmailVerificationToken.objects.select_related('user__profile').get(token=token_str)
+        except EmailVerificationToken.DoesNotExist:
+            return Response(
+                {'detail': 'Invalid verification token.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if token.used_at:
+            return Response(
+                {'detail': 'This token has already been used.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if token.is_expired:
+            return Response(
+                {'detail': 'This verification token has expired. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Mark token as used and verify user's email
+        token.used_at = timezone.now()
+        token.save(update_fields=['used_at'])
+
+        profile = token.user.profile
+        profile.is_email_verified = True
+        profile.save(update_fields=['is_email_verified'])
+
+        # Send welcome email now that email is verified
+        send_templated_email(
+            slug='welcome',
+            recipient=token.user.email,
+            context={'username': token.user.username},
+            fail_silently=True,
+        )
+
+        logger.info('Email verified for user=%s', token.user.username)
+
+        return Response({
+            'detail': 'Email verified successfully.',
+            'email': token.user.email,
+        })
+
+
+class ResendVerificationEmailView(APIView):
+    """
+    POST /api/auth/resend-verification/
+    Resend the email verification link. Requires authentication.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [AuthEndpointThrottle]
+
+    def post(self, request):
+        profile = getattr(request.user, 'profile', None)
+        if profile and profile.is_email_verified:
+            return Response(
+                {'detail': 'Email is already verified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Invalidate previous unused tokens
+        EmailVerificationToken.objects.filter(
+            user=request.user, used_at__isnull=True,
+        ).update(used_at=timezone.now())
+
+        # Create new token
+        verification_token = EmailVerificationToken.create_for_user(request.user)
+        verify_url = f'{settings.FRONTEND_URL}/verify-email?token={verification_token.token}'
+        send_templated_email(
+            slug='email-verification',
+            recipient=request.user.email,
+            context={
+                'username': request.user.username,
+                'verify_url': verify_url,
+            },
+            fail_silently=False,
+        )
+
+        logger.info('Verification email resent for user=%s', request.user.username)
+
+        return Response({
+            'detail': 'Verification email sent.',
+        })
 
 
 class LoginView(TokenObtainPairView):

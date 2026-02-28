@@ -66,6 +66,8 @@ class Resume(models.Model):
         """
         Deduplicate: if a file with the same SHA-256 already exists for this
         user, return the existing Resume. Otherwise create a new one.
+        If a resume with the same filename but different content exists,
+        create a version history link.
         Returns (resume_instance, created_bool).
         """
         file_hash = cls.compute_hash(uploaded_file)
@@ -73,6 +75,12 @@ class Resume(models.Model):
             existing = cls.objects.get(user=user, file_hash=file_hash)
             return existing, False
         except cls.DoesNotExist:
+            # Check for previous version (same filename, different content)
+            previous = cls.objects.filter(
+                user=user,
+                original_filename=uploaded_file.name,
+            ).order_by('-uploaded_at').first()
+
             resume = cls(
                 user=user,
                 file=uploaded_file,
@@ -81,6 +89,45 @@ class Resume(models.Model):
                 file_size_bytes=uploaded_file.size,
             )
             resume.save()
+
+            # Create version history entry
+            if previous:
+                # Find the latest version number for this lineage
+                prev_version = ResumeVersion.objects.filter(
+                    user=user, resume=previous,
+                ).first()
+                version_num = (prev_version.version_number + 1) if prev_version else 2
+
+                # Get best score from previous resume's analyses
+                prev_best = previous.analyses.filter(
+                    deleted_at__isnull=True, status='done',
+                ).order_by('-ats_score').values_list('ats_score', 'overall_grade').first()
+
+                # Ensure previous resume has a version entry
+                ResumeVersion.objects.get_or_create(
+                    user=user, resume=previous,
+                    defaults={
+                        'version_number': version_num - 1,
+                        'best_ats_score': prev_best[0] if prev_best else None,
+                        'best_grade': prev_best[1] if prev_best else '',
+                    },
+                )
+
+                ResumeVersion.objects.create(
+                    user=user,
+                    resume=resume,
+                    previous_resume=previous,
+                    version_number=version_num,
+                    change_summary=f'Updated version of {uploaded_file.name}',
+                )
+            else:
+                # First version — create initial version entry
+                ResumeVersion.objects.create(
+                    user=user,
+                    resume=resume,
+                    version_number=1,
+                )
+
             return resume, True
 
 
@@ -149,13 +196,43 @@ class LLMResponse(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     error_message = models.TextField(blank=True)
     duration_seconds = models.FloatField(null=True, blank=True)
+
+    # ── Token usage tracking ────────────────────────────────────────────────
+    prompt_tokens = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Number of tokens in the prompt (from API response.usage).',
+    )
+    completion_tokens = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Number of tokens in the completion (from API response.usage).',
+    )
+    total_tokens = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Total tokens used (prompt + completion).',
+    )
+    estimated_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=6, null=True, blank=True,
+        help_text='Estimated cost in USD based on model pricing.',
+    )
+
+    # ── Call context ────────────────────────────────────────────────────────
+    call_purpose = models.CharField(
+        max_length=50, blank=True, default='',
+        help_text='Purpose of this LLM call (analysis, resume_rewrite, job_matching, profile_extraction, job_extraction).',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['call_purpose', '-created_at']),
+        ]
 
     def __str__(self):
-        return f"LLM {self.model_used} | {self.status} | {self.created_at:%Y-%m-%d %H:%M}"
+        tokens = f' {self.total_tokens}tok' if self.total_tokens else ''
+        return f"LLM {self.model_used} | {self.status}{tokens} | {self.created_at:%Y-%m-%d %H:%M}"
 
 
 class ActiveAnalysisManager(models.Manager):
@@ -813,3 +890,202 @@ class Notification(models.Model):
     def __str__(self):
         read_marker = '✓' if self.is_read else '●'
         return f"{read_marker} {self.title[:50]} ({self.user.username})"
+
+
+# ── Resume Version History ───────────────────────────────────────────────────
+
+
+class ResumeVersion(models.Model):
+    """
+    Tracks version history for resumes. Each time a user uploads a new version
+    of a resume (same filename different content), a version entry is created
+    linking old → new. Enables improvement timeline tracking.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resume_versions')
+    resume = models.ForeignKey(
+        Resume, on_delete=models.CASCADE, related_name='versions',
+        help_text='The current resume in this version chain.',
+    )
+    previous_resume = models.ForeignKey(
+        Resume, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='next_versions',
+        help_text='The previous version of this resume (NULL if first version).',
+    )
+    version_number = models.PositiveIntegerField(
+        default=1,
+        help_text='Sequential version number within this resume lineage.',
+    )
+    change_summary = models.CharField(
+        max_length=500, blank=True,
+        help_text='Auto-generated or user-provided summary of changes.',
+    )
+    best_ats_score = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Best ATS score achieved with this resume version.',
+    )
+    best_grade = models.CharField(
+        max_length=2, blank=True,
+        help_text='Best overall grade achieved with this resume version.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-version_number']
+        verbose_name = 'Resume Version'
+        verbose_name_plural = 'Resume Versions'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'resume'],
+                name='unique_version_per_resume',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"v{self.version_number} — {self.resume.original_filename} ({self.user.username})"
+
+
+# ── Interview Prep ───────────────────────────────────────────────────────────
+
+
+class InterviewPrep(models.Model):
+    """
+    AI-generated interview preparation questions customized to a specific
+    analysis (resume + JD combination). Leverages gap analysis to generate
+    likely interview questions.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_PROCESSING = 'processing'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PROCESSING, 'Processing'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    analysis = models.ForeignKey(
+        ResumeAnalysis, on_delete=models.CASCADE,
+        related_name='interview_preps',
+        help_text='The analysis whose findings drive question generation.',
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='interview_preps')
+    llm_response = models.ForeignKey(
+        LLMResponse, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='interview_preps',
+    )
+
+    # Structured output
+    questions = models.JSONField(
+        null=True, blank=True,
+        help_text='Array of question objects: {category, question, why_asked, sample_answer, difficulty}',
+    )
+    tips = models.JSONField(
+        null=True, blank=True,
+        help_text='General interview tips based on the analysis.',
+    )
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    error_message = models.TextField(blank=True)
+    celery_task_id = models.CharField(max_length=255, blank=True)
+    credits_deducted = models.BooleanField(
+        default=False,
+        help_text='Whether credits were deducted. Prevents double-deduction on retry.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Interview Prep'
+        verbose_name_plural = 'Interview Preps'
+        indexes = [
+            models.Index(fields=['analysis', '-created_at']),
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"InterviewPrep for analysis #{self.analysis_id} ({self.status})"
+
+
+# ── Cover Letter ─────────────────────────────────────────────────────────────
+
+
+class CoverLetter(models.Model):
+    """
+    AI-generated cover letter tailored to a specific analysis (resume + JD).
+    Uses analysis findings to create a compelling, personalized cover letter.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_PROCESSING = 'processing'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PROCESSING, 'Processing'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    TONE_PROFESSIONAL = 'professional'
+    TONE_CONVERSATIONAL = 'conversational'
+    TONE_ENTHUSIASTIC = 'enthusiastic'
+    TONE_CHOICES = [
+        (TONE_PROFESSIONAL, 'Professional'),
+        (TONE_CONVERSATIONAL, 'Conversational'),
+        (TONE_ENTHUSIASTIC, 'Enthusiastic'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    analysis = models.ForeignKey(
+        ResumeAnalysis, on_delete=models.CASCADE,
+        related_name='cover_letters',
+        help_text='The analysis whose findings inform the cover letter.',
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cover_letters')
+    llm_response = models.ForeignKey(
+        LLMResponse, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='cover_letters',
+    )
+
+    tone = models.CharField(
+        max_length=20, choices=TONE_CHOICES, default=TONE_PROFESSIONAL,
+        help_text='Desired tone for the cover letter.',
+    )
+    content = models.TextField(
+        blank=True,
+        help_text='The generated cover letter text.',
+    )
+    content_html = models.TextField(
+        blank=True,
+        help_text='HTML-formatted version of the cover letter.',
+    )
+    file = models.FileField(
+        upload_to='cover_letters/', blank=True,
+        help_text='Generated cover letter PDF (stored in R2).',
+    )
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    error_message = models.TextField(blank=True)
+    celery_task_id = models.CharField(max_length=255, blank=True)
+    credits_deducted = models.BooleanField(
+        default=False,
+        help_text='Whether credits were deducted. Prevents double-deduction on retry.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Cover Letter'
+        verbose_name_plural = 'Cover Letters'
+        indexes = [
+            models.Index(fields=['analysis', '-created_at']),
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"CoverLetter for analysis #{self.analysis_id} ({self.tone}, {self.status})"

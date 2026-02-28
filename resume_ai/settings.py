@@ -55,6 +55,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'resume_ai.middleware.RateLimitHeadersMiddleware',
 ]
 
 ROOT_URLCONF = 'resume_ai.urls'
@@ -229,8 +230,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
+        'accounts.throttles.HeaderAwareAnonThrottle',
+        'accounts.throttles.HeaderAwareUserThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': config('ANON_THROTTLE_RATE', default='60/hour'),

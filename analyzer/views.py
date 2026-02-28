@@ -17,7 +17,7 @@ from accounts.services import (
     deduct_credits, refund_credits, check_balance,
     can_use_feature, InsufficientCreditsError,
 )
-from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification
+from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification, ResumeVersion, InterviewPrep, CoverLetter
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
@@ -34,8 +34,14 @@ from .serializers import (
     JobAlertRunSerializer,
     NotificationSerializer,
     NotificationMarkReadSerializer,
+    ResumeVersionSerializer,
+    InterviewPrepSerializer,
+    InterviewPrepCreateSerializer,
+    CoverLetterSerializer,
+    CoverLetterCreateSerializer,
+    BulkAnalysisCreateSerializer,
 )
-from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task
+from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task, generate_interview_prep_task, generate_cover_letter_task
 
 logger = logging.getLogger('analyzer')
 
@@ -1603,4 +1609,450 @@ class SharedAnalysisSummaryView(APIView):
             'scores': analysis.scores,
             'summary': analysis.summary,
         })
+
+
+# ── Resume Version History ───────────────────────────────────────────────────
+
+
+class ResumeVersionHistoryView(APIView):
+    """
+    GET /api/resumes/<uuid:pk>/versions/
+    Returns the version history for a specific resume, including ATS score progression.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        try:
+            resume = Resume.objects.get(id=pk, user=request.user)
+        except Resume.DoesNotExist:
+            return Response(
+                {'detail': 'Resume not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Get the version chain — follow previous_resume links
+        versions = []
+        seen_ids = set()
+        current = resume
+
+        while current and current.id not in seen_ids:
+            seen_ids.add(current.id)
+            version = ResumeVersion.objects.filter(
+                user=request.user, resume=current,
+            ).first()
+
+            # Get best analysis for this version
+            best_analysis = ResumeAnalysis.objects.filter(
+                resume=current, user=request.user,
+                deleted_at__isnull=True, status='done',
+            ).order_by('-ats_score').first()
+
+            # Update best scores on the version entry if needed
+            if version and best_analysis:
+                updated = False
+                if best_analysis.ats_score and (not version.best_ats_score or best_analysis.ats_score > version.best_ats_score):
+                    version.best_ats_score = best_analysis.ats_score
+                    updated = True
+                if best_analysis.overall_grade and (not version.best_grade or best_analysis.overall_grade < version.best_grade):
+                    version.best_grade = best_analysis.overall_grade
+                    updated = True
+                if updated:
+                    version.save(update_fields=['best_ats_score', 'best_grade'])
+
+            if version:
+                versions.append(version)
+
+            # Follow the previous link
+            if version and version.previous_resume:
+                current = version.previous_resume
+            else:
+                break
+
+        serializer = ResumeVersionSerializer(versions, many=True)
+        return Response({
+            'resume_id': str(resume.id),
+            'filename': resume.original_filename,
+            'total_versions': len(versions),
+            'versions': serializer.data,
+        })
+
+
+# ── Bulk Analysis ────────────────────────────────────────────────────────────
+
+
+class BulkAnalyzeView(APIView):
+    """
+    POST /api/analyze/bulk/
+    Analyze one resume against multiple job descriptions (up to 10).
+    Creates separate analysis entries for each JD.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    throttle_classes = [AnalyzeThrottle]
+
+    def post(self, request):
+        serializer = BulkAnalysisCreateSerializer(
+            data=request.data,
+            context={'request': request},
+        )
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        jd_list = serializer.validated_data['job_descriptions']
+        total_count = len(jd_list)
+
+        # ── Plan quota checks ──
+        profile = getattr(request.user, 'profile', None)
+        plan = getattr(profile, 'plan', None) if profile else None
+
+        if plan and plan.analyses_per_month > 0:
+            month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            month_count = ResumeAnalysis.objects.filter(
+                user=request.user, created_at__gte=month_start,
+            ).exclude(status=ResumeAnalysis.STATUS_FAILED).count()
+            remaining = plan.analyses_per_month - month_count
+            if remaining < total_count:
+                return Response(
+                    {
+                        'detail': f'Monthly analysis limit allows only {remaining} more analyses. Requested {total_count}.',
+                        'limit': plan.analyses_per_month,
+                        'used': month_count,
+                        'requested': total_count,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # ── Check total credit balance ──
+        balance = check_balance(request.user)
+        from accounts.models import CreditCost
+        cost_per = CreditCost.objects.filter(action='resume_analysis').first()
+        cost_each = cost_per.cost if cost_per else 1
+        total_cost = cost_each * total_count
+        if balance < total_cost:
+            return Response(
+                {
+                    'detail': f'Insufficient credits for {total_count} analyses.',
+                    'balance': balance,
+                    'total_cost': total_cost,
+                    'cost_per_analysis': cost_each,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        # ── Resolve resume ──
+        resume_file = serializer.validated_data.get('resume_file')
+        resume_id = serializer.validated_data.get('resume_id')
+
+        if resume_id:
+            try:
+                resume_obj = Resume.objects.get(id=resume_id, user=request.user)
+            except Resume.DoesNotExist:
+                return Response(
+                    {'detail': 'Resume not found.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        elif resume_file:
+            resume_obj, _ = Resume.get_or_create_from_upload(request.user, resume_file)
+        else:
+            return Response(
+                {'detail': 'Resume is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Create analyses ──
+        created_analyses = []
+        for jd in jd_list:
+            try:
+                credit_result = deduct_credits(
+                    request.user,
+                    'resume_analysis',
+                    description=f'Bulk analysis: {jd.get("jd_role", "Untitled")}',
+                )
+            except InsufficientCreditsError as e:
+                break
+
+            analysis = ResumeAnalysis.objects.create(
+                user=request.user,
+                resume_file=resume_obj.file.name,
+                resume=resume_obj,
+                jd_input_type=jd.get('jd_input_type', 'text'),
+                jd_text=jd.get('jd_text', ''),
+                jd_url=jd.get('jd_url', ''),
+                jd_role=jd.get('jd_role', ''),
+                jd_company=jd.get('jd_company', ''),
+                jd_skills=jd.get('jd_skills', ''),
+                jd_experience_years=jd.get('jd_experience_years'),
+                jd_industry=jd.get('jd_industry', ''),
+                jd_extra_details=jd.get('jd_extra_details', ''),
+                status=ResumeAnalysis.STATUS_PROCESSING,
+                credits_deducted=True,
+            )
+
+            run_analysis_task.delay(analysis.id, request.user.id)
+            created_analyses.append({
+                'id': analysis.id,
+                'jd_role': analysis.jd_role,
+                'jd_company': analysis.jd_company,
+                'status': analysis.status,
+                'credits_used': credit_result['cost'],
+            })
+
+        return Response({
+            'total_requested': total_count,
+            'total_created': len(created_analyses),
+            'analyses': created_analyses,
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+# ── Interview Prep ───────────────────────────────────────────────────────────
+
+
+class InterviewPrepView(APIView):
+    """
+    POST /api/analyses/<id>/interview-prep/  — Generate interview prep (1 credit)
+    GET  /api/analyses/<id>/interview-prep/  — Get latest interview prep status
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def get(self, request, pk):
+        """Return the latest interview prep for this analysis."""
+        prep = InterviewPrep.objects.filter(
+            analysis_id=pk, user=request.user,
+        ).order_by('-created_at').first()
+
+        if not prep:
+            return Response(
+                {'detail': 'No interview prep found for this analysis.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(InterviewPrepSerializer(prep).data)
+
+    def post(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.select_related('resume').get(
+                id=pk, user=request.user,
+            )
+        except ResumeAnalysis.DoesNotExist:
+            return Response(
+                {'detail': 'Analysis not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if analysis.status != ResumeAnalysis.STATUS_DONE:
+            return Response(
+                {'detail': 'Analysis must be complete before generating interview prep.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check for existing pending/processing
+        existing = InterviewPrep.objects.filter(
+            analysis=analysis,
+            status__in=[InterviewPrep.STATUS_PENDING, InterviewPrep.STATUS_PROCESSING],
+        ).first()
+        if existing:
+            return Response(
+                InterviewPrepSerializer(existing).data,
+                status=status.HTTP_200_OK,
+            )
+
+        # Deduct credits
+        try:
+            credit_result = deduct_credits(
+                request.user,
+                'interview_prep',
+                description=f'Interview prep for analysis #{analysis.id}',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {
+                    'detail': 'Insufficient credits.',
+                    'balance': e.balance,
+                    'cost': e.cost,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        prep = InterviewPrep.objects.create(
+            analysis=analysis,
+            user=request.user,
+            status=InterviewPrep.STATUS_PROCESSING,
+            credits_deducted=True,
+        )
+
+        generate_interview_prep_task.delay(str(prep.id), request.user.id)
+
+        return Response({
+            'id': str(prep.id),
+            'status': prep.status,
+            'credits_used': credit_result['cost'],
+            'balance': credit_result['balance_after'],
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+class InterviewPrepStatusView(APIView):
+    """
+    GET /api/analyses/<id>/interview-prep/
+    Get the latest interview prep for an analysis.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        prep = InterviewPrep.objects.filter(
+            analysis_id=pk, user=request.user,
+        ).order_by('-created_at').first()
+
+        if not prep:
+            return Response(
+                {'detail': 'No interview prep found for this analysis.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(InterviewPrepSerializer(prep).data)
+
+
+class InterviewPrepListView(ListAPIView):
+    """
+    GET /api/interview-preps/
+    List all interview preps for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+    serializer_class = InterviewPrepSerializer
+
+    def get_queryset(self):
+        return InterviewPrep.objects.filter(user=self.request.user)
+
+
+# ── Cover Letter ─────────────────────────────────────────────────────────────
+
+
+class CoverLetterView(APIView):
+    """
+    POST /api/analyses/<id>/cover-letter/  — Generate cover letter (1 credit)
+    GET  /api/analyses/<id>/cover-letter/  — Get latest cover letter status
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def get(self, request, pk):
+        """Return the latest cover letter for this analysis."""
+        cover_letter = CoverLetter.objects.filter(
+            analysis_id=pk, user=request.user,
+        ).order_by('-created_at').first()
+
+        if not cover_letter:
+            return Response(
+                {'detail': 'No cover letter found for this analysis.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(CoverLetterSerializer(cover_letter).data)
+
+    def post(self, request, pk):
+        try:
+            analysis = ResumeAnalysis.objects.select_related('resume').get(
+                id=pk, user=request.user,
+            )
+        except ResumeAnalysis.DoesNotExist:
+            return Response(
+                {'detail': 'Analysis not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if analysis.status != ResumeAnalysis.STATUS_DONE:
+            return Response(
+                {'detail': 'Analysis must be complete before generating a cover letter.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = CoverLetterCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        tone = serializer.validated_data.get('tone', 'professional')
+
+        # Check for existing pending/processing
+        existing = CoverLetter.objects.filter(
+            analysis=analysis, tone=tone,
+            status__in=[CoverLetter.STATUS_PENDING, CoverLetter.STATUS_PROCESSING],
+        ).first()
+        if existing:
+            return Response(
+                CoverLetterSerializer(existing).data,
+                status=status.HTTP_200_OK,
+            )
+
+        # Deduct credits
+        try:
+            credit_result = deduct_credits(
+                request.user,
+                'cover_letter',
+                description=f'Cover letter for analysis #{analysis.id}',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {
+                    'detail': 'Insufficient credits.',
+                    'balance': e.balance,
+                    'cost': e.cost,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        cover_letter = CoverLetter.objects.create(
+            analysis=analysis,
+            user=request.user,
+            tone=tone,
+            status=CoverLetter.STATUS_PROCESSING,
+            credits_deducted=True,
+        )
+
+        generate_cover_letter_task.delay(str(cover_letter.id), request.user.id)
+
+        return Response({
+            'id': str(cover_letter.id),
+            'status': cover_letter.status,
+            'tone': tone,
+            'credits_used': credit_result['cost'],
+            'balance': credit_result['balance_after'],
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+class CoverLetterStatusView(APIView):
+    """
+    GET /api/analyses/<id>/cover-letter/
+    Get the latest cover letter for an analysis.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        cover_letter = CoverLetter.objects.filter(
+            analysis_id=pk, user=request.user,
+        ).order_by('-created_at').first()
+
+        if not cover_letter:
+            return Response(
+                {'detail': 'No cover letter found for this analysis.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(CoverLetterSerializer(cover_letter).data)
+
+
+class CoverLetterListView(ListAPIView):
+    """
+    GET /api/cover-letters/
+    List all cover letters for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+    serializer_class = CoverLetterSerializer
+
+    def get_queryset(self):
+        return CoverLetter.objects.filter(user=self.request.user)
 

@@ -141,6 +141,7 @@ class UserSerializer(serializers.ModelSerializer):
     marketing_opt_in = serializers.BooleanField(source='profile.marketing_opt_in', read_only=True)
     auth_provider = serializers.CharField(source='profile.auth_provider', read_only=True)
     avatar_url = serializers.URLField(source='profile.avatar_url', read_only=True)
+    is_email_verified = serializers.BooleanField(source='profile.is_email_verified', read_only=True)
     website_url = serializers.URLField(source='profile.website_url', read_only=True)
     github_url = serializers.URLField(source='profile.github_url', read_only=True)
     linkedin_url = serializers.URLField(source='profile.linkedin_url', read_only=True)
@@ -152,7 +153,7 @@ class UserSerializer(serializers.ModelSerializer):
             'country_code', 'mobile_number',
             'plan', 'wallet', 'plan_valid_until', 'pending_plan',
             'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
-            'auth_provider', 'avatar_url',
+            'auth_provider', 'avatar_url', 'is_email_verified',
             'website_url', 'github_url', 'linkedin_url',
         )
 

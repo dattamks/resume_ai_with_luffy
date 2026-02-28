@@ -1272,3 +1272,233 @@ def send_weekly_digest_task():
             logger.debug('Weekly digest skipped for user_id=%s', user_id)
 
     logger.info('Weekly digest sent to %d users', sent_count)
+
+
+# ── Interview Prep Generation ────────────────────────────────────────────────
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    acks_late=True,
+)
+def generate_interview_prep_task(self, prep_id, user_id):
+    """
+    Generate AI-powered interview preparation questions from analysis findings.
+
+    Pipeline:
+    1. Build prompt from the linked ResumeAnalysis data
+    2. Call LLM for structured interview questions + tips
+    3. Save parsed output to InterviewPrep record
+    """
+    from .models import InterviewPrep, LLMResponse
+    from .services.interview_prep import build_interview_prep_prompt, call_llm_for_interview_prep
+
+    logger.info('Interview prep task started: prep_id=%s user_id=%s', prep_id, user_id)
+
+    try:
+        prep = InterviewPrep.objects.select_related('analysis').get(id=prep_id)
+    except InterviewPrep.DoesNotExist:
+        logger.error('InterviewPrep %s not found — aborting', prep_id)
+        return
+
+    # Mark as processing
+    prep.status = InterviewPrep.STATUS_PROCESSING
+    prep.celery_task_id = self.request.id or ''
+    prep.save(update_fields=['status', 'celery_task_id'])
+
+    try:
+        # Step 1: Build prompt
+        prompt = build_interview_prep_prompt(prep.analysis)
+
+        # Step 2: Call LLM
+        result = call_llm_for_interview_prep(prompt)
+
+        # Step 3: Save LLM response record
+        usage = result.get('usage', {})
+        llm_record = LLMResponse.objects.create(
+            user_id=user_id,
+            prompt_sent=result['prompt'],
+            raw_response=result['raw'],
+            parsed_response=result['parsed'],
+            model_used=result['model'],
+            status=LLMResponse.STATUS_DONE,
+            duration_seconds=result['duration'],
+            call_purpose='interview_prep',
+            prompt_tokens=usage.get('prompt_tokens'),
+            completion_tokens=usage.get('completion_tokens'),
+            total_tokens=usage.get('total_tokens'),
+        )
+
+        # Step 4: Save results to InterviewPrep
+        parsed = result['parsed']
+        prep.llm_response = llm_record
+        prep.questions = parsed.get('questions', [])
+        prep.tips = parsed.get('tips', [])
+        prep.status = InterviewPrep.STATUS_DONE
+        prep.save(update_fields=[
+            'llm_response', 'questions', 'tips', 'status',
+        ])
+
+        logger.info(
+            'Interview prep generated: id=%s analysis=%s questions=%d (%.2fs LLM)',
+            prep.id, prep.analysis_id, len(prep.questions or []), result['duration'],
+        )
+
+    except ValueError as exc:
+        logger.warning('Interview prep failed: id=%s error=%s', prep.id, exc)
+        prep.status = InterviewPrep.STATUS_FAILED
+        prep.error_message = str(exc)
+        prep.save(update_fields=['status', 'error_message'])
+        _refund_interview_prep_credits(prep)
+
+    except Exception as exc:
+        logger.exception('Unexpected error in interview prep: id=%s', prep.id)
+        prep.status = InterviewPrep.STATUS_FAILED
+        prep.error_message = str(exc)
+        prep.save(update_fields=['status', 'error_message'])
+        _refund_interview_prep_credits(prep)
+        if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+
+
+def _refund_interview_prep_credits(prep):
+    """Refund credits for a failed interview prep generation."""
+    try:
+        prep.refresh_from_db()
+        if not prep.credits_deducted:
+            return
+
+        from accounts.services import refund_credits
+        from django.contrib.auth.models import User
+
+        user = User.objects.get(id=prep.user_id)
+        refund_credits(
+            user,
+            'interview_prep',
+            description=f'Refund: interview prep #{prep.id} failed',
+            reference_id=str(prep.id),
+        )
+
+        prep.credits_deducted = False
+        prep.save(update_fields=['credits_deducted'])
+        logger.info('Credits refunded for failed interview prep id=%s', prep.id)
+    except Exception:
+        logger.exception('Failed to refund credits for interview prep id=%s', prep.id)
+
+
+# ── Cover Letter Generation ─────────────────────────────────────────────────
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    acks_late=True,
+)
+def generate_cover_letter_task(self, cover_letter_id, user_id):
+    """
+    Generate an AI-powered cover letter from analysis findings.
+
+    Pipeline:
+    1. Build prompt from the linked ResumeAnalysis data + tone preference
+    2. Call LLM for structured cover letter content
+    3. Save parsed output to CoverLetter record
+    """
+    from .models import CoverLetter, LLMResponse
+    from .services.cover_letter import build_cover_letter_prompt, call_llm_for_cover_letter
+
+    logger.info('Cover letter task started: cover_letter_id=%s user_id=%s', cover_letter_id, user_id)
+
+    try:
+        cl = CoverLetter.objects.select_related('analysis').get(id=cover_letter_id)
+    except CoverLetter.DoesNotExist:
+        logger.error('CoverLetter %s not found — aborting', cover_letter_id)
+        return
+
+    # Mark as processing
+    cl.status = CoverLetter.STATUS_PROCESSING
+    cl.celery_task_id = self.request.id or ''
+    cl.save(update_fields=['status', 'celery_task_id'])
+
+    try:
+        # Step 1: Build prompt
+        prompt = build_cover_letter_prompt(cl.analysis, tone=cl.tone)
+
+        # Step 2: Call LLM
+        result = call_llm_for_cover_letter(prompt)
+
+        # Step 3: Save LLM response record
+        usage = result.get('usage', {})
+        llm_record = LLMResponse.objects.create(
+            user_id=user_id,
+            prompt_sent=result['prompt'],
+            raw_response=result['raw'],
+            parsed_response=result['parsed'],
+            model_used=result['model'],
+            status=LLMResponse.STATUS_DONE,
+            duration_seconds=result['duration'],
+            call_purpose='cover_letter',
+            prompt_tokens=usage.get('prompt_tokens'),
+            completion_tokens=usage.get('completion_tokens'),
+            total_tokens=usage.get('total_tokens'),
+        )
+
+        # Step 4: Save results to CoverLetter
+        parsed = result['parsed']
+        cl.llm_response = llm_record
+        cl.content = parsed.get('full_text', '')
+        cl.content_html = parsed.get('full_html', '')
+        cl.status = CoverLetter.STATUS_DONE
+        cl.save(update_fields=[
+            'llm_response', 'content', 'content_html', 'status',
+        ])
+
+        logger.info(
+            'Cover letter generated: id=%s analysis=%s tone=%s (%.2fs LLM)',
+            cl.id, cl.analysis_id, cl.tone, result['duration'],
+        )
+
+    except ValueError as exc:
+        logger.warning('Cover letter failed: id=%s error=%s', cl.id, exc)
+        cl.status = CoverLetter.STATUS_FAILED
+        cl.error_message = str(exc)
+        cl.save(update_fields=['status', 'error_message'])
+        _refund_cover_letter_credits(cl)
+
+    except Exception as exc:
+        logger.exception('Unexpected error in cover letter: id=%s', cl.id)
+        cl.status = CoverLetter.STATUS_FAILED
+        cl.error_message = str(exc)
+        cl.save(update_fields=['status', 'error_message'])
+        _refund_cover_letter_credits(cl)
+        if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+
+
+def _refund_cover_letter_credits(cl):
+    """Refund credits for a failed cover letter generation."""
+    try:
+        cl.refresh_from_db()
+        if not cl.credits_deducted:
+            return
+
+        from accounts.services import refund_credits
+        from django.contrib.auth.models import User
+
+        user = User.objects.get(id=cl.user_id)
+        refund_credits(
+            user,
+            'cover_letter',
+            description=f'Refund: cover letter #{cl.id} failed',
+            reference_id=str(cl.id),
+        )
+
+        cl.credits_deducted = False
+        cl.save(update_fields=['credits_deducted'])
+        logger.info('Credits refunded for failed cover letter id=%s', cl.id)
+    except Exception:
+        logger.exception('Failed to refund credits for cover letter id=%s', cl.id)

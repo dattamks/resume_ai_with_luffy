@@ -25,6 +25,16 @@ CREDIT_COSTS = [
         'cost': 1,
         'description': 'Cost per job alert discovery + matching run (automated or manual).',
     },
+    {
+        'action': 'interview_prep',
+        'cost': 1,
+        'description': 'Cost per AI-generated interview preparation from analysis.',
+    },
+    {
+        'action': 'cover_letter',
+        'cost': 1,
+        'description': 'Cost per AI-generated cover letter from analysis.',
+    },
 ]
 
 

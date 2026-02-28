@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume
+from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume, ResumeVersion, InterviewPrep, CoverLetter
 
 
 @admin.register(Resume)
@@ -37,9 +37,10 @@ class ScrapeResultAdmin(admin.ModelAdmin):
 
 @admin.register(LLMResponse)
 class LLMResponseAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'model_used', 'status', 'duration_seconds', 'created_at')
-    list_filter = ('status', 'model_used')
-    search_fields = ('model_used',)
+    list_display = ('id', 'user', 'model_used', 'call_purpose', 'status', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost_usd', 'duration_seconds', 'created_at')
+    list_filter = ('status', 'model_used', 'call_purpose')
+    search_fields = ('model_used', 'call_purpose')
+    readonly_fields = ('id', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost_usd', 'created_at')
 
 
 @admin.register(GeneratedResume)
@@ -140,4 +141,34 @@ class NotificationAdmin(admin.ModelAdmin):
     @admin.display(description='Title')
     def title_short(self, obj):
         return obj.title[:60]
+
+
+# ── New Feature Models ───────────────────────────────────────────────────────
+
+
+@admin.register(ResumeVersion)
+class ResumeVersionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'resume', 'version_number', 'change_summary', 'created_at')
+    list_filter = ('version_number',)
+    search_fields = ('resume__user__username', 'resume__original_filename', 'change_summary')
+    readonly_fields = ('id', 'created_at')
+    raw_id_fields = ('resume', 'previous_resume')
+
+
+@admin.register(InterviewPrep)
+class InterviewPrepAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'analysis', 'status', 'credits_deducted', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('user__username',)
+    readonly_fields = ('id', 'questions', 'tips', 'created_at')
+    raw_id_fields = ('user', 'analysis', 'llm_response')
+
+
+@admin.register(CoverLetter)
+class CoverLetterAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'analysis', 'tone', 'status', 'credits_deducted', 'created_at')
+    list_filter = ('status', 'tone')
+    search_fields = ('user__username',)
+    readonly_fields = ('id', 'content', 'content_html', 'created_at')
+    raw_id_fields = ('user', 'analysis', 'llm_response')
 
