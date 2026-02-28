@@ -131,7 +131,7 @@ class RegisterView(APIView):
 
 class VerifyEmailView(APIView):
     """
-    POST /api/auth/verify-email/
+    POST /api/v1/auth/verify-email/
     Verify a user's email address using the token sent during registration.
     """
     permission_classes = [AllowAny]
@@ -191,7 +191,7 @@ class VerifyEmailView(APIView):
 
 class ResendVerificationEmailView(APIView):
     """
-    POST /api/auth/resend-verification/
+    POST /api/v1/auth/resend-verification/
     Resend the email verification link. Requires authentication.
     """
     permission_classes = [IsAuthenticated]
@@ -252,7 +252,7 @@ class LogoutView(APIView):
 
 class LogoutAllDevicesView(APIView):
     """
-    POST /api/auth/logout-all/
+    POST /api/v1/auth/logout-all/
     Invalidate all active JWT sessions for the authenticated user.
     Blacklists all outstanding tokens at once.
     """
@@ -289,9 +289,9 @@ class LogoutAllDevicesView(APIView):
 
 class MeView(APIView):
     """
-    GET    /api/auth/me/  — Return current user profile.
-    PUT    /api/auth/me/  — Update username and/or email.
-    DELETE /api/auth/me/  — Permanently delete account and all associated data.
+    GET    /api/v1/auth/me/  — Return current user profile.
+    PUT    /api/v1/auth/me/  — Update username and/or email.
+    DELETE /api/v1/auth/me/  — Permanently delete account and all associated data.
     """
     permission_classes = [IsAuthenticated]
 
@@ -353,7 +353,7 @@ class MeView(APIView):
 
 class ChangePasswordView(APIView):
     """
-    POST /api/auth/change-password/
+    POST /api/v1/auth/change-password/
     Change the authenticated user's password.
     """
     permission_classes = [IsAuthenticated]
@@ -397,8 +397,8 @@ class ChangePasswordView(APIView):
 
 class NotificationPreferenceView(APIView):
     """
-    GET  /api/auth/notifications/  — Return current notification preferences.
-    PUT  /api/auth/notifications/  — Update notification preferences (partial).
+    GET  /api/v1/auth/notifications/  — Return current notification preferences.
+    PUT  /api/v1/auth/notifications/  — Update notification preferences (partial).
     """
     permission_classes = [IsAuthenticated]
 
@@ -419,7 +419,7 @@ class NotificationPreferenceView(APIView):
 
 class ForgotPasswordView(APIView):
     """
-    POST /api/auth/forgot-password/
+    POST /api/v1/auth/forgot-password/
     Sends a password reset email with uid + token.
     Always returns 200 regardless of whether the email exists (security).
     """
@@ -472,7 +472,7 @@ class ForgotPasswordView(APIView):
 
 class ResetPasswordView(APIView):
     """
-    POST /api/auth/reset-password/
+    POST /api/v1/auth/reset-password/
     Validates uid + token from the reset email and sets a new password.
     """
     permission_classes = [AllowAny]
@@ -491,7 +491,7 @@ class ResetPasswordView(APIView):
 
 class WalletView(APIView):
     """
-    GET /api/auth/wallet/
+    GET /api/v1/auth/wallet/
     Return wallet balance, plan credits info, and top-up availability.
     """
     permission_classes = [IsAuthenticated]
@@ -517,7 +517,7 @@ class WalletView(APIView):
 
 class WalletTransactionListView(APIView):
     """
-    GET /api/auth/wallet/transactions/
+    GET /api/v1/auth/wallet/transactions/
     Paginated transaction history for the authenticated user.
     """
     permission_classes = [IsAuthenticated]
@@ -538,12 +538,12 @@ class WalletTransactionListView(APIView):
 
 class WalletTopUpView(APIView):
     """
-    POST /api/auth/wallet/topup/
+    POST /api/v1/auth/wallet/topup/
     Buy credit packs. Pro users only.
     Body: { "quantity": 3 }  (default: 1)
 
     DEPRECATED: This endpoint now redirects to the Razorpay payment flow.
-    Use POST /api/auth/payments/topup/ to create a paid order instead.
+    Use POST /api/v1/auth/payments/topup/ to create a paid order instead.
     """
     permission_classes = [IsAuthenticated]
 
@@ -551,8 +551,8 @@ class WalletTopUpView(APIView):
         return Response(
             {
                 'detail': 'Credit top-ups require payment. '
-                           'Use POST /api/auth/payments/topup/ instead.',
-                'payment_url': '/api/auth/payments/topup/',
+                           'Use POST /api/v1/auth/payments/topup/ instead.',
+                'payment_url': '/api/v1/auth/payments/topup/',
             },
             status=status.HTTP_402_PAYMENT_REQUIRED,
         )
@@ -560,7 +560,7 @@ class WalletTopUpView(APIView):
 
 class PlanListView(APIView):
     """
-    GET /api/auth/plans/
+    GET /api/v1/auth/plans/
     List all active plans. Public endpoint.
     """
     permission_classes = [AllowAny]
@@ -573,11 +573,11 @@ class PlanListView(APIView):
 
 class PlanSubscribeView(APIView):
     """
-    POST /api/auth/plans/subscribe/
+    POST /api/v1/auth/plans/subscribe/
     Switch to a different plan.
     Body: { "plan_slug": "pro" }
 
-    NOTE: Upgrading to a paid plan requires payment via /api/auth/payments/subscribe/.
+    NOTE: Upgrading to a paid plan requires payment via /api/v1/auth/payments/subscribe/.
     This endpoint only allows downgrade to free plan (or same-plan no-op).
     """
     permission_classes = [IsAuthenticated]
@@ -606,8 +606,8 @@ class PlanSubscribeView(APIView):
             return Response(
                 {
                     'detail': 'Upgrading to a paid plan requires payment. '
-                              'Use POST /api/auth/payments/subscribe/ instead.',
-                    'payment_url': '/api/auth/payments/subscribe/',
+                              'Use POST /api/v1/auth/payments/subscribe/ instead.',
+                    'payment_url': '/api/v1/auth/payments/subscribe/',
                 },
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
@@ -661,7 +661,7 @@ def _verify_temp_token(token: str) -> dict | None:
 
 class GoogleLoginView(APIView):
     """
-    POST /api/auth/google/ — Authenticate with Google.
+    POST /api/v1/auth/google/ — Authenticate with Google.
 
     Receives a Google ID token (from Google Sign-In / One Tap on the frontend),
     verifies it, and either:
@@ -790,7 +790,7 @@ class GoogleLoginView(APIView):
 
 class GoogleCompleteView(APIView):
     """
-    POST /api/auth/google/complete/ — Complete Google sign-up.
+    POST /api/v1/auth/google/complete/ — Complete Google sign-up.
 
     For new Google users: accepts the temp_token, chosen username, password,
     and consent checkboxes. Creates the account and returns JWT tokens.
@@ -916,7 +916,7 @@ class GoogleCompleteView(APIView):
 
 class WalletTransactionExportView(APIView):
     """
-    GET /api/auth/wallet/transactions/export/
+    GET /api/v1/auth/wallet/transactions/export/
     Export all wallet transactions as a CSV file.
     """
     permission_classes = [IsAuthenticated]
@@ -954,11 +954,11 @@ class WalletTransactionExportView(APIView):
 
 class AvatarUploadView(APIView):
     """
-    POST /api/auth/avatar/
+    POST /api/v1/auth/avatar/
     Upload a profile picture (JPEG/PNG, max 2 MB).
     Stores the file in R2 and updates avatar_url on the user profile.
 
-    DELETE /api/auth/avatar/
+    DELETE /api/v1/auth/avatar/
     Remove the current avatar.
     """
     permission_classes = [IsAuthenticated]

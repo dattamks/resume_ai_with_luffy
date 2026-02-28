@@ -54,7 +54,7 @@ class PaymentTestMixin:
         self._login()
 
     def _login(self):
-        resp = self.client.post('/api/auth/login/', {
+        resp = self.client.post('/api/v1/auth/login/', {
             'username': 'paytest', 'password': 'StrongPass123!'
         }, format='json')
         self.access = resp.data['access']
@@ -150,7 +150,7 @@ class CreateSubscriptionViewTests(PaymentTestMixin, TestCase):
         }
         mock_client.return_value = mock_rz
 
-        resp = self.client.post('/api/auth/payments/subscribe/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/', {
             'plan_slug': 'pro',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
@@ -167,20 +167,20 @@ class CreateSubscriptionViewTests(PaymentTestMixin, TestCase):
         ).exists())
 
     def test_create_subscription_free_plan_rejected(self):
-        resp = self.client.post('/api/auth/payments/subscribe/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/', {
             'plan_slug': 'free',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('free plan', resp.data['detail'].lower())
 
     def test_create_subscription_invalid_plan(self):
-        resp = self.client.post('/api/auth/payments/subscribe/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/', {
             'plan_slug': 'nonexistent',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_subscription_no_plan_slug(self):
-        resp = self.client.post('/api/auth/payments/subscribe/', {}, format='json')
+        resp = self.client.post('/api/v1/auth/payments/subscribe/', {}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     @patch('accounts.razorpay_service._get_client')
@@ -194,7 +194,7 @@ class CreateSubscriptionViewTests(PaymentTestMixin, TestCase):
             status=RazorpaySubscription.STATUS_ACTIVE,
         )
 
-        resp = self.client.post('/api/auth/payments/subscribe/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/', {
             'plan_slug': 'pro',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -202,7 +202,7 @@ class CreateSubscriptionViewTests(PaymentTestMixin, TestCase):
 
     def test_create_subscription_unauthenticated(self):
         self.client.credentials()  # Remove auth
-        resp = self.client.post('/api/auth/payments/subscribe/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/', {
             'plan_slug': 'pro',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -234,7 +234,7 @@ class VerifySubscriptionViewTests(PaymentTestMixin, TestCase):
         sub_id = 'sub_verify_test'
         sig = self._make_signature(f'{payment_id}|{sub_id}')
 
-        resp = self.client.post('/api/auth/payments/subscribe/verify/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/verify/', {
             'razorpay_subscription_id': sub_id,
             'razorpay_payment_id': payment_id,
             'razorpay_signature': sig,
@@ -251,7 +251,7 @@ class VerifySubscriptionViewTests(PaymentTestMixin, TestCase):
         self.assertEqual(self.user.profile.plan.slug, 'pro')
 
     def test_verify_subscription_invalid_signature(self):
-        resp = self.client.post('/api/auth/payments/subscribe/verify/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/verify/', {
             'razorpay_subscription_id': 'sub_verify_test',
             'razorpay_payment_id': 'pay_fake',
             'razorpay_signature': 'invalid_signature',
@@ -260,7 +260,7 @@ class VerifySubscriptionViewTests(PaymentTestMixin, TestCase):
         self.assertIn('signature', resp.data['detail'].lower())
 
     def test_verify_subscription_missing_fields(self):
-        resp = self.client.post('/api/auth/payments/subscribe/verify/', {
+        resp = self.client.post('/api/v1/auth/payments/subscribe/verify/', {
             'razorpay_subscription_id': 'sub_verify_test',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -272,7 +272,7 @@ class VerifySubscriptionViewTests(PaymentTestMixin, TestCase):
         sig = self._make_signature(f'{payment_id}|{sub_id}')
 
         # First verify
-        resp1 = self.client.post('/api/auth/payments/subscribe/verify/', {
+        resp1 = self.client.post('/api/v1/auth/payments/subscribe/verify/', {
             'razorpay_subscription_id': sub_id,
             'razorpay_payment_id': payment_id,
             'razorpay_signature': sig,
@@ -280,7 +280,7 @@ class VerifySubscriptionViewTests(PaymentTestMixin, TestCase):
         self.assertEqual(resp1.data['status'], 'activated')
 
         # Second verify — should be idempotent
-        resp2 = self.client.post('/api/auth/payments/subscribe/verify/', {
+        resp2 = self.client.post('/api/v1/auth/payments/subscribe/verify/', {
             'razorpay_subscription_id': sub_id,
             'razorpay_payment_id': payment_id,
             'razorpay_signature': sig,
@@ -312,12 +312,12 @@ class CancelSubscriptionViewTests(PaymentTestMixin, TestCase):
         self.user.profile.plan_valid_until = timezone.now() + timezone.timedelta(days=15)
         self.user.profile.save()
 
-        resp = self.client.post('/api/auth/payments/subscribe/cancel/', format='json')
+        resp = self.client.post('/api/v1/auth/payments/subscribe/cancel/', format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['status'], 'cancelled')
 
     def test_cancel_subscription_no_active(self):
-        resp = self.client.post('/api/auth/payments/subscribe/cancel/', format='json')
+        resp = self.client.post('/api/v1/auth/payments/subscribe/cancel/', format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('no active', resp.data['detail'].lower())
 
@@ -326,7 +326,7 @@ class SubscriptionStatusViewTests(PaymentTestMixin, TestCase):
     """Tests for GET /api/auth/payments/subscribe/status/"""
 
     def test_status_no_subscription(self):
-        resp = self.client.get('/api/auth/payments/subscribe/status/')
+        resp = self.client.get('/api/v1/auth/payments/subscribe/status/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertFalse(resp.data['has_subscription'])
         self.assertFalse(resp.data['is_active'])
@@ -339,7 +339,7 @@ class SubscriptionStatusViewTests(PaymentTestMixin, TestCase):
             razorpay_plan_id='plan_pro_monthly',
             status=RazorpaySubscription.STATUS_ACTIVE,
         )
-        resp = self.client.get('/api/auth/payments/subscribe/status/')
+        resp = self.client.get('/api/v1/auth/payments/subscribe/status/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(resp.data['has_subscription'])
         self.assertTrue(resp.data['is_active'])
@@ -363,7 +363,7 @@ class CreateTopUpOrderViewTests(PaymentTestMixin, TestCase):
         self.user.profile.plan = self.pro_plan
         self.user.profile.save()
 
-        resp = self.client.post('/api/auth/payments/topup/', {
+        resp = self.client.post('/api/v1/auth/payments/topup/', {
             'quantity': 2,
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
@@ -374,7 +374,7 @@ class CreateTopUpOrderViewTests(PaymentTestMixin, TestCase):
 
     def test_topup_free_plan_rejected(self):
         """Free plan users cannot top up."""
-        resp = self.client.post('/api/auth/payments/topup/', {
+        resp = self.client.post('/api/v1/auth/payments/topup/', {
             'quantity': 1,
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -384,7 +384,7 @@ class CreateTopUpOrderViewTests(PaymentTestMixin, TestCase):
         self.user.profile.plan = self.pro_plan
         self.user.profile.save()
 
-        resp = self.client.post('/api/auth/payments/topup/', {
+        resp = self.client.post('/api/v1/auth/payments/topup/', {
             'quantity': 0,
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -403,7 +403,7 @@ class CreateTopUpOrderViewTests(PaymentTestMixin, TestCase):
             }
             mock_client.return_value = mock_rz
 
-            resp = self.client.post('/api/auth/payments/topup/', {}, format='json')
+            resp = self.client.post('/api/v1/auth/payments/topup/', {}, format='json')
             self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
             self.assertEqual(resp.data['quantity'], 1)
             self.assertEqual(resp.data['credits'], 5)
@@ -435,7 +435,7 @@ class VerifyTopUpViewTests(PaymentTestMixin, TestCase):
 
         wallet_before = Wallet.objects.get(user=self.user).balance
 
-        resp = self.client.post('/api/auth/payments/topup/verify/', {
+        resp = self.client.post('/api/v1/auth/payments/topup/verify/', {
             'razorpay_order_id': order_id,
             'razorpay_payment_id': payment_id,
             'razorpay_signature': sig,
@@ -458,7 +458,7 @@ class VerifyTopUpViewTests(PaymentTestMixin, TestCase):
         self.assertEqual(tx.amount, 5)
 
     def test_verify_topup_invalid_signature(self):
-        resp = self.client.post('/api/auth/payments/topup/verify/', {
+        resp = self.client.post('/api/v1/auth/payments/topup/verify/', {
             'razorpay_order_id': 'order_verify_topup',
             'razorpay_payment_id': 'pay_fake',
             'razorpay_signature': 'bad_sig',
@@ -471,7 +471,7 @@ class VerifyTopUpViewTests(PaymentTestMixin, TestCase):
         order_id = 'order_verify_topup'
         sig = self._make_signature(f'{order_id}|{payment_id}')
 
-        resp1 = self.client.post('/api/auth/payments/topup/verify/', {
+        resp1 = self.client.post('/api/v1/auth/payments/topup/verify/', {
             'razorpay_order_id': order_id,
             'razorpay_payment_id': payment_id,
             'razorpay_signature': sig,
@@ -480,7 +480,7 @@ class VerifyTopUpViewTests(PaymentTestMixin, TestCase):
 
         balance_after_first = resp1.data['balance']
 
-        resp2 = self.client.post('/api/auth/payments/topup/verify/', {
+        resp2 = self.client.post('/api/v1/auth/payments/topup/verify/', {
             'razorpay_order_id': order_id,
             'razorpay_payment_id': payment_id,
             'razorpay_signature': sig,
@@ -503,7 +503,7 @@ class WebhookViewTests(PaymentTestMixin, TestCase):
             signature = self._make_webhook_signature(body_bytes)
 
         return self.client.post(
-            '/api/auth/payments/webhook/',
+            '/api/v1/auth/payments/webhook/',
             body,
             content_type='application/json',
             HTTP_X_RAZORPAY_SIGNATURE=signature,
@@ -515,7 +515,7 @@ class WebhookViewTests(PaymentTestMixin, TestCase):
         self.client.credentials()  # Clear auth header
 
         resp = self.client.post(
-            '/api/auth/payments/webhook/',
+            '/api/v1/auth/payments/webhook/',
             json.dumps({'event': 'test', 'payload': {}}),
             content_type='application/json',
         )
@@ -525,7 +525,7 @@ class WebhookViewTests(PaymentTestMixin, TestCase):
         self.client.credentials()
 
         resp = self.client.post(
-            '/api/auth/payments/webhook/',
+            '/api/v1/auth/payments/webhook/',
             json.dumps({'event': 'test', 'payload': {}}),
             content_type='application/json',
             HTTP_X_RAZORPAY_SIGNATURE='invalid',
@@ -633,7 +633,7 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
     """Tests for GET /api/auth/payments/history/"""
 
     def test_empty_history(self):
-        resp = self.client.get('/api/auth/payments/history/')
+        resp = self.client.get('/api/v1/auth/payments/history/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 0)
         self.assertEqual(resp.data['results'], [])
@@ -654,13 +654,13 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
             status=RazorpayPayment.STATUS_CAPTURED,
         )
 
-        resp = self.client.get('/api/auth/payments/history/')
+        resp = self.client.get('/api/v1/auth/payments/history/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 2)
 
     def test_history_unauthenticated(self):
         self.client.credentials()
-        resp = self.client.get('/api/auth/payments/history/')
+        resp = self.client.get('/api/v1/auth/payments/history/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_history_pagination(self):
@@ -672,13 +672,13 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
                 amount=4900,
             )
 
-        resp = self.client.get('/api/auth/payments/history/')
+        resp = self.client.get('/api/v1/auth/payments/history/')
         self.assertEqual(resp.data['count'], 25)
         self.assertEqual(len(resp.data['results']), 20)  # page_size=20
         self.assertIsNotNone(resp.data['next'])
 
         # Page 2
-        resp2 = self.client.get('/api/auth/payments/history/?page=2')
+        resp2 = self.client.get('/api/v1/auth/payments/history/?page=2')
         self.assertEqual(len(resp2.data['results']), 5)
 
     def test_history_isolation(self):
@@ -693,5 +693,5 @@ class PaymentHistoryViewTests(PaymentTestMixin, TestCase):
             amount=4900,
         )
 
-        resp = self.client.get('/api/auth/payments/history/')
+        resp = self.client.get('/api/v1/auth/payments/history/')
         self.assertEqual(resp.data['count'], 0)

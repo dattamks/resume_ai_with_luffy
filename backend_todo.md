@@ -7,7 +7,7 @@
 | Tag | Meaning | Count |
 |-----|---------|-------|
 | 🔴 IMMEDIATE | Next sprint — implement now | 0 (all done) |
-| 🟡 P2 | Important — implement soon | 6 |
+| 🟡 P2 | Important — implement soon | 0 (all done) |
 | 🔵 P3 | Important — plan for later | 2 |
 | ⚪ DEFERRED | Backlog — revisit in future | 12 |
 
@@ -626,13 +626,13 @@ On resume upload:
 - [x] **P1: Update `runtime.txt`** — changed to `python-3.12` *(v0.19.0)*
 - [x] **P2: Separate migrations from web start** — Fixed: Removed inline migrate from Procfile web command; entrypoint.sh uses `flock` to serialize concurrent migrations.
 - [x] **P2: Health check: verify Redis + Celery** — Already implemented: `views_health.py` checks DB, Redis (set/get), and Celery (inspect.ping) *(already in code)*
-- [ ] **🟡 P2 — Add Sentry or error tracking** — Bare `except` blocks swallow errors with only `logger.exception()`. No alerting.
-- [ ] **🟡 P2 — Structured logging (JSON format)** — For better log aggregation and search in Railway/Datadog.
-- [ ] **🟡 P2 — Emit custom metrics** — Prometheus/StatsD for: analysis duration, LLM token usage, credit operations, payment failures.
-- [ ] **🟡 P2 — Gunicorn timeout alignment** — `--timeout 120` matches Railway's proxy timeout; reduce to `--timeout 110` so Gunicorn responds before proxy kills the connection.
+- [x] **🟡 P2 — Add Sentry or error tracking** — Deferred Sentry; implemented Prometheus metrics with error counters + structured JSON logging for observability. *(v0.24.0)*
+- [x] **🟡 P2 — Structured logging (JSON format)** — `python-json-logger` JSON formatter in production. Local dev keeps human-readable format. *(v0.24.0)*
+- [x] **🟡 P2 — Emit custom metrics** — `django-prometheus` with custom metrics: analysis duration, LLM tokens, credit operations, payment failures, Celery task stats. `/metrics` endpoint exposed. *(v0.24.0)*
+- [x] **🟡 P2 — Gunicorn timeout alignment** — Reduced from 120s to 110s in Procfile and entrypoint.sh. *(v0.24.0)*
 - [x] **P3: Add `--max-tasks-per-child=50`** — Added to Procfile and entrypoint.sh (configurable via `CELERY_MAX_TASKS_PER_CHILD`).
-- [ ] **🟡 P2 — Celery task monitoring** — Flower or custom task status dashboard.
-- [ ] **🟡 P2 — API versioning** — URL-based or header-based API versioning for future-proofing.
+- [x] **🟡 P2 — Celery task monitoring** — Flower as separate Railway service + admin-only Django endpoints. *(v0.24.0)*
+- [x] **🟡 P2 — API versioning** — URL-based `/api/v1/`. Hard cut, no backward compat. DRF `URLPathVersioning`. *(v0.24.0)*
 
 ---
 

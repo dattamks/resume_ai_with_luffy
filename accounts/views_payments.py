@@ -2,14 +2,14 @@
 Razorpay payment views.
 
 Endpoints:
-- POST /api/payments/subscribe/            — Create subscription (Pro plan)
-- POST /api/payments/subscribe/verify/     — Verify subscription payment
-- POST /api/payments/subscribe/cancel/     — Cancel subscription
-- GET  /api/payments/subscribe/status/     — Get subscription status
-- POST /api/payments/topup/                — Create top-up order
-- POST /api/payments/topup/verify/         — Verify top-up payment
-- POST /api/payments/webhook/              — Razorpay webhook (no auth)
-- GET  /api/payments/history/              — Payment history
+- POST /api/v1/payments/subscribe/            — Create subscription (Pro plan)
+- POST /api/v1/payments/subscribe/verify/     — Verify subscription payment
+- POST /api/v1/payments/subscribe/cancel/     — Cancel subscription
+- GET  /api/v1/payments/subscribe/status/     — Get subscription status
+- POST /api/v1/payments/topup/                — Create top-up order
+- POST /api/v1/payments/topup/verify/         — Verify top-up payment
+- POST /api/v1/payments/webhook/              — Razorpay webhook (no auth)
+- GET  /api/v1/payments/history/              — Payment history
 """
 import json
 import logging
@@ -32,7 +32,7 @@ logger = logging.getLogger('accounts')
 
 class CreateSubscriptionView(APIView):
     """
-    POST /api/payments/subscribe/
+    POST /api/v1/payments/subscribe/
     Create a Razorpay subscription for the Pro plan.
 
     Request:  { "plan_slug": "pro" }
@@ -58,7 +58,7 @@ class CreateSubscriptionView(APIView):
 
 class VerifySubscriptionView(APIView):
     """
-    POST /api/payments/subscribe/verify/
+    POST /api/v1/payments/subscribe/verify/
     Verify subscription payment after Razorpay checkout.
 
     Request: {
@@ -92,7 +92,7 @@ class VerifySubscriptionView(APIView):
 
 class CancelSubscriptionView(APIView):
     """
-    POST /api/payments/subscribe/cancel/
+    POST /api/v1/payments/subscribe/cancel/
     Cancel the user's active subscription (at end of billing cycle).
     """
     permission_classes = [IsAuthenticated]
@@ -111,7 +111,7 @@ class CancelSubscriptionView(APIView):
 
 class SubscriptionStatusView(APIView):
     """
-    GET /api/payments/subscribe/status/
+    GET /api/v1/payments/subscribe/status/
     Get the current subscription status.
     """
     permission_classes = [IsAuthenticated]
@@ -126,7 +126,7 @@ class SubscriptionStatusView(APIView):
 
 class CreateTopUpOrderView(APIView):
     """
-    POST /api/payments/topup/
+    POST /api/v1/payments/topup/
     Create a Razorpay order for a credit top-up.
 
     Request:  { "quantity": 2 }  (default: 1)
@@ -152,7 +152,7 @@ class CreateTopUpOrderView(APIView):
 
 class VerifyTopUpView(APIView):
     """
-    POST /api/payments/topup/verify/
+    POST /api/v1/payments/topup/verify/
     Verify a top-up payment after Razorpay checkout.
 
     Request: {
@@ -186,7 +186,7 @@ class VerifyTopUpView(APIView):
 
 class RazorpayWebhookView(APIView):
     """
-    POST /api/payments/webhook/
+    POST /api/v1/payments/webhook/
     Razorpay webhook endpoint. No JWT auth — uses signature verification.
     Must be idempotent (same event may be delivered multiple times).
     """
@@ -263,7 +263,7 @@ class RazorpayWebhookView(APIView):
 
 class PaymentHistoryView(APIView):
     """
-    GET /api/payments/history/
+    GET /api/v1/payments/history/
     Returns the user's payment history (paginated).
     Supports ?page= for pagination.
     """

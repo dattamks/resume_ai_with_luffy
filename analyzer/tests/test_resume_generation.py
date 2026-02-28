@@ -562,7 +562,7 @@ class GenerateResumeViewTests(TestCase):
         """Successful generation request returns 202."""
         mock_task.delay = MagicMock()
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
@@ -577,7 +577,7 @@ class GenerateResumeViewTests(TestCase):
         """If template/format not provided, defaults are used."""
         mock_task.delay = MagicMock()
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/', {},
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/', {},
         )
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(resp.data['template'], 'ats_classic')
@@ -588,7 +588,7 @@ class GenerateResumeViewTests(TestCase):
         """DOCX format accepted."""
         mock_task.delay = MagicMock()
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'format': 'docx'},
         )
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
@@ -598,7 +598,7 @@ class GenerateResumeViewTests(TestCase):
         """Returns 402 when user has no credits."""
         _give_credits(self.user, 0)
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_402_PAYMENT_REQUIRED)
@@ -612,7 +612,7 @@ class GenerateResumeViewTests(TestCase):
             self.user, status=ResumeAnalysis.STATUS_PENDING,
         )
         resp = self.client.post(
-            f'/api/analyses/{pending_analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{pending_analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -624,7 +624,7 @@ class GenerateResumeViewTests(TestCase):
             self.user, status=ResumeAnalysis.STATUS_PROCESSING,
         )
         resp = self.client.post(
-            f'/api/analyses/{processing.pk}/generate-resume/',
+            f'/api/v1/analyses/{processing.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -635,7 +635,7 @@ class GenerateResumeViewTests(TestCase):
             self.user, status=ResumeAnalysis.STATUS_FAILED,
         )
         resp = self.client.post(
-            f'/api/analyses/{failed.pk}/generate-resume/',
+            f'/api/v1/analyses/{failed.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -645,7 +645,7 @@ class GenerateResumeViewTests(TestCase):
         other = User.objects.create_user(username='otheruser', password='StrongPass123!')
         analysis = _create_done_analysis(other)
         resp = self.client.post(
-            f'/api/analyses/{analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
@@ -653,7 +653,7 @@ class GenerateResumeViewTests(TestCase):
     def test_generate_404_nonexistent(self):
         """Returns 404 for a nonexistent analysis ID."""
         resp = self.client.post(
-            '/api/analyses/999999/generate-resume/',
+            '/api/v1/analyses/999999/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
@@ -661,7 +661,7 @@ class GenerateResumeViewTests(TestCase):
     def test_generate_400_invalid_template(self):
         """Returns 400 for unsupported template slug."""
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'nonexistent_template', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -669,7 +669,7 @@ class GenerateResumeViewTests(TestCase):
     def test_generate_400_invalid_format(self):
         """Returns 400 for unsupported output format."""
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'html'},
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -678,7 +678,7 @@ class GenerateResumeViewTests(TestCase):
         """Unauthenticated requests are rejected."""
         anon_client = APIClient()
         resp = anon_client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertIn(resp.status_code, [401, 403])
@@ -689,7 +689,7 @@ class GenerateResumeViewTests(TestCase):
         mock_task.delay = MagicMock()
         _give_credits(self.user, 10)
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
@@ -701,7 +701,7 @@ class GenerateResumeViewTests(TestCase):
         """A GeneratedResume record is created."""
         mock_task.delay = MagicMock()
         resp = self.client.post(
-            f'/api/analyses/{self.analysis.pk}/generate-resume/',
+            f'/api/v1/analyses/{self.analysis.pk}/generate-resume/',
             {'template': 'ats_classic', 'format': 'pdf'},
         )
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
@@ -731,7 +731,7 @@ class GeneratedResumeStatusViewTests(TestCase):
             template='ats_classic', format='pdf',
             status=GeneratedResume.STATUS_DONE,
         )
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['id'], str(gen.id))
         self.assertEqual(resp.data['status'], 'done')
@@ -743,7 +743,7 @@ class GeneratedResumeStatusViewTests(TestCase):
             template='ats_classic', format='pdf',
             status=GeneratedResume.STATUS_PENDING,
         )
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['status'], 'pending')
 
@@ -754,7 +754,7 @@ class GeneratedResumeStatusViewTests(TestCase):
             template='ats_classic', format='pdf',
             status=GeneratedResume.STATUS_PROCESSING,
         )
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['status'], 'processing')
 
@@ -766,14 +766,14 @@ class GeneratedResumeStatusViewTests(TestCase):
             status=GeneratedResume.STATUS_FAILED,
             error_message='LLM returned invalid JSON',
         )
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['status'], 'failed')
         self.assertEqual(resp.data['error_message'], 'LLM returned invalid JSON')
 
     def test_poll_404_no_generation(self):
         """Returns 404 when no generation exists."""
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_poll_404_other_user(self):
@@ -785,7 +785,7 @@ class GeneratedResumeStatusViewTests(TestCase):
             template='ats_classic', format='pdf',
             status=GeneratedResume.STATUS_DONE,
         )
-        resp = self.client.get(f'/api/analyses/{other_analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{other_analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_poll_returns_file_url_when_done(self):
@@ -796,7 +796,7 @@ class GeneratedResumeStatusViewTests(TestCase):
             status=GeneratedResume.STATUS_DONE,
         )
         gen.file.save('test.pdf', ContentFile(b'%PDF-1.4 fake'), save=True)
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIsNotNone(resp.data['file_url'])
 
@@ -807,7 +807,7 @@ class GeneratedResumeStatusViewTests(TestCase):
             template='ats_classic', format='pdf',
             status=GeneratedResume.STATUS_PENDING,
         )
-        resp = self.client.get(f'/api/analyses/{self.analysis.pk}/generated-resume/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.pk}/generated-resume/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIsNone(resp.data['file_url'])
 
@@ -831,7 +831,7 @@ class GeneratedResumeDownloadViewTests(TestCase):
         )
         gen.file.save('test.pdf', ContentFile(b'%PDF-1.4 fake'), save=True)
         resp = self.client.get(
-            f'/api/analyses/{self.analysis.pk}/generated-resume/download/',
+            f'/api/v1/analyses/{self.analysis.pk}/generated-resume/download/',
         )
         self.assertEqual(resp.status_code, status.HTTP_302_FOUND)
 
@@ -843,14 +843,14 @@ class GeneratedResumeDownloadViewTests(TestCase):
             status=GeneratedResume.STATUS_PENDING,
         )
         resp = self.client.get(
-            f'/api/analyses/{self.analysis.pk}/generated-resume/download/',
+            f'/api/v1/analyses/{self.analysis.pk}/generated-resume/download/',
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_download_404_no_generation(self):
         """Returns 404 when no generation exists at all."""
         resp = self.client.get(
-            f'/api/analyses/{self.analysis.pk}/generated-resume/download/',
+            f'/api/v1/analyses/{self.analysis.pk}/generated-resume/download/',
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -865,7 +865,7 @@ class GeneratedResumeDownloadViewTests(TestCase):
         )
         gen.file.save('test.pdf', ContentFile(b'%PDF-1.4 fake'), save=True)
         resp = self.client.get(
-            f'/api/analyses/{other_analysis.pk}/generated-resume/download/',
+            f'/api/v1/analyses/{other_analysis.pk}/generated-resume/download/',
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -892,7 +892,7 @@ class GeneratedResumeListViewTests(TestCase):
             template='ats_classic', format='docx',
             status=GeneratedResume.STATUS_PENDING,
         )
-        resp = self.client.get('/api/generated-resumes/')
+        resp = self.client.get('/api/v1/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data['results']), 2)
 
@@ -905,13 +905,13 @@ class GeneratedResumeListViewTests(TestCase):
             template='ats_classic', format='pdf',
             status=GeneratedResume.STATUS_DONE,
         )
-        resp = self.client.get('/api/generated-resumes/')
+        resp = self.client.get('/api/v1/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data['results']), 0)
 
     def test_list_empty(self):
         """Returns empty list when no generations exist."""
-        resp = self.client.get('/api/generated-resumes/')
+        resp = self.client.get('/api/v1/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data['results']), 0)
 
@@ -927,7 +927,7 @@ class GeneratedResumeListViewTests(TestCase):
             template='ats_classic', format='docx',
             status=GeneratedResume.STATUS_DONE,
         )
-        resp = self.client.get('/api/generated-resumes/')
+        resp = self.client.get('/api/v1/generated-resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         # gen2 was created after gen1, should be first
         self.assertEqual(resp.data['results'][0]['id'], str(gen2.id))
@@ -936,7 +936,7 @@ class GeneratedResumeListViewTests(TestCase):
     def test_list_requires_auth(self):
         """Unauthenticated requests are rejected."""
         anon_client = APIClient()
-        resp = anon_client.get('/api/generated-resumes/')
+        resp = anon_client.get('/api/v1/generated-resumes/')
         self.assertIn(resp.status_code, [401, 403])
 
 

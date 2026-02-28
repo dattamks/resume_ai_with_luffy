@@ -114,6 +114,15 @@ def deduct_credits(user, action_slug: str, description: str = '', reference_id: 
         'Credits deducted: user=%s action=%s cost=%d balance=%d→%d ref=%s',
         user.username, action_slug, cost, balance_before, wallet.balance, reference_id,
     )
+
+    # Prometheus metrics
+    try:
+        from resume_ai.metrics import CREDIT_OPS, CREDIT_AMOUNT
+        CREDIT_OPS.labels(operation='debit').inc()
+        CREDIT_AMOUNT.labels(operation='debit').inc(cost)
+    except Exception:
+        pass
+
     return {
         'balance_before': balance_before,
         'balance_after': wallet.balance,
@@ -158,6 +167,15 @@ def refund_credits(user, action_slug: str, description: str = '', reference_id: 
         'Credits refunded: user=%s action=%s cost=%d balance=%d→%d ref=%s',
         user.username, action_slug, cost, balance_before, wallet.balance, reference_id,
     )
+
+    # Prometheus metrics
+    try:
+        from resume_ai.metrics import CREDIT_OPS, CREDIT_AMOUNT
+        CREDIT_OPS.labels(operation='refund').inc()
+        CREDIT_AMOUNT.labels(operation='refund').inc(cost)
+    except Exception:
+        pass
+
     return {
         'balance_before': balance_before,
         'balance_after': wallet.balance,
@@ -192,6 +210,15 @@ def add_credits(user, amount: int, tx_type: str, description: str = '', referenc
         'Credits added: user=%s amount=%d type=%s balance=%d→%d',
         user.username, amount, tx_type, balance_before, wallet.balance,
     )
+
+    # Prometheus metrics
+    try:
+        from resume_ai.metrics import CREDIT_OPS, CREDIT_AMOUNT
+        CREDIT_OPS.labels(operation=tx_type).inc()
+        CREDIT_AMOUNT.labels(operation=tx_type).inc(amount)
+    except Exception:
+        pass
+
     return {
         'balance_before': balance_before,
         'balance_after': wallet.balance,

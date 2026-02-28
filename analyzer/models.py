@@ -341,7 +341,7 @@ class ResumeAnalysis(models.Model):
     report_pdf = models.FileField(upload_to='reports/', blank=True, help_text='Pre-generated PDF report (stored in R2)')
     share_token = models.UUIDField(
         null=True, blank=True, unique=True,
-        help_text='Public share token — when set, analysis is viewable at /api/shared/<token>/',
+        help_text='Public share token — when set, analysis is viewable at /api/v1/shared/<token>/',
     )
     credits_deducted = models.BooleanField(
         default=False,

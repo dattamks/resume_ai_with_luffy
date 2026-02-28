@@ -53,7 +53,7 @@ def _make_pdf():
 def _auth(client, username='testuser', email='test@example.com'):
     user = User.objects.create_user(username=username, email=email, password='StrongPass123!')
     resp = client.post(
-        '/api/auth/login/',
+        '/api/v1/auth/login/',
         {'username': username, 'password': 'StrongPass123!'},
         format='json',
     )
@@ -258,7 +258,7 @@ class AnalysisStatusViewTests(TestCase):
     def test_status_from_db(self):
         """Status endpoint returns data from DB when cache is empty."""
         analysis = _create_done_analysis(self.user)
-        resp = self.client.get(f'/api/analyses/{analysis.id}/status/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/status/')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['status'], 'done')
         self.assertEqual(resp.data['ats_score'], 78)
@@ -275,12 +275,12 @@ class AnalysisStatusViewTests(TestCase):
             'ats_score': None,
             'error_message': '',
         })
-        resp = self.client.get(f'/api/analyses/{analysis.id}/status/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/status/')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['status'], 'processing')
 
     def test_status_not_found(self):
-        resp = self.client.get('/api/analyses/999999/status/')
+        resp = self.client.get('/api/v1/analyses/999999/status/')
         self.assertEqual(resp.status_code, 404)
 
     def test_status_user_isolation(self):
@@ -289,7 +289,7 @@ class AnalysisStatusViewTests(TestCase):
             username='other', email='other@test.com', password='StrongPass123!',
         )
         analysis = _create_done_analysis(other_user)
-        resp = self.client.get(f'/api/analyses/{analysis.id}/status/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/status/')
         self.assertEqual(resp.status_code, 404)
 
 
@@ -310,12 +310,12 @@ class AnalysisPDFExportViewTests(TestCase):
     def test_export_not_done(self):
         """PDF export should fail for incomplete analysis."""
         analysis = _create_done_analysis(self.user, status='processing', pipeline_step='llm_analysis')
-        resp = self.client.get(f'/api/analyses/{analysis.id}/export-pdf/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/export-pdf/')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('not complete', resp.data['detail'])
 
     def test_export_not_found(self):
-        resp = self.client.get('/api/analyses/999999/export-pdf/')
+        resp = self.client.get('/api/v1/analyses/999999/export-pdf/')
         self.assertEqual(resp.status_code, 404)
 
     def test_export_user_isolation(self):
@@ -323,7 +323,7 @@ class AnalysisPDFExportViewTests(TestCase):
             username='other', email='other@test.com', password='StrongPass123!',
         )
         analysis = _create_done_analysis(other_user)
-        resp = self.client.get(f'/api/analyses/{analysis.id}/export-pdf/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/export-pdf/')
         self.assertEqual(resp.status_code, 404)
 
     @patch('analyzer.views.AnalysisPDFExportView.get')
@@ -344,7 +344,7 @@ class AnalysisPDFExportViewTests(TestCase):
         analysis = _create_done_analysis(self.user)
         with patch('analyzer.services.pdf_report.generate_analysis_pdf') as mock_gen:
             mock_gen.return_value = b'%PDF-1.4 generated pdf bytes'
-            resp = self.client.get(f'/api/analyses/{analysis.id}/export-pdf/')
+            resp = self.client.get(f'/api/v1/analyses/{analysis.id}/export-pdf/')
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(resp['Content-Type'], 'application/pdf')
             mock_gen.assert_called_once()
@@ -373,7 +373,7 @@ class RetryAnalysisViewTests(TestCase):
             self.user, status='failed', pipeline_step='llm_analysis',
             error_message='LLM timeout',
         )
-        resp = self.client.post(f'/api/analyses/{analysis.id}/retry/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/retry/')
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.data['status'], 'processing')
         mock_task.delay.assert_called_once()
@@ -382,7 +382,7 @@ class RetryAnalysisViewTests(TestCase):
     def test_retry_already_done(self, mock_task):
         """Should reject retry of a completed analysis."""
         analysis = _create_done_analysis(self.user)
-        resp = self.client.post(f'/api/analyses/{analysis.id}/retry/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/retry/')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('already complete', resp.data['detail'])
 
@@ -392,7 +392,7 @@ class RetryAnalysisViewTests(TestCase):
         analysis = _create_done_analysis(
             self.user, status='processing', pipeline_step='pdf_extraction',
         )
-        resp = self.client.post(f'/api/analyses/{analysis.id}/retry/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/retry/')
         self.assertEqual(resp.status_code, 409)
 
     def test_retry_insufficient_credits(self):
@@ -401,12 +401,12 @@ class RetryAnalysisViewTests(TestCase):
         analysis = _create_done_analysis(
             self.user, status='failed', pipeline_step='llm_analysis',
         )
-        resp = self.client.post(f'/api/analyses/{analysis.id}/retry/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/retry/')
         self.assertEqual(resp.status_code, 402)
         self.assertIn('Insufficient', resp.data['detail'])
 
     def test_retry_not_found(self):
-        resp = self.client.post('/api/analyses/999999/retry/')
+        resp = self.client.post('/api/v1/analyses/999999/retry/')
         self.assertEqual(resp.status_code, 404)
 
     @patch('analyzer.views.run_analysis_task')
@@ -416,7 +416,7 @@ class RetryAnalysisViewTests(TestCase):
             username='other', email='other@test.com', password='StrongPass123!',
         )
         analysis = _create_done_analysis(other_user, status='failed', pipeline_step='llm_analysis')
-        resp = self.client.post(f'/api/analyses/{analysis.id}/retry/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/retry/')
         self.assertEqual(resp.status_code, 404)
 
 
@@ -440,7 +440,7 @@ class ResumeManagementTests(TestCase):
             self.user,
             SimpleUploadedFile('test.pdf', b'%PDF-1.4 content', content_type='application/pdf'),
         )
-        resp = self.client.get('/api/resumes/')
+        resp = self.client.get('/api/v1/resumes/')
         self.assertEqual(resp.status_code, 200)
         self.assertGreaterEqual(resp.data['count'], 1)
 
@@ -453,7 +453,7 @@ class ResumeManagementTests(TestCase):
             other_user,
             SimpleUploadedFile('other.pdf', b'%PDF-1.4 other', content_type='application/pdf'),
         )
-        resp = self.client.get('/api/resumes/')
+        resp = self.client.get('/api/v1/resumes/')
         self.assertEqual(resp.status_code, 200)
         # Should only see own resumes, not other user's
         for r in resp.data.get('results', []):
@@ -465,7 +465,7 @@ class ResumeManagementTests(TestCase):
             self.user,
             SimpleUploadedFile('todelete.pdf', b'%PDF-1.4 delete me', content_type='application/pdf'),
         )
-        resp = self.client.delete(f'/api/resumes/{resume.id}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.id}/')
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(Resume.objects.filter(id=resume.id).exists())
 
@@ -473,13 +473,13 @@ class ResumeManagementTests(TestCase):
         """Should block delete when active analyses exist."""
         analysis = _create_done_analysis(self.user)
         resume = analysis.resume
-        resp = self.client.delete(f'/api/resumes/{resume.id}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.id}/')
         self.assertEqual(resp.status_code, 409)
         self.assertIn('active analysis', resp.data['detail'])
 
     def test_delete_resume_not_found(self):
         import uuid
-        resp = self.client.delete(f'/api/resumes/{uuid.uuid4()}/')
+        resp = self.client.delete(f'/api/v1/resumes/{uuid.uuid4()}/')
         self.assertEqual(resp.status_code, 404)
 
     def test_delete_resume_user_isolation(self):
@@ -491,7 +491,7 @@ class ResumeManagementTests(TestCase):
             other_user,
             SimpleUploadedFile('other.pdf', b'%PDF-1.4 other', content_type='application/pdf'),
         )
-        resp = self.client.delete(f'/api/resumes/{resume.id}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.id}/')
         self.assertEqual(resp.status_code, 404)
 
     def test_list_resumes_search(self):
@@ -500,7 +500,7 @@ class ResumeManagementTests(TestCase):
             self.user,
             SimpleUploadedFile('special_resume.pdf', b'%PDF-1.4 sp', content_type='application/pdf'),
         )
-        resp = self.client.get('/api/resumes/?search=special')
+        resp = self.client.get('/api/v1/resumes/?search=special')
         self.assertEqual(resp.status_code, 200)
         filenames = [r['original_filename'] for r in resp.data.get('results', [])]
         self.assertTrue(any('special' in fn for fn in filenames))
@@ -511,7 +511,7 @@ class ResumeManagementTests(TestCase):
             self.user,
             SimpleUploadedFile('a.pdf', b'%PDF-1.4 a', content_type='application/pdf'),
         )
-        resp = self.client.get('/api/resumes/?ordering=original_filename')
+        resp = self.client.get('/api/v1/resumes/?ordering=original_filename')
         self.assertEqual(resp.status_code, 200)
 
 
@@ -546,7 +546,7 @@ class AccountDeletionCascadeTests(TestCase):
 
         user_id = self.user.id
         resp = self.client.delete(
-            '/api/auth/me/',
+            '/api/v1/auth/me/',
             {'password': 'StrongPass123!'},
             format='json',
         )

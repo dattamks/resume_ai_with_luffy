@@ -37,7 +37,7 @@ class AnalyzeResumeViewTests(TestCase):
         self.user = User.objects.create_user(username='apiuser', password='StrongPass123!')
         _give_credits(self.user)
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'apiuser', 'password': 'StrongPass123!'},
             format='json',
         )
@@ -46,7 +46,7 @@ class AnalyzeResumeViewTests(TestCase):
     def test_analyze_requires_auth(self):
         unauthed = APIClient()
         resp = unauthed.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'Dev role'},
             format='multipart',
         )
@@ -57,7 +57,7 @@ class AnalyzeResumeViewTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'We need a Python developer.'},
             format='multipart',
         )
@@ -68,7 +68,7 @@ class AnalyzeResumeViewTests(TestCase):
 
     def test_analyze_missing_resume(self):
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'jd_input_type': 'text', 'jd_text': 'We need a Python developer.'},
             format='multipart',
         )
@@ -77,7 +77,7 @@ class AnalyzeResumeViewTests(TestCase):
     def test_analyze_bad_pdf_magic_bytes(self):
         bad_file = SimpleUploadedFile('resume.pdf', b'PK\x03\x04zip content', content_type='application/pdf')
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': bad_file, 'jd_input_type': 'text', 'jd_text': 'Dev role'},
             format='multipart',
         )
@@ -89,14 +89,14 @@ class AnalyzeResumeViewTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp1 = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'Python developer'},
             format='multipart',
         )
         self.assertEqual(resp1.status_code, status.HTTP_202_ACCEPTED)
 
         resp2 = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'Python developer'},
             format='multipart',
         )
@@ -115,20 +115,20 @@ class AnalysisListViewTests(TestCase):
         self.client = APIClient()
         self.user = User.objects.create_user(username='listuser', password='StrongPass123!')
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'listuser', 'password': 'StrongPass123!'},
             format='json',
         )
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_resp.data["access"]}')
 
     def test_list_empty(self):
-        resp = self.client.get('/api/analyses/')
+        resp = self.client.get('/api/v1/analyses/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['results'], [])
 
     def test_list_requires_auth(self):
         unauthed = APIClient()
-        resp = unauthed.get('/api/analyses/')
+        resp = unauthed.get('/api/v1/analyses/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_list_only_own_analyses(self):
@@ -136,6 +136,6 @@ class AnalysisListViewTests(TestCase):
         ResumeAnalysis.objects.create(user=other_user, jd_input_type='text', jd_text='test')
         ResumeAnalysis.objects.create(user=self.user, jd_input_type='text', jd_text='mine')
 
-        resp = self.client.get('/api/analyses/')
+        resp = self.client.get('/api/v1/analyses/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data['results']), 1)

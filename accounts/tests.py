@@ -9,7 +9,7 @@ from rest_framework import status
 class RegisterViewTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.url = '/api/auth/register/'
+        self.url = '/api/v1/auth/register/'
 
     def test_register_success(self):
         payload = {
@@ -151,7 +151,7 @@ class RegisterViewTests(TestCase):
 class LoginViewTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.url = '/api/auth/login/'
+        self.url = '/api/v1/auth/login/'
         self.user = User.objects.create_user(username='loginuser', password='StrongPass123!')
 
     def test_login_success(self):
@@ -175,17 +175,17 @@ class LogoutViewTests(TestCase):
         self.user = User.objects.create_user(username='logoutuser', password='StrongPass123!')
 
     def _get_tokens(self):
-        resp = self.client.post('/api/auth/login/', {'username': 'logoutuser', 'password': 'StrongPass123!'}, format='json')
+        resp = self.client.post('/api/v1/auth/login/', {'username': 'logoutuser', 'password': 'StrongPass123!'}, format='json')
         return resp.data['access'], resp.data['refresh']
 
     def test_logout_success(self):
         access, refresh = self._get_tokens()
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
-        resp = self.client.post('/api/auth/logout/', {'refresh': refresh}, format='json')
+        resp = self.client.post('/api/v1/auth/logout/', {'refresh': refresh}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
     def test_logout_requires_auth(self):
-        resp = self.client.post('/api/auth/logout/', {'refresh': 'dummy'}, format='json')
+        resp = self.client.post('/api/v1/auth/logout/', {'refresh': 'dummy'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -195,14 +195,14 @@ class MeViewTests(TestCase):
         self.user = User.objects.create_user(username='meuser', email='me@example.com', password='StrongPass123!')
 
     def test_me_authenticated(self):
-        resp = self.client.post('/api/auth/login/', {'username': 'meuser', 'password': 'StrongPass123!'}, format='json')
+        resp = self.client.post('/api/v1/auth/login/', {'username': 'meuser', 'password': 'StrongPass123!'}, format='json')
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
-        me_resp = self.client.get('/api/auth/me/')
+        me_resp = self.client.get('/api/v1/auth/me/')
         self.assertEqual(me_resp.status_code, status.HTTP_200_OK)
         self.assertEqual(me_resp.data['username'], 'meuser')
 
     def test_me_unauthenticated(self):
-        resp = self.client.get('/api/auth/me/')
+        resp = self.client.get('/api/v1/auth/me/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -213,7 +213,7 @@ class GoogleLoginViewTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.url = '/api/auth/google/'
+        self.url = '/api/v1/auth/google/'
 
     @patch('accounts.views.settings')
     def test_returns_503_when_not_configured(self, mock_settings):
@@ -381,7 +381,7 @@ class GoogleCompleteViewTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.url = '/api/auth/google/complete/'
+        self.url = '/api/v1/auth/google/complete/'
 
     def _make_temp_token(self, email='new@gmail.com', ttl=600, **extra):
         from accounts.views import _sign_temp_token

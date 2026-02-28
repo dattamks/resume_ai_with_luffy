@@ -26,7 +26,7 @@ def _auth(client, username='testuser', email='test@example.com', password='Stron
     """Create a user, log in, and set Bearer credentials on the client."""
     user = User.objects.create_user(username=username, email=email, password=password)
     resp = client.post(
-        '/api/auth/login/',
+        '/api/v1/auth/login/',
         {'username': username, 'password': password},
         format='json',
     )
@@ -78,7 +78,7 @@ class ForgotPasswordTests(TestCase):
             },
         )
         resp = self.client.post(
-            '/api/auth/forgot-password/',
+            '/api/v1/auth/forgot-password/',
             {'email': 'forgot@test.com'},
             format='json',
         )
@@ -88,7 +88,7 @@ class ForgotPasswordTests(TestCase):
     def test_forgot_password_nonexistent_email(self):
         """Should return 200 anyway (don't reveal whether email exists)."""
         resp = self.client.post(
-            '/api/auth/forgot-password/',
+            '/api/v1/auth/forgot-password/',
             {'email': 'nobody@test.com'},
             format='json',
         )
@@ -97,7 +97,7 @@ class ForgotPasswordTests(TestCase):
 
     def test_forgot_password_missing_email(self):
         resp = self.client.post(
-            '/api/auth/forgot-password/',
+            '/api/v1/auth/forgot-password/',
             {},
             format='json',
         )
@@ -105,7 +105,7 @@ class ForgotPasswordTests(TestCase):
 
     def test_forgot_password_invalid_email_format(self):
         resp = self.client.post(
-            '/api/auth/forgot-password/',
+            '/api/v1/auth/forgot-password/',
             {'email': 'not-an-email'},
             format='json',
         )
@@ -129,7 +129,7 @@ class ResetPasswordTests(TestCase):
 
     def test_reset_password_success(self):
         resp = self.client.post(
-            '/api/auth/reset-password/',
+            '/api/v1/auth/reset-password/',
             {
                 'uid': self.uid,
                 'token': self.token,
@@ -143,7 +143,7 @@ class ResetPasswordTests(TestCase):
 
     def test_reset_password_invalid_token(self):
         resp = self.client.post(
-            '/api/auth/reset-password/',
+            '/api/v1/auth/reset-password/',
             {
                 'uid': self.uid,
                 'token': 'bad-token-value',
@@ -155,7 +155,7 @@ class ResetPasswordTests(TestCase):
 
     def test_reset_password_invalid_uid(self):
         resp = self.client.post(
-            '/api/auth/reset-password/',
+            '/api/v1/auth/reset-password/',
             {
                 'uid': 'XXXX',
                 'token': self.token,
@@ -167,7 +167,7 @@ class ResetPasswordTests(TestCase):
 
     def test_reset_password_missing_fields(self):
         resp = self.client.post(
-            '/api/auth/reset-password/',
+            '/api/v1/auth/reset-password/',
             {'uid': self.uid},
             format='json',
         )
@@ -185,7 +185,7 @@ class NotificationPreferenceTests(TestCase):
         self.client, self.user, _ = _auth(self.client, username='notifuser', email='notif@test.com')
 
     def test_get_notification_prefs(self):
-        resp = self.client.get('/api/auth/notifications/')
+        resp = self.client.get('/api/v1/auth/notifications/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         # Default values — all email channels on
         self.assertTrue(resp.data['job_alerts_email'])
@@ -194,7 +194,7 @@ class NotificationPreferenceTests(TestCase):
 
     def test_update_notification_prefs(self):
         resp = self.client.put(
-            '/api/auth/notifications/',
+            '/api/v1/auth/notifications/',
             {'newsletters_email': False, 'job_alerts_mobile': True},
             format='json',
         )
@@ -205,7 +205,7 @@ class NotificationPreferenceTests(TestCase):
     def test_partial_update(self):
         """Only send one field — others stay at defaults."""
         resp = self.client.put(
-            '/api/auth/notifications/',
+            '/api/v1/auth/notifications/',
             {'feature_updates_email': False},
             format='json',
         )
@@ -214,7 +214,7 @@ class NotificationPreferenceTests(TestCase):
         self.assertTrue(resp.data['newsletters_email'])  # unchanged
 
     def test_requires_auth(self):
-        resp = APIClient().get('/api/auth/notifications/')
+        resp = APIClient().get('/api/v1/auth/notifications/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -230,7 +230,7 @@ class WalletViewTests(TestCase):
         self.client, self.user, _ = _auth(self.client, username='walletuser', email='wallet@test.com')
 
     def test_get_wallet(self):
-        resp = self.client.get('/api/auth/wallet/')
+        resp = self.client.get('/api/v1/auth/wallet/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('balance', resp.data)
         self.assertIn('plan_name', resp.data)
@@ -239,12 +239,12 @@ class WalletViewTests(TestCase):
         """Wallet should be auto-created on first access."""
         from accounts.models import Wallet
         Wallet.objects.filter(user=self.user).delete()
-        resp = self.client.get('/api/auth/wallet/')
+        resp = self.client.get('/api/v1/auth/wallet/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(Wallet.objects.filter(user=self.user).exists())
 
     def test_requires_auth(self):
-        resp = APIClient().get('/api/auth/wallet/')
+        resp = APIClient().get('/api/v1/auth/wallet/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -258,7 +258,7 @@ class WalletTransactionListTests(TestCase):
 
     def test_get_transactions_paginated(self):
         """Wallet creation itself may create a transaction; verify pagination works."""
-        resp = self.client.get('/api/auth/wallet/transactions/')
+        resp = self.client.get('/api/v1/auth/wallet/transactions/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('count', resp.data)
         self.assertIn('results', resp.data)
@@ -271,12 +271,12 @@ class WalletTransactionListTests(TestCase):
             wallet=wallet, amount=10, balance_after=10,
             transaction_type='credit', description='Test credit',
         )
-        resp = self.client.get('/api/auth/wallet/transactions/')
+        resp = self.client.get('/api/v1/auth/wallet/transactions/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], initial_count + 1)
 
     def test_requires_auth(self):
-        resp = APIClient().get('/api/auth/wallet/transactions/')
+        resp = APIClient().get('/api/v1/auth/wallet/transactions/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -289,7 +289,7 @@ class WalletTopUpTests(TestCase):
 
     def test_topup_returns_payment_required(self):
         resp = self.client.post(
-            '/api/auth/wallet/topup/',
+            '/api/v1/auth/wallet/topup/',
             {'quantity': 1},
             format='json',
         )
@@ -309,7 +309,7 @@ class PlanListTests(TestCase):
 
     def test_list_plans_unauthenticated(self):
         """Plans are public — no auth required."""
-        resp = self.client.get('/api/auth/plans/')
+        resp = self.client.get('/api/v1/auth/plans/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(len(resp.data) >= 1)
 
@@ -319,7 +319,7 @@ class PlanListTests(TestCase):
             name='Hidden', slug='hidden', billing_cycle='monthly',
             price=999, is_active=False,
         )
-        resp = self.client.get('/api/auth/plans/')
+        resp = self.client.get('/api/v1/auth/plans/')
         slugs = [p['slug'] for p in resp.data]
         self.assertNotIn('hidden', slugs)
 
@@ -334,7 +334,7 @@ class PlanSubscribeTests(TestCase):
 
     def test_subscribe_free_plan(self):
         resp = self.client.post(
-            '/api/auth/plans/subscribe/',
+            '/api/v1/auth/plans/subscribe/',
             {'plan_slug': 'free'},
             format='json',
         )
@@ -348,7 +348,7 @@ class PlanSubscribeTests(TestCase):
             price=499, is_active=True, credits_per_month=20,
         )
         resp = self.client.post(
-            '/api/auth/plans/subscribe/',
+            '/api/v1/auth/plans/subscribe/',
             {'plan_slug': 'pro'},
             format='json',
         )
@@ -357,7 +357,7 @@ class PlanSubscribeTests(TestCase):
 
     def test_subscribe_missing_slug(self):
         resp = self.client.post(
-            '/api/auth/plans/subscribe/',
+            '/api/v1/auth/plans/subscribe/',
             {},
             format='json',
         )
@@ -365,7 +365,7 @@ class PlanSubscribeTests(TestCase):
 
     def test_subscribe_nonexistent_plan(self):
         resp = self.client.post(
-            '/api/auth/plans/subscribe/',
+            '/api/v1/auth/plans/subscribe/',
             {'plan_slug': 'nonexistent'},
             format='json',
         )
@@ -385,21 +385,21 @@ class LogoutAllDevicesTests(TestCase):
         )
 
     def test_logout_all_success(self):
-        resp = self.client.post('/api/auth/logout-all/')
+        resp = self.client.post('/api/v1/auth/logout-all/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('invalidated', resp.data)
         self.assertGreaterEqual(resp.data['invalidated'], 1)
 
     def test_logout_all_blacklists_refresh(self):
         """After logout-all, the refresh token should be blacklisted."""
-        self.client.post('/api/auth/logout-all/')
+        self.client.post('/api/v1/auth/logout-all/')
         resp = self.client.post(
-            '/api/auth/token/refresh/',
+            '/api/v1/auth/token/refresh/',
             {'refresh': self.refresh},
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_requires_auth(self):
-        resp = APIClient().post('/api/auth/logout-all/')
+        resp = APIClient().post('/api/v1/auth/logout-all/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)

@@ -43,7 +43,7 @@ class ResumeIdAnalyzeTests(TestCase):
         self.user = User.objects.create_user(username='riduser', password='StrongPass123!')
         _give_credits(self.user)
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'riduser', 'password': 'StrongPass123!'},
             format='json',
         )
@@ -64,7 +64,7 @@ class ResumeIdAnalyzeTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_id': str(self.resume.id),
                 'jd_input_type': 'text',
@@ -88,7 +88,7 @@ class ResumeIdAnalyzeTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_id': str(self.resume.id),
                 'jd_input_type': 'form',
@@ -105,7 +105,7 @@ class ResumeIdAnalyzeTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_id': str(self.resume.id),
                 'jd_input_type': 'text',
@@ -120,7 +120,7 @@ class ResumeIdAnalyzeTests(TestCase):
     def test_neither_file_nor_id_returns_400(self):
         """Sending neither resume_file nor resume_id should fail."""
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'jd_input_type': 'text',
                 'jd_text': 'Developer role',
@@ -132,7 +132,7 @@ class ResumeIdAnalyzeTests(TestCase):
     def test_both_file_and_id_returns_400(self):
         """Sending both resume_file and resume_id should fail."""
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_file': _make_pdf(),
                 'resume_id': str(self.resume.id),
@@ -146,7 +146,7 @@ class ResumeIdAnalyzeTests(TestCase):
     def test_invalid_resume_id_returns_400(self):
         """A malformed UUID should fail validation."""
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_id': 'not-a-uuid',
                 'jd_input_type': 'text',
@@ -160,7 +160,7 @@ class ResumeIdAnalyzeTests(TestCase):
         """A valid UUID that doesn't match any Resume should fail."""
         fake_id = str(uuid.uuid4())
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_id': fake_id,
                 'jd_input_type': 'text',
@@ -179,7 +179,7 @@ class ResumeIdAnalyzeTests(TestCase):
         )
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_id': str(other_resume.id),
                 'jd_input_type': 'text',
@@ -200,7 +200,7 @@ class ResumeIdAnalyzeTests(TestCase):
         for jd in ['Python role', 'Java role', 'Go role']:
             cache.clear()  # reset idempotency lock
             resp = self.client.post(
-                '/api/analyze/',
+                '/api/v1/analyze/',
                 {
                     'resume_id': str(self.resume.id),
                     'jd_input_type': 'text',
@@ -225,7 +225,7 @@ class ResumeIdAnalyzeTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {
                 'resume_file': _make_pdf(),
                 'jd_input_type': 'text',

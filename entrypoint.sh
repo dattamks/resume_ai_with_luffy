@@ -20,7 +20,7 @@ case "${SERVICE_TYPE}" in
       --bind "0.0.0.0:${PORT:-8000}" \
       --workers "${GUNICORN_WORKERS:-2}" \
       --threads "${GUNICORN_THREADS:-2}" \
-      --timeout "${GUNICORN_TIMEOUT:-120}"
+      --timeout "${GUNICORN_TIMEOUT:-110}"
     ;;
 
   worker)
@@ -38,8 +38,18 @@ case "${SERVICE_TYPE}" in
       --scheduler django_celery_beat.schedulers:DatabaseScheduler
     ;;
 
+  flower)
+    echo "▶ Starting Flower monitoring dashboard…"
+    exec celery -A resume_ai flower \
+      --port="${PORT:-5555}" \
+      --basic-auth="${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-changeme}" \
+      --broker_api= \
+      --persistent=True \
+      --db=/tmp/flower.db
+    ;;
+
   *)
-    echo "ERROR: SERVICE_TYPE must be one of: web, worker, beat"
+    echo "ERROR: SERVICE_TYPE must be one of: web, worker, beat, flower"
     echo "       Got: '${SERVICE_TYPE}'"
     exit 1
     ;;

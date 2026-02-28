@@ -74,7 +74,7 @@ class ShareTokenTests(TestCase):
     # ── POST /api/analyses/<id>/share/ ────────────────────────────────────
 
     def test_create_share_token(self):
-        resp = self.client.post(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.post(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 201)
         self.assertIn('share_token', resp.data)
         self.assertIn('share_url', resp.data)
@@ -89,21 +89,21 @@ class ShareTokenTests(TestCase):
 
     def test_create_share_token_idempotent(self):
         """Calling POST share twice returns the same token (200, not 201)."""
-        resp1 = self.client.post(f'/api/analyses/{self.analysis.id}/share/')
+        resp1 = self.client.post(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp1.status_code, 201)
 
-        resp2 = self.client.post(f'/api/analyses/{self.analysis.id}/share/')
+        resp2 = self.client.post(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp2.status_code, 200)
         self.assertEqual(resp1.data['share_token'], resp2.data['share_token'])
 
     def test_create_share_requires_auth(self):
         self.client.force_authenticate(user=None)
-        resp = self.client.post(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.post(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 401)
 
     def test_create_share_wrong_user(self):
         self.client.force_authenticate(user=self.other_user)
-        resp = self.client.post(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.post(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 404)
 
     def test_create_share_incomplete_analysis(self):
@@ -115,14 +115,14 @@ class ShareTokenTests(TestCase):
             status=ResumeAnalysis.STATUS_PROCESSING,
             pipeline_step=ResumeAnalysis.STEP_LLM_CALL,
         )
-        resp = self.client.post(f'/api/analyses/{pending.id}/share/')
+        resp = self.client.post(f'/api/v1/analyses/{pending.id}/share/')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('completed', resp.data['detail'])
 
     def test_create_share_soft_deleted_analysis(self):
         """Cannot share a soft-deleted analysis (404 from ActiveAnalysisManager)."""
         self.analysis.soft_delete()
-        resp = self.client.post(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.post(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 404)
 
     # ── DELETE /api/analyses/<id>/share/ ──────────────────────────────────
@@ -131,7 +131,7 @@ class ShareTokenTests(TestCase):
         self.analysis.share_token = uuid.uuid4()
         self.analysis.save(update_fields=['share_token'])
 
-        resp = self.client.delete(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.delete(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 204)
 
         self.analysis.refresh_from_db()
@@ -139,7 +139,7 @@ class ShareTokenTests(TestCase):
 
     def test_revoke_share_not_shared(self):
         """Revoking when not shared returns 400."""
-        resp = self.client.delete(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.delete(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('not currently shared', resp.data['detail'])
 
@@ -148,7 +148,7 @@ class ShareTokenTests(TestCase):
         self.analysis.save(update_fields=['share_token'])
 
         self.client.force_authenticate(user=self.other_user)
-        resp = self.client.delete(f'/api/analyses/{self.analysis.id}/share/')
+        resp = self.client.delete(f'/api/v1/analyses/{self.analysis.id}/share/')
         self.assertEqual(resp.status_code, 404)
 
 
@@ -192,11 +192,11 @@ class SharedAnalysisViewTests(TestCase):
 
     def test_public_access_no_auth(self):
         """Shared link works without authentication."""
-        resp = self.client.get(f'/api/shared/{self.analysis.share_token}/')
+        resp = self.client.get(f'/api/v1/shared/{self.analysis.share_token}/')
         self.assertEqual(resp.status_code, 200)
 
     def test_shared_response_fields(self):
-        resp = self.client.get(f'/api/shared/{self.analysis.share_token}/')
+        resp = self.client.get(f'/api/v1/shared/{self.analysis.share_token}/')
         self.assertEqual(resp.status_code, 200)
 
         data = resp.data
@@ -210,7 +210,7 @@ class SharedAnalysisViewTests(TestCase):
 
     def test_shared_excludes_sensitive_fields(self):
         """Shared view must NOT expose resume file, user data, or celery IDs."""
-        resp = self.client.get(f'/api/shared/{self.analysis.share_token}/')
+        resp = self.client.get(f'/api/v1/shared/{self.analysis.share_token}/')
         data = resp.data
 
         sensitive = ['id', 'resume_file', 'resume_file_url', 'resume_text',
@@ -221,7 +221,7 @@ class SharedAnalysisViewTests(TestCase):
 
     def test_invalid_token_404(self):
         fake_token = uuid.uuid4()
-        resp = self.client.get(f'/api/shared/{fake_token}/')
+        resp = self.client.get(f'/api/v1/shared/{fake_token}/')
         self.assertEqual(resp.status_code, 404)
 
     def test_revoked_token_404(self):
@@ -230,7 +230,7 @@ class SharedAnalysisViewTests(TestCase):
         self.analysis.share_token = None
         self.analysis.save(update_fields=['share_token'])
 
-        resp = self.client.get(f'/api/shared/{token}/')
+        resp = self.client.get(f'/api/v1/shared/{token}/')
         self.assertEqual(resp.status_code, 404)
 
     def test_soft_deleted_shared_analysis_404(self):
@@ -238,7 +238,7 @@ class SharedAnalysisViewTests(TestCase):
         token = self.analysis.share_token
         self.analysis.soft_delete()
 
-        resp = self.client.get(f'/api/shared/{token}/')
+        resp = self.client.get(f'/api/v1/shared/{token}/')
         self.assertEqual(resp.status_code, 404)
 
 
@@ -267,15 +267,15 @@ class ShareFieldExposureTests(TestCase):
         )
 
     def test_detail_includes_share_token(self):
-        resp = self.client.get(f'/api/analyses/{self.analysis.id}/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.id}/')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('share_token', resp.data)
         self.assertIn('share_url', resp.data)
         self.assertEqual(resp.data['share_token'], str(self.analysis.share_token))
-        self.assertIn(f'/api/shared/{self.analysis.share_token}/', resp.data['share_url'])
+        self.assertIn(f'/api/v1/shared/{self.analysis.share_token}/', resp.data['share_url'])
 
     def test_list_includes_share_fields(self):
-        resp = self.client.get('/api/analyses/')
+        resp = self.client.get('/api/v1/analyses/')
         self.assertEqual(resp.status_code, 200)
         item = resp.data['results'][0]
         self.assertIn('share_token', item)
@@ -285,7 +285,7 @@ class ShareFieldExposureTests(TestCase):
         self.analysis.share_token = None
         self.analysis.save(update_fields=['share_token'])
 
-        resp = self.client.get(f'/api/analyses/{self.analysis.id}/')
+        resp = self.client.get(f'/api/v1/analyses/{self.analysis.id}/')
         self.assertEqual(resp.status_code, 200)
         self.assertIsNone(resp.data['share_token'])
         self.assertIsNone(resp.data['share_url'])

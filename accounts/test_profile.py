@@ -14,7 +14,7 @@ from rest_framework import status
 def _auth(client, username='profuser', password='StrongPass123!'):
     """Create user, login, set credentials. Returns (client, user)."""
     user = User.objects.create_user(username=username, password=password, email=f'{username}@test.com')
-    resp = client.post('/api/auth/login/', {'username': username, 'password': password}, format='json')
+    resp = client.post('/api/v1/auth/login/', {'username': username, 'password': password}, format='json')
     client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access"]}')
     return client, user, resp.data.get('refresh')
 
@@ -27,20 +27,20 @@ class UpdateProfileTests(TestCase):
         self.client, self.user, _ = _auth(self.client)
 
     def test_update_username(self):
-        resp = self.client.put('/api/auth/me/', {'username': 'newname'}, format='json')
+        resp = self.client.put('/api/v1/auth/me/', {'username': 'newname'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['username'], 'newname')
         self.user.refresh_from_db()
         self.assertEqual(self.user.username, 'newname')
 
     def test_update_email(self):
-        resp = self.client.put('/api/auth/me/', {'email': 'new@example.com'}, format='json')
+        resp = self.client.put('/api/v1/auth/me/', {'email': 'new@example.com'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['email'], 'new@example.com')
 
     def test_update_both(self):
         resp = self.client.put(
-            '/api/auth/me/',
+            '/api/v1/auth/me/',
             {'username': 'both', 'email': 'both@example.com'},
             format='json',
         )
@@ -50,24 +50,24 @@ class UpdateProfileTests(TestCase):
 
     def test_partial_update(self):
         """PUT with partial=True — only email, username unchanged."""
-        resp = self.client.put('/api/auth/me/', {'email': 'partial@example.com'}, format='json')
+        resp = self.client.put('/api/v1/auth/me/', {'email': 'partial@example.com'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['username'], 'profuser')  # unchanged
 
     def test_duplicate_username_rejected(self):
         User.objects.create_user(username='taken', password='StrongPass123!')
-        resp = self.client.put('/api/auth/me/', {'username': 'taken'}, format='json')
+        resp = self.client.put('/api/v1/auth/me/', {'username': 'taken'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('username', resp.data)
 
     def test_duplicate_email_rejected(self):
         User.objects.create_user(username='other', password='StrongPass123!', email='used@test.com')
-        resp = self.client.put('/api/auth/me/', {'email': 'used@test.com'}, format='json')
+        resp = self.client.put('/api/v1/auth/me/', {'email': 'used@test.com'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('email', resp.data)
 
     def test_requires_auth(self):
-        resp = APIClient().put('/api/auth/me/', {'username': 'x'}, format='json')
+        resp = APIClient().put('/api/v1/auth/me/', {'username': 'x'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -80,7 +80,7 @@ class ChangePasswordTests(TestCase):
 
     def test_change_password_success(self):
         resp = self.client.post(
-            '/api/auth/change-password/',
+            '/api/v1/auth/change-password/',
             {'current_password': 'StrongPass123!', 'new_password': 'NewStrong456!'},
             format='json',
         )
@@ -90,7 +90,7 @@ class ChangePasswordTests(TestCase):
 
     def test_wrong_current_password(self):
         resp = self.client.post(
-            '/api/auth/change-password/',
+            '/api/v1/auth/change-password/',
             {'current_password': 'WrongPass', 'new_password': 'NewStrong456!'},
             format='json',
         )
@@ -99,7 +99,7 @@ class ChangePasswordTests(TestCase):
 
     def test_weak_new_password(self):
         resp = self.client.post(
-            '/api/auth/change-password/',
+            '/api/v1/auth/change-password/',
             {'current_password': 'StrongPass123!', 'new_password': '123'},
             format='json',
         )
@@ -108,7 +108,7 @@ class ChangePasswordTests(TestCase):
 
     def test_requires_auth(self):
         resp = APIClient().post(
-            '/api/auth/change-password/',
+            '/api/v1/auth/change-password/',
             {'current_password': 'x', 'new_password': 'y'},
             format='json',
         )
@@ -124,7 +124,7 @@ class DeleteAccountTests(TestCase):
 
     def test_delete_account(self):
         user_id = self.user.id
-        resp = self.client.delete('/api/auth/me/', {'password': 'StrongPass123!'}, format='json')
+        resp = self.client.delete('/api/v1/auth/me/', {'password': 'StrongPass123!'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(User.objects.filter(id=user_id).exists())
 
@@ -142,11 +142,11 @@ class DeleteAccountTests(TestCase):
             jd_input_type='text',
             jd_text='dev',
         )
-        resp = self.client.delete('/api/auth/me/', {'password': 'StrongPass123!'}, format='json')
+        resp = self.client.delete('/api/v1/auth/me/', {'password': 'StrongPass123!'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         # User + all owned objects are gone
         self.assertEqual(Resume.objects.filter(user=self.user).count(), 0)
 
     def test_requires_auth(self):
-        resp = APIClient().delete('/api/auth/me/')
+        resp = APIClient().delete('/api/v1/auth/me/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)

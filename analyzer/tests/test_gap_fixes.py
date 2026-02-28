@@ -57,7 +57,7 @@ class TestMixin:
         self._login()
 
     def _login(self):
-        resp = self.client.post('/api/auth/login/', {
+        resp = self.client.post('/api/v1/auth/login/', {
             'username': 'gaptest', 'password': 'StrongPass123!',
         }, format='json')
         self.access = resp.data['access']
@@ -96,7 +96,7 @@ class TestMixin:
 
 class FirstLastNameTests(TestMixin, TestCase):
     def test_update_first_last_name(self):
-        resp = self.client.put('/api/auth/me/', {
+        resp = self.client.put('/api/v1/auth/me/', {
             'username': 'gaptest',
             'first_name': 'Jane',
             'last_name': 'Smith',
@@ -107,7 +107,7 @@ class FirstLastNameTests(TestMixin, TestCase):
         self.assertEqual(self.user.last_name, 'Smith')
 
     def test_first_last_name_in_response(self):
-        resp = self.client.get('/api/auth/me/')
+        resp = self.client.get('/api/v1/auth/me/')
         self.assertEqual(resp.data['first_name'], 'John')
         self.assertEqual(resp.data['last_name'], 'Doe')
 
@@ -117,7 +117,7 @@ class FirstLastNameTests(TestMixin, TestCase):
 class DashboardEnhancementTests(TestMixin, TestCase):
     def test_keyword_match_in_score_trend(self):
         self._make_analysis()
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         trend = resp.data['score_trend']
         self.assertEqual(len(trend), 1)
@@ -131,7 +131,7 @@ class DashboardEnhancementTests(TestMixin, TestCase):
                     'missing_keywords': ['kubernetes', 'terraform'],
                 },
             )
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         keywords = resp.data['top_missing_keywords']
         self.assertGreater(len(keywords), 0)
         kw_names = [k['keyword'] for k in keywords]
@@ -144,11 +144,11 @@ class DashboardEnhancementTests(TestMixin, TestCase):
             wallet=wallet, amount=-1, balance_after=99,
             transaction_type='analysis_debit', description='Test',
         )
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertIn('credit_usage', resp.data)
 
     def test_weekly_job_matches_in_dashboard(self):
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertIn('weekly_job_matches', resp.data)
         self.assertEqual(resp.data['weekly_job_matches'], 0)
 
@@ -163,28 +163,28 @@ class AnalysisSearchFilterTests(TestMixin, TestCase):
         self._make_analysis(jd_role='Backend Developer', ats_score=92)
 
     def test_search_by_role(self):
-        resp = self.client.get('/api/analyses/?search=Backend')
+        resp = self.client.get('/api/v1/analyses/?search=Backend')
         self.assertEqual(resp.data['count'], 2)
 
     def test_filter_by_status(self):
-        resp = self.client.get('/api/analyses/?status=done')
+        resp = self.client.get('/api/v1/analyses/?status=done')
         self.assertEqual(resp.data['count'], 3)
 
     def test_score_min_filter(self):
-        resp = self.client.get('/api/analyses/?score_min=80')
+        resp = self.client.get('/api/v1/analyses/?score_min=80')
         self.assertEqual(resp.data['count'], 2)
 
     def test_score_max_filter(self):
-        resp = self.client.get('/api/analyses/?score_max=70')
+        resp = self.client.get('/api/v1/analyses/?score_max=70')
         self.assertEqual(resp.data['count'], 1)
 
     def test_ordering_by_score_desc(self):
-        resp = self.client.get('/api/analyses/?ordering=-ats_score')
+        resp = self.client.get('/api/v1/analyses/?ordering=-ats_score')
         results = resp.data['results']
         self.assertEqual(results[0]['ats_score'], 92)
 
     def test_combined_filters(self):
-        resp = self.client.get('/api/analyses/?search=Backend&score_min=90')
+        resp = self.client.get('/api/v1/analyses/?search=Backend&score_min=90')
         self.assertEqual(resp.data['count'], 1)
 
 
@@ -203,11 +203,11 @@ class ResumeSearchFilterTests(TestMixin, TestCase):
         )
 
     def test_search_by_filename(self):
-        resp = self.client.get('/api/resumes/?search=john')
+        resp = self.client.get('/api/v1/resumes/?search=john')
         self.assertEqual(resp.data['count'], 1)
 
     def test_ordering_by_size(self):
-        resp = self.client.get('/api/resumes/?ordering=-file_size_bytes')
+        resp = self.client.get('/api/v1/resumes/?ordering=-file_size_bytes')
         results = resp.data['results']
         self.assertEqual(results[0]['original_filename'], 'cv_jane.pdf')
 
@@ -222,7 +222,7 @@ class GeneratedResumeDeleteTests(TestMixin, TestCase):
             template='ats_classic', format='pdf',
             status='done',
         )
-        resp = self.client.delete(f'/api/generated-resumes/{gen.pk}/')
+        resp = self.client.delete(f'/api/v1/generated-resumes/{gen.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(GeneratedResume.objects.filter(pk=gen.pk).exists())
 
@@ -235,7 +235,7 @@ class GeneratedResumeDeleteTests(TestMixin, TestCase):
             user=other, analysis=analysis,
             template='ats_classic', format='pdf', status='done',
         )
-        resp = self.client.delete(f'/api/generated-resumes/{gen.pk}/')
+        resp = self.client.delete(f'/api/v1/generated-resumes/{gen.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
 
@@ -251,7 +251,7 @@ class ResumeBulkDeleteTests(TestMixin, TestCase):
             user=self.user, original_filename='b.pdf',
             file_hash='bbb', file_size_bytes=200,
         )
-        resp = self.client.post('/api/resumes/bulk-delete/', {
+        resp = self.client.post('/api/v1/resumes/bulk-delete/', {
             'ids': [str(r1.pk), str(r2.pk)],
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
@@ -265,14 +265,14 @@ class ResumeBulkDeleteTests(TestMixin, TestCase):
         ResumeAnalysis.objects.create(
             user=self.user, resume=resume, status='done', ats_score=70,
         )
-        resp = self.client.post('/api/resumes/bulk-delete/', {
+        resp = self.client.post('/api/v1/resumes/bulk-delete/', {
             'ids': [str(resume.pk)],
         }, format='json')
         self.assertEqual(resp.data['deleted'], 0)
         self.assertEqual(len(resp.data['skipped']), 1)
 
     def test_bulk_delete_empty_list_rejected(self):
-        resp = self.client.post('/api/resumes/bulk-delete/', {'ids': []}, format='json')
+        resp = self.client.post('/api/v1/resumes/bulk-delete/', {'ids': []}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
 
@@ -297,7 +297,7 @@ class JobAlertTotalMatchesTests(TestMixin, TestCase):
                 relevance_score=80,
             )
 
-        resp = self.client.get('/api/job-alerts/')
+        resp = self.client.get('/api/v1/job-alerts/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         results = resp.data['results']
         self.assertEqual(len(results), 1)
@@ -308,7 +308,7 @@ class JobAlertTotalMatchesTests(TestMixin, TestCase):
 
 class SocialLinksTests(TestMixin, TestCase):
     def test_update_social_links(self):
-        resp = self.client.put('/api/auth/me/', {
+        resp = self.client.put('/api/v1/auth/me/', {
             'username': 'gaptest',
             'website_url': 'https://mysite.com',
             'github_url': 'https://github.com/user',
@@ -321,7 +321,7 @@ class SocialLinksTests(TestMixin, TestCase):
         profile.website_url = 'https://example.com'
         profile.save(update_fields=['website_url'])
 
-        resp = self.client.get('/api/auth/me/')
+        resp = self.client.get('/api/v1/auth/me/')
         self.assertEqual(resp.data['website_url'], 'https://example.com')
 
     def test_clear_social_links(self):
@@ -329,7 +329,7 @@ class SocialLinksTests(TestMixin, TestCase):
         profile.github_url = 'https://github.com/user'
         profile.save(update_fields=['github_url'])
 
-        resp = self.client.put('/api/auth/me/', {
+        resp = self.client.put('/api/v1/auth/me/', {
             'username': 'gaptest',
             'github_url': '',
         }, format='json')
@@ -350,7 +350,7 @@ class ResumeStalenessTests(TestMixin, TestCase):
         Resume.objects.filter(pk=resume.pk).update(
             uploaded_at=timezone.now() - timedelta(days=45),
         )
-        resp = self.client.get('/api/resumes/')
+        resp = self.client.get('/api/v1/resumes/')
         r = resp.data['results'][0]
         self.assertIn('days_since_upload', r)
         self.assertGreaterEqual(r['days_since_upload'], 44)
@@ -361,7 +361,7 @@ class ResumeStalenessTests(TestMixin, TestCase):
             file_hash='rrr', file_size_bytes=100,
         )
         self._make_analysis(resume=resume)
-        resp = self.client.get('/api/resumes/')
+        resp = self.client.get('/api/v1/resumes/')
         r = resp.data['results'][0]
         self.assertIn('last_analyzed_at', r)
         self.assertIsNotNone(r['last_analyzed_at'])
@@ -376,7 +376,7 @@ class WalletExportTests(TestMixin, TestCase):
             wallet=wallet, amount=-1, balance_after=99,
             transaction_type='analysis_debit', description='Analysis',
         )
-        resp = self.client.get('/api/auth/wallet/transactions/export/')
+        resp = self.client.get('/api/v1/auth/wallet/transactions/export/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp['Content-Type'], 'text/csv')
         self.assertIn('attachment', resp['Content-Disposition'])
@@ -385,7 +385,7 @@ class WalletExportTests(TestMixin, TestCase):
         self.assertIn('analysis_debit', content)
 
     def test_csv_export_empty(self):
-        resp = self.client.get('/api/auth/wallet/transactions/export/')
+        resp = self.client.get('/api/v1/auth/wallet/transactions/export/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         content = resp.content.decode()
         # Header row is always present
@@ -402,7 +402,7 @@ class SharedAnalysisSummaryTests(TestMixin, TestCase):
 
         # No auth needed for public endpoint
         self.client.credentials()
-        resp = self.client.get(f'/api/shared/{analysis.share_token}/summary/')
+        resp = self.client.get(f'/api/v1/shared/{analysis.share_token}/summary/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['ats_score'], 75)
         self.assertEqual(resp.data['overall_grade'], 'B')
@@ -410,7 +410,7 @@ class SharedAnalysisSummaryTests(TestMixin, TestCase):
 
     def test_summary_invalid_token(self):
         self.client.credentials()
-        resp = self.client.get(f'/api/shared/{uuid.uuid4()}/summary/')
+        resp = self.client.get(f'/api/v1/shared/{uuid.uuid4()}/summary/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
 
@@ -421,14 +421,14 @@ class AnalysisCompareTests(TestMixin, TestCase):
         a1 = self._make_analysis(jd_role='SWE', ats_score=80)
         a2 = self._make_analysis(jd_role='DevOps', ats_score=90)
 
-        resp = self.client.get(f'/api/analyses/compare/?ids={a1.pk},{a2.pk}')
+        resp = self.client.get(f'/api/v1/analyses/compare/?ids={a1.pk},{a2.pk}')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 2)
         self.assertEqual(len(resp.data['analyses']), 2)
 
     def test_compare_requires_at_least_two(self):
         a1 = self._make_analysis()
-        resp = self.client.get(f'/api/analyses/compare/?ids={a1.pk}')
+        resp = self.client.get(f'/api/v1/analyses/compare/?ids={a1.pk}')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_compare_max_five(self):
@@ -436,14 +436,14 @@ class AnalysisCompareTests(TestMixin, TestCase):
         for i in range(6):
             a = self._make_analysis()
             ids.append(str(a.pk))
-        resp = self.client.get(f'/api/analyses/compare/?ids={",".join(ids)}')
+        resp = self.client.get(f'/api/v1/analyses/compare/?ids={",".join(ids)}')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_compare_other_users_analysis_not_found(self):
         other = User.objects.create_user(username='other2', password='Pass123!!')
         a1 = self._make_analysis()
         a2 = ResumeAnalysis.objects.create(user=other, status='done', ats_score=70)
-        resp = self.client.get(f'/api/analyses/compare/?ids={a1.pk},{a2.pk}')
+        resp = self.client.get(f'/api/v1/analyses/compare/?ids={a1.pk},{a2.pk}')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
 
@@ -461,26 +461,26 @@ class AvatarUploadTests(TestMixin, TestCase):
 
     def test_upload_avatar(self):
         avatar = self._make_image()
-        resp = self.client.post('/api/auth/avatar/', {'avatar': avatar}, format='multipart')
+        resp = self.client.post('/api/v1/auth/avatar/', {'avatar': avatar}, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('avatar_url', resp.data)
         self.user.profile.refresh_from_db()
         self.assertTrue(self.user.profile.avatar_url)
 
     def test_upload_no_file(self):
-        resp = self.client.post('/api/auth/avatar/', {}, format='multipart')
+        resp = self.client.post('/api/v1/auth/avatar/', {}, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_upload_invalid_type(self):
         f = SimpleUploadedFile('doc.pdf', b'%PDF-1.4 content', content_type='application/pdf')
-        resp = self.client.post('/api/auth/avatar/', {'avatar': f}, format='multipart')
+        resp = self.client.post('/api/v1/auth/avatar/', {'avatar': f}, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Invalid file type', resp.data['detail'])
 
     def test_upload_too_large(self):
         # 3 MB file
         f = SimpleUploadedFile('big.png', b'x' * (3 * 1024 * 1024), content_type='image/png')
-        resp = self.client.post('/api/auth/avatar/', {'avatar': f}, format='multipart')
+        resp = self.client.post('/api/v1/auth/avatar/', {'avatar': f}, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('too large', resp.data['detail'])
 
@@ -488,13 +488,13 @@ class AvatarUploadTests(TestMixin, TestCase):
         self.user.profile.avatar_url = 'https://example.com/pic.jpg'
         self.user.profile.save(update_fields=['avatar_url'])
 
-        resp = self.client.delete('/api/auth/avatar/')
+        resp = self.client.delete('/api/v1/auth/avatar/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.user.profile.refresh_from_db()
         self.assertEqual(self.user.profile.avatar_url, '')
 
     def test_delete_no_avatar(self):
-        resp = self.client.delete('/api/auth/avatar/')
+        resp = self.client.delete('/api/v1/auth/avatar/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
 
@@ -503,7 +503,7 @@ class AvatarUploadTests(TestMixin, TestCase):
 class IndustryBenchmarkTests(TestMixin, TestCase):
     def test_benchmark_in_dashboard(self):
         self._make_analysis(ats_score=80)
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertIn('industry_benchmark_percentile', resp.data)
 
     def test_benchmark_with_multiple_users(self):
@@ -514,10 +514,10 @@ class IndustryBenchmarkTests(TestMixin, TestCase):
         other = User.objects.create_user(username='low', password='Pass123!!')
         ResumeAnalysis.objects.create(user=other, status='done', ats_score=50)
 
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         # Our user should be above the other user
         self.assertGreaterEqual(resp.data['industry_benchmark_percentile'], 50)
 
     def test_benchmark_none_without_analyses(self):
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertIsNone(resp.data['industry_benchmark_percentile'])

@@ -14,7 +14,7 @@ TEMPLATES = [
         'slug': 'password-reset',
         'name': 'Password Reset',
         'category': 'auth',
-        'description': 'Sent when a user requests a password reset via POST /api/auth/forgot-password/.',
+        'description': 'Sent when a user requests a password reset via POST /api/v1/auth/forgot-password/.',
         'subject': '{{ app_name }} — Password Reset',
         'html_body': '''\
 <!DOCTYPE html>
@@ -91,7 +91,7 @@ This link expires in {{ expiry_hours }} hour(s). If you did not request this, yo
         'slug': 'welcome',
         'name': 'Welcome Email',
         'category': 'auth',
-        'description': 'Sent when a new user registers via POST /api/auth/register/.',
+        'description': 'Sent when a new user registers via POST /api/v1/auth/register/.',
         'subject': 'Welcome to {{ app_name }}! 🎉',
         'html_body': '''\
 <!DOCTYPE html>

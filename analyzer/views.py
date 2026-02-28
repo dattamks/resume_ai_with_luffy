@@ -48,7 +48,7 @@ logger = logging.getLogger('analyzer')
 
 class AnalyzeResumeView(APIView):
     """
-    POST /api/analyze/
+    POST /api/v1/analyze/
     Upload a PDF resume + job description input → kicks off async analysis.
     """
     permission_classes = [IsAuthenticated]
@@ -182,7 +182,7 @@ class AnalyzeResumeView(APIView):
 
 class RetryAnalysisView(APIView):
     """
-    POST /api/analyses/<id>/retry/
+    POST /api/v1/analyses/<id>/retry/
     Retry a failed or interrupted analysis from its last incomplete step.
     """
     permission_classes = [IsAuthenticated]
@@ -257,7 +257,7 @@ class RetryAnalysisView(APIView):
 
 class AnalysisListView(ListAPIView):
     """
-    GET /api/analyses/
+    GET /api/v1/analyses/
     List all analyses for the authenticated user (paginated).
 
     Query params:
@@ -297,7 +297,7 @@ class AnalysisListView(ListAPIView):
 
 class AnalysisDetailView(RetrieveAPIView):
     """
-    GET /api/analyses/<id>/
+    GET /api/v1/analyses/<id>/
     Retrieve full details of a single analysis.
     """
     permission_classes = [IsAuthenticated]
@@ -314,7 +314,7 @@ class AnalysisDetailView(RetrieveAPIView):
 
 class AnalysisDeleteView(APIView):
     """
-    DELETE /api/analyses/<id>/delete/
+    DELETE /api/v1/analyses/<id>/delete/
     Soft-delete a single analysis owned by the authenticated user.
     Clears heavy fields, deletes report PDF, orphans ScrapeResult/LLMResponse.
     Keeps lightweight metadata (ats_score, jd_role, etc.) for analytics.
@@ -339,7 +339,7 @@ class AnalysisDeleteView(APIView):
 
 class AnalysisPDFExportView(APIView):
     """
-    GET /api/analyses/<id>/export-pdf/
+    GET /api/v1/analyses/<id>/export-pdf/
     Return the pre-generated PDF from R2, or generate on-the-fly as fallback.
     """
     permission_classes = [IsAuthenticated]
@@ -394,7 +394,7 @@ class AnalysisPDFExportView(APIView):
 
 class AnalysisStatusView(APIView):
     """
-    GET /api/analyses/<id>/status/
+    GET /api/v1/analyses/<id>/status/
     Ultra-fast polling endpoint — reads from Redis cache first,
     falls back to DB. Returns minimal payload for polling.
     """
@@ -432,7 +432,7 @@ class AnalysisStatusView(APIView):
 
 class ResumeListView(ListAPIView):
     """
-    GET /api/resumes/
+    GET /api/v1/resumes/
     List the user's deduplicated resume files with analysis counts.
 
     Query params:
@@ -460,7 +460,7 @@ class ResumeListView(ListAPIView):
 
 class ResumeDeleteView(APIView):
     """
-    DELETE /api/resumes/<id>/
+    DELETE /api/v1/resumes/<id>/
     Delete a resume file from storage.
     Only allowed if no active (non-soft-deleted) analyses reference it.
     """
@@ -500,7 +500,7 @@ class ResumeDeleteView(APIView):
 
 class DashboardStatsView(APIView):
     """
-    GET /api/dashboard/stats/
+    GET /api/v1/dashboard/stats/
     User-level analytics computed from all analyses (including soft-deleted).
     """
     permission_classes = [IsAuthenticated]
@@ -668,8 +668,8 @@ class DashboardStatsView(APIView):
 
 class AnalysisShareView(APIView):
     """
-    POST /api/analyses/<id>/share/   — Generate a public share token.
-    DELETE /api/analyses/<id>/share/  — Revoke the share token.
+    POST /api/v1/analyses/<id>/share/   — Generate a public share token.
+    DELETE /api/v1/analyses/<id>/share/  — Revoke the share token.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [WriteThrottle]
@@ -697,7 +697,7 @@ class AnalysisShareView(APIView):
 
         # If already shared, return existing token (idempotent)
         if analysis.share_token:
-            share_path = f'/api/shared/{analysis.share_token}/'
+            share_path = f'/api/v1/shared/{analysis.share_token}/'
             return Response({
                 'share_token': str(analysis.share_token),
                 'share_url': request.build_absolute_uri(share_path),
@@ -707,7 +707,7 @@ class AnalysisShareView(APIView):
         analysis.save(update_fields=['share_token'])
         logger.info('Share token created for analysis id=%s user=%s', pk, request.user.id)
 
-        share_path = f'/api/shared/{analysis.share_token}/'
+        share_path = f'/api/v1/shared/{analysis.share_token}/'
         return Response({
             'share_token': str(analysis.share_token),
             'share_url': request.build_absolute_uri(share_path),
@@ -734,7 +734,7 @@ class AnalysisShareView(APIView):
 
 class SharedAnalysisView(APIView):
     """
-    GET /api/shared/<token>/
+    GET /api/v1/shared/<token>/
     Public read-only view of a shared analysis. No auth required.
     """
     permission_classes = [AllowAny]
@@ -759,7 +759,7 @@ class SharedAnalysisView(APIView):
 
 class GenerateResumeView(APIView):
     """
-    POST /api/analyses/<id>/generate-resume/
+    POST /api/v1/analyses/<id>/generate-resume/
     Generate an improved resume from analysis findings.
     Costs 1 credit (resume_generation). Requires analysis status == done.
     """
@@ -843,7 +843,7 @@ class GenerateResumeView(APIView):
 
 class GeneratedResumeStatusView(APIView):
     """
-    GET /api/analyses/<id>/generated-resume/
+    GET /api/v1/analyses/<id>/generated-resume/
     Poll the latest generated resume status for an analysis.
     Returns status + file URL when done.
     """
@@ -872,7 +872,7 @@ class GeneratedResumeStatusView(APIView):
 
 class GeneratedResumeDownloadView(APIView):
     """
-    GET /api/analyses/<id>/generated-resume/download/
+    GET /api/v1/analyses/<id>/generated-resume/download/
     Redirect to R2 signed URL for the generated resume file.
     """
     permission_classes = [IsAuthenticated]
@@ -901,7 +901,7 @@ class GeneratedResumeDownloadView(APIView):
 
 class GeneratedResumeListView(APIView):
     """
-    GET /api/generated-resumes/
+    GET /api/v1/generated-resumes/
     List all generated resumes for the authenticated user (paginated).
     """
     permission_classes = [IsAuthenticated]
@@ -923,8 +923,8 @@ class GeneratedResumeListView(APIView):
 
 class JobAlertListCreateView(APIView):
     """
-    GET  /api/job-alerts/  — List the authenticated user's job alerts.
-    POST /api/job-alerts/  — Create a new job alert (Pro plan required).
+    GET  /api/v1/job-alerts/  — List the authenticated user's job alerts.
+    POST /api/v1/job-alerts/  — Create a new job alert (Pro plan required).
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -973,9 +973,9 @@ class JobAlertListCreateView(APIView):
 
 class JobAlertDetailView(APIView):
     """
-    GET    /api/job-alerts/<id>/  — Alert detail + latest run stats.
-    PUT    /api/job-alerts/<id>/  — Update frequency/preferences/is_active.
-    DELETE /api/job-alerts/<id>/  — Deactivate the alert.
+    GET    /api/v1/job-alerts/<id>/  — Alert detail + latest run stats.
+    PUT    /api/v1/job-alerts/<id>/  — Update frequency/preferences/is_active.
+    DELETE /api/v1/job-alerts/<id>/  — Deactivate the alert.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -1017,7 +1017,7 @@ class JobAlertDetailView(APIView):
 
 class JobAlertMatchListView(APIView):
     """
-    GET /api/job-alerts/<id>/matches/
+    GET /api/v1/job-alerts/<id>/matches/
     Paginated matched jobs with scores and reasons.
     Supports ?feedback= filter (pending/relevant/irrelevant/applied/dismissed).
     """
@@ -1057,7 +1057,7 @@ class JobAlertMatchListView(APIView):
 
 class JobAlertMatchFeedbackView(APIView):
     """
-    POST /api/job-alerts/<id>/matches/<match_id>/feedback/
+    POST /api/v1/job-alerts/<id>/matches/<match_id>/feedback/
     Update user feedback on a matched job (relevant/irrelevant/applied/dismissed).
     """
     permission_classes = [IsAuthenticated]
@@ -1082,7 +1082,7 @@ class JobAlertMatchFeedbackView(APIView):
 
 class JobAlertManualRunView(APIView):
     """
-    POST /api/job-alerts/<id>/run/
+    POST /api/v1/job-alerts/<id>/run/
     Trigger an on-demand manual job discovery + matching run (costs 1 credit).
     Returns 202 Accepted immediately; results appear in matches when done.
     """
@@ -1148,7 +1148,7 @@ class JobAlertManualRunView(APIView):
 
 
 class NotificationListView(ListAPIView):
-    """GET /api/notifications/ — paginated list of user's notifications."""
+    """GET /api/v1/notifications/ — paginated list of user's notifications."""
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -1158,7 +1158,7 @@ class NotificationListView(ListAPIView):
 
 
 class NotificationUnreadCountView(APIView):
-    """GET /api/notifications/unread-count/ — unread notification count for badge."""
+    """GET /api/v1/notifications/unread-count/ — unread notification count for badge."""
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
 
@@ -1170,7 +1170,7 @@ class NotificationUnreadCountView(APIView):
 
 
 class NotificationMarkReadView(APIView):
-    """POST /api/notifications/mark-read/ — mark one or all notifications as read."""
+    """POST /api/v1/notifications/mark-read/ — mark one or all notifications as read."""
     permission_classes = [IsAuthenticated]
     throttle_classes = [WriteThrottle]
 
@@ -1203,7 +1203,7 @@ class NotificationMarkReadView(APIView):
 
 class AnalysisCancelView(APIView):
     """
-    POST /api/analyses/<id>/cancel/
+    POST /api/v1/analyses/<id>/cancel/
     Cancel a stuck/processing analysis by revoking the Celery task.
     Marks as failed and refunds credits.
     """
@@ -1261,7 +1261,7 @@ class AnalysisCancelView(APIView):
 
 class AnalysisBulkDeleteView(APIView):
     """
-    POST /api/analyses/bulk-delete/
+    POST /api/v1/analyses/bulk-delete/
     Soft-delete multiple analyses at once.
     Body: {"ids": [1, 2, 3]}
     """
@@ -1303,7 +1303,7 @@ class AnalysisBulkDeleteView(APIView):
 
 class AnalysisExportJSONView(APIView):
     """
-    GET /api/analyses/<id>/export-json/
+    GET /api/v1/analyses/<id>/export-json/
     Download the full analysis data as a JSON file.
     """
     permission_classes = [IsAuthenticated]
@@ -1342,7 +1342,7 @@ class AnalysisExportJSONView(APIView):
 
 class AccountDataExportView(APIView):
     """
-    GET /api/account/export/
+    GET /api/v1/account/export/
     Download all user data as a JSON file (GDPR compliance).
     Includes profile, analyses, resumes, wallet, notifications.
     """
@@ -1443,7 +1443,7 @@ class AccountDataExportView(APIView):
 
 class GeneratedResumeDeleteView(APIView):
     """
-    DELETE /api/generated-resumes/<uuid:pk>/
+    DELETE /api/v1/generated-resumes/<uuid:pk>/
     Delete a generated resume owned by the authenticated user.
     Removes the file from R2 storage.
     """
@@ -1473,7 +1473,7 @@ class GeneratedResumeDeleteView(APIView):
 
 class ResumeBulkDeleteView(APIView):
     """
-    POST /api/resumes/bulk-delete/
+    POST /api/v1/resumes/bulk-delete/
     Delete multiple resumes at once.
     Body: {"ids": ["uuid1", "uuid2", ...]}
     Only deletes resumes with no active analyses or job alerts referencing them.
@@ -1534,7 +1534,7 @@ class ResumeBulkDeleteView(APIView):
 
 class AnalysisCompareView(APIView):
     """
-    GET /api/analyses/compare/?ids=1,2
+    GET /api/v1/analyses/compare/?ids=1,2
     Compare two or more analyses side-by-side.
     Returns full detail for each analysis.
     """
@@ -1585,7 +1585,7 @@ class AnalysisCompareView(APIView):
 
 class SharedAnalysisSummaryView(APIView):
     """
-    GET /api/shared/<uuid:token>/summary/
+    GET /api/v1/shared/<uuid:token>/summary/
     Lightweight public summary of a shared analysis — for social card previews.
     Returns only score, grade, and role (no PII).
     """
@@ -1616,7 +1616,7 @@ class SharedAnalysisSummaryView(APIView):
 
 class ResumeVersionHistoryView(APIView):
     """
-    GET /api/resumes/<uuid:pk>/versions/
+    GET /api/v1/resumes/<uuid:pk>/versions/
     Returns the version history for a specific resume, including ATS score progression.
     """
     permission_classes = [IsAuthenticated]
@@ -1683,7 +1683,7 @@ class ResumeVersionHistoryView(APIView):
 
 class BulkAnalyzeView(APIView):
     """
-    POST /api/analyze/bulk/
+    POST /api/v1/analyze/bulk/
     Analyze one resume against multiple job descriptions (up to 10).
     Creates separate analysis entries for each JD.
     """
@@ -1810,8 +1810,8 @@ class BulkAnalyzeView(APIView):
 
 class InterviewPrepView(APIView):
     """
-    POST /api/analyses/<id>/interview-prep/  — Generate interview prep (1 credit)
-    GET  /api/analyses/<id>/interview-prep/  — Get latest interview prep status
+    POST /api/v1/analyses/<id>/interview-prep/  — Generate interview prep (1 credit)
+    GET  /api/v1/analyses/<id>/interview-prep/  — Get latest interview prep status
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [WriteThrottle]
@@ -1894,7 +1894,7 @@ class InterviewPrepView(APIView):
 
 class InterviewPrepStatusView(APIView):
     """
-    GET /api/analyses/<id>/interview-prep/
+    GET /api/v1/analyses/<id>/interview-prep/
     Get the latest interview prep for an analysis.
     """
     permission_classes = [IsAuthenticated]
@@ -1916,7 +1916,7 @@ class InterviewPrepStatusView(APIView):
 
 class InterviewPrepListView(ListAPIView):
     """
-    GET /api/interview-preps/
+    GET /api/v1/interview-preps/
     List all interview preps for the authenticated user.
     """
     permission_classes = [IsAuthenticated]
@@ -1932,8 +1932,8 @@ class InterviewPrepListView(ListAPIView):
 
 class CoverLetterView(APIView):
     """
-    POST /api/analyses/<id>/cover-letter/  — Generate cover letter (1 credit)
-    GET  /api/analyses/<id>/cover-letter/  — Get latest cover letter status
+    POST /api/v1/analyses/<id>/cover-letter/  — Generate cover letter (1 credit)
+    GET  /api/v1/analyses/<id>/cover-letter/  — Get latest cover letter status
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [WriteThrottle]
@@ -2024,7 +2024,7 @@ class CoverLetterView(APIView):
 
 class CoverLetterStatusView(APIView):
     """
-    GET /api/analyses/<id>/cover-letter/
+    GET /api/v1/analyses/<id>/cover-letter/
     Get the latest cover letter for an analysis.
     """
     permission_classes = [IsAuthenticated]
@@ -2046,7 +2046,7 @@ class CoverLetterStatusView(APIView):
 
 class CoverLetterListView(ListAPIView):
     """
-    GET /api/cover-letters/
+    GET /api/v1/cover-letters/
     List all cover letters for the authenticated user.
     """
     permission_classes = [IsAuthenticated]

@@ -65,7 +65,7 @@ def _set_plan(user, slug):
 def _auth(client, username='alertuser', password='StrongPass123!'):
     user = User.objects.create_user(username=username, password=password)
     resp = client.post(
-        '/api/auth/login/',
+        '/api/v1/auth/login/',
         {'username': username, 'password': password},
         format='json',
     )
@@ -84,14 +84,14 @@ class JobAlertCRUDTests(TestCase):
         self.resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
 
     def test_list_empty(self):
-        resp = self.client.get('/api/job-alerts/')
+        resp = self.client.get('/api/v1/job-alerts/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['results'], [])
         self.assertEqual(resp.data['count'], 0)
 
     def test_create_requires_pro(self):
         """Free plan users cannot create job alerts."""
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id),
             'frequency': 'weekly',
         }, format='json')
@@ -104,7 +104,7 @@ class JobAlertCRUDTests(TestCase):
         _set_plan(self.user, 'pro')
         mock_task.delay.return_value = MagicMock()
 
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id),
             'frequency': 'weekly',
         }, format='json')
@@ -126,7 +126,7 @@ class JobAlertCRUDTests(TestCase):
             resume, _ = Resume.get_or_create_from_upload(
                 self.user, _make_pdf(f'%PDF-1.4 fake content {i}'.encode()),
             )
-            resp = self.client.post('/api/job-alerts/', {
+            resp = self.client.post('/api/v1/job-alerts/', {
                 'resume': str(resume.id),
                 'frequency': 'daily',
             }, format='json')
@@ -139,19 +139,19 @@ class JobAlertCRUDTests(TestCase):
         mock_task.delay.return_value = MagicMock()
 
         # Create
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id),
             'frequency': 'daily',
         }, format='json')
         alert_id = resp.data['id']
 
         # GET detail
-        resp = self.client.get(f'/api/job-alerts/{alert_id}/')
+        resp = self.client.get(f'/api/v1/job-alerts/{alert_id}/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['frequency'], 'daily')
 
         # PUT — change frequency
-        resp = self.client.put(f'/api/job-alerts/{alert_id}/', {
+        resp = self.client.put(f'/api/v1/job-alerts/{alert_id}/', {
             'frequency': 'weekly',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
@@ -163,13 +163,13 @@ class JobAlertCRUDTests(TestCase):
         _set_plan(self.user, 'pro')
         mock_task.delay.return_value = MagicMock()
 
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id),
             'frequency': 'weekly',
         }, format='json')
         alert_id = resp.data['id']
 
-        resp = self.client.delete(f'/api/job-alerts/{alert_id}/')
+        resp = self.client.delete(f'/api/v1/job-alerts/{alert_id}/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
         # Verify deactivated
@@ -178,7 +178,7 @@ class JobAlertCRUDTests(TestCase):
 
     def test_detail_404_wrong_user(self):
         """Users can't see other users' alerts."""
-        resp = self.client.get(f'/api/job-alerts/{uuid.uuid4()}/')
+        resp = self.client.get(f'/api/v1/job-alerts/{uuid.uuid4()}/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     @patch('analyzer.views.extract_job_search_profile_task')
@@ -187,7 +187,7 @@ class JobAlertCRUDTests(TestCase):
         _set_plan(self.user, 'pro')
         mock_task.delay.return_value = MagicMock()
 
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id),
             'frequency': 'daily',
             'preferences': {
@@ -242,24 +242,24 @@ class JobAlertMatchTests(TestCase):
         )
 
     def test_list_matches(self):
-        resp = self.client.get(f'/api/job-alerts/{self.alert.id}/matches/')
+        resp = self.client.get(f'/api/v1/job-alerts/{self.alert.id}/matches/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 1)
         self.assertEqual(resp.data['results'][0]['relevance_score'], 85)
         self.assertEqual(resp.data['results'][0]['job']['title'], 'Senior Python Developer')
 
     def test_list_matches_filter_feedback(self):
-        resp = self.client.get(f'/api/job-alerts/{self.alert.id}/matches/?feedback=pending')
+        resp = self.client.get(f'/api/v1/job-alerts/{self.alert.id}/matches/?feedback=pending')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 1)
 
-        resp = self.client.get(f'/api/job-alerts/{self.alert.id}/matches/?feedback=applied')
+        resp = self.client.get(f'/api/v1/job-alerts/{self.alert.id}/matches/?feedback=applied')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['count'], 0)
 
     def test_feedback_success(self):
         resp = self.client.post(
-            f'/api/job-alerts/{self.alert.id}/matches/{self.match.id}/feedback/',
+            f'/api/v1/job-alerts/{self.alert.id}/matches/{self.match.id}/feedback/',
             {'user_feedback': 'relevant'},
             format='json',
         )
@@ -269,7 +269,7 @@ class JobAlertMatchTests(TestCase):
 
     def test_feedback_invalid(self):
         resp = self.client.post(
-            f'/api/job-alerts/{self.alert.id}/matches/{self.match.id}/feedback/',
+            f'/api/v1/job-alerts/{self.alert.id}/matches/{self.match.id}/feedback/',
             {'user_feedback': 'pending'},
             format='json',
         )
@@ -277,7 +277,7 @@ class JobAlertMatchTests(TestCase):
 
     def test_feedback_applied(self):
         resp = self.client.post(
-            f'/api/job-alerts/{self.alert.id}/matches/{self.match.id}/feedback/',
+            f'/api/v1/job-alerts/{self.alert.id}/matches/{self.match.id}/feedback/',
             {'user_feedback': 'applied'},
             format='json',
         )
@@ -287,7 +287,7 @@ class JobAlertMatchTests(TestCase):
 
     def test_feedback_404_wrong_match(self):
         resp = self.client.post(
-            f'/api/job-alerts/{self.alert.id}/matches/{uuid.uuid4()}/feedback/',
+            f'/api/v1/job-alerts/{self.alert.id}/matches/{uuid.uuid4()}/feedback/',
             {'user_feedback': 'relevant'},
             format='json',
         )
@@ -296,7 +296,7 @@ class JobAlertMatchTests(TestCase):
     @patch('analyzer.tasks.crawl_jobs_for_alert_task')
     def test_manual_run_trigger(self, mock_crawl):
         mock_crawl.delay.return_value = MagicMock()
-        resp = self.client.post(f'/api/job-alerts/{self.alert.id}/run/')
+        resp = self.client.post(f'/api/v1/job-alerts/{self.alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
         mock_crawl.delay.assert_called_once_with(str(self.alert.id))
 
@@ -304,7 +304,7 @@ class JobAlertMatchTests(TestCase):
     def test_manual_run_inactive_alert(self, mock_crawl):
         self.alert.is_active = False
         self.alert.save(update_fields=['is_active'])
-        resp = self.client.post(f'/api/job-alerts/{self.alert.id}/run/')
+        resp = self.client.post(f'/api/v1/job-alerts/{self.alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         mock_crawl.delay.assert_not_called()
 
@@ -537,7 +537,7 @@ class EdgeCaseTests(TestCase):
             user=self.user, resume=self.resume, frequency='daily',
             is_active=True, next_run_at=timezone.now() + timedelta(days=1),
         )
-        resp = self.client.get(f'/api/job-alerts/{alert.id}/matches/?page=abc')
+        resp = self.client.get(f'/api/v1/job-alerts/{alert.id}/matches/?page=abc')
         # DRF PageNumberPagination returns 404 for invalid page params
         # This is expected DRF behavior
         self.assertIn(resp.status_code, [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND])
@@ -548,7 +548,7 @@ class EdgeCaseTests(TestCase):
             user=self.user, resume=self.resume, frequency='daily',
             is_active=True, next_run_at=timezone.now() + timedelta(days=1),
         )
-        resp = self.client.get(f'/api/job-alerts/{alert.id}/matches/?feedback=xyz')
+        resp = self.client.get(f'/api/v1/job-alerts/{alert.id}/matches/?feedback=xyz')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     @patch('analyzer.views.extract_job_search_profile_task')
@@ -557,13 +557,13 @@ class EdgeCaseTests(TestCase):
         mock_task.delay.return_value = MagicMock()
 
         # First alert succeeds
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id), 'frequency': 'daily',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
 
         # Second alert for same resume fails
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(self.resume.id), 'frequency': 'weekly',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -575,7 +575,7 @@ class EdgeCaseTests(TestCase):
             user=self.user, resume=self.resume, frequency='daily',
             is_active=True, next_run_at=timezone.now() + timedelta(days=1),
         )
-        resp = self.client.delete(f'/api/resumes/{self.resume.id}/')
+        resp = self.client.delete(f'/api/v1/resumes/{self.resume.id}/')
         self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
         self.assertIn('job alert', resp.data['detail'].lower())
 
@@ -585,7 +585,7 @@ class EdgeCaseTests(TestCase):
             user=self.user, resume=self.resume, frequency='daily',
             is_active=True, next_run_at=timezone.now() + timedelta(days=1),
         )
-        resp = self.client.put(f'/api/job-alerts/{alert.id}/', {
+        resp = self.client.put(f'/api/v1/job-alerts/{alert.id}/', {
             'preferences': 'not-a-dict',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -608,7 +608,7 @@ class EdgeCaseTests(TestCase):
             skills=['Python'],
             seniority='mid',
         )
-        resp = self.client.post(f'/api/job-alerts/{alert.id}/run/')
+        resp = self.client.post(f'/api/v1/job-alerts/{alert.id}/run/')
         self.assertEqual(resp.status_code, status.HTTP_402_PAYMENT_REQUIRED)
         mock_crawl.delay.assert_not_called()
 
@@ -619,7 +619,7 @@ class EdgeCaseTests(TestCase):
         other_resume, _ = Resume.get_or_create_from_upload(
             other_user, _make_pdf(b'%PDF-1.4 other content'),
         )
-        resp = self.client.post('/api/job-alerts/', {
+        resp = self.client.post('/api/v1/job-alerts/', {
             'resume': str(other_resume.id), 'frequency': 'daily',
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)

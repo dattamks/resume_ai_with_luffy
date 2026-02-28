@@ -5,6 +5,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.24.0] — 2026-02-28
+
+### Features — Email Verification, Bulk Analysis, Interview Prep, Cover Letter, Rate Limit Headers
+
+#### ⚠ Breaking Changes
+- **API versioning** — All endpoints moved from `/api/v1/` to `/api/v1/`. The old `/api/v1/` prefix returns 404. Frontend must update `API_URL` config (e.g. `http://localhost:8000/api/v1/v1`). DRF `URLPathVersioning` with `DEFAULT_VERSION = 'v1'`, `ALLOWED_VERSIONS = ['v1']`.
+- **Registration email flow** — Registration no longer sends welcome email immediately. Sends verification email instead. Welcome email sent only after `POST /api/v1/auth/verify-email/`.
+
+#### Added — Email Verification
+- **`EmailVerificationToken` model** — Token-based email verification with 24h expiry.
+- **`POST /api/v1/auth/verify-email/`** — Verify email with token. Activates account and sends welcome email.
+- **`POST /api/v1/auth/resend-verification/`** — Resend verification email (rate-limited).
+- **`is_email_verified` field** — Added to register, login, and `GET /api/v1/auth/me/` responses.
+- **`email-verification` email template** — Seeded via `seed_email_templates`.
+
+#### Added — Bulk Analysis
+- **`POST /api/v1/analyze/bulk/`** — Analyze one resume against up to 10 job descriptions in a single call. Returns array of analysis IDs. Each deducts 1 credit. Atomic credit deduction.
+
+#### Added — Interview Prep Generation
+- **`InterviewPrep` model** — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers.
+- **`POST /api/v1/analyses/<id>/interview-prep/`** — Trigger generation (1 credit). Returns 202.
+- **`GET /api/v1/analyses/<id>/interview-prep/`** — Poll status/results.
+- **`GET /api/v1/interview-preps/`** — List all user's interview preps (paginated).
+- **Celery task** — `generate_interview_prep_task` with retry and credit refund on failure.
+
+#### Added — Cover Letter Generation
+- **`CoverLetter` model** — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Fields: `content` (plain text), `content_html`.
+- **`POST /api/v1/analyses/<id>/cover-letter/`** — Trigger generation (1 credit). Returns 202.
+- **`GET /api/v1/analyses/<id>/cover-letter/`** — Poll status/results.
+- **`GET /api/v1/cover-letters/`** — List all user's cover letters (paginated).
+- **Celery task** — `generate_cover_letter_task` with retry and credit refund on failure.
+
+#### Added — Resume Version History
+- **`ResumeVersion` model** — Tracks resume evolution via `previous_resume` FK chain.
+- **`GET /api/v1/resumes/<uuid>/versions/`** — Version history with `version_number`, `best_ats_score`, `best_grade`. Auto-linked when re-uploading same filename.
+
+#### Added — Rate Limit Headers
+- **`RateLimitHeadersMiddleware`** — All responses now include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers. Frontend can show proactive warnings before users hit 429.
+- **`HeaderAwareAnonThrottle` / `HeaderAwareUserThrottle`** — Custom throttle classes that expose rate limit metadata.
+
+#### Added — New Credit Costs
+- `interview_prep = 1` credit
+- `cover_letter = 1` credit
+
+### Infrastructure & Observability
+
+#### Added
+- **Structured JSON logging** — Production logs now emit JSON via `python-json-logger` (`JsonFormatter`). Fields: `timestamp`, `logger`, `level`, `message`, `service: resume-ai`. Local dev keeps human-readable `simple` formatter. New dependency: `python-json-logger==3.3.0`.
+- **Prometheus metrics endpoint** — `GET /metrics` via `django-prometheus==2.3.1`. Built-in HTTP request/response metrics + custom app metrics in `resume_ai/metrics.py`:
+  - `resume_ai_analysis_duration_seconds` — histogram by status (done/failed)
+  - `resume_ai_analyses_total` — counter by status (queued/done/failed)
+  - `resume_ai_llm_tokens_total` — counter by provider/operation/token_type
+  - `resume_ai_llm_requests_total` — counter by provider/operation/status
+  - `resume_ai_credit_operations_total` — counter by operation type
+  - `resume_ai_payment_failures_total` — counter by reason
+  - `resume_ai_celery_task_duration_seconds` — histogram by task/status
+  - `resume_ai_active_analyses` — gauge of in-flight analyses
+- **Flower monitoring dashboard** — Celery monitoring via Flower (`flower==2.0.1`). Runs as separate Railway service (`SERVICE_TYPE=flower`). Basic auth via `FLOWER_USER`/`FLOWER_PASSWORD` env vars. Persistent task history in `/tmp/flower.db`.
+- **Celery monitoring API endpoints** (admin-only, `IsAdminUser`):
+  - `GET /api/v1/admin/celery/workers/` — active workers, stats, pool info
+  - `GET /api/v1/admin/celery/tasks/active/` — currently executing tasks
+  - `GET /api/v1/admin/celery/tasks/<task_id>/` — task status lookup by ID
+  - `GET /api/v1/admin/celery/queues/` — Redis queue lengths
+
+#### Changed
+- **Gunicorn timeout** — Reduced from 120s to 110s (Procfile + entrypoint.sh). Ensures Gunicorn responds before Railway's proxy timeout kills the connection.
+- **Entrypoint** — Added `flower` service type. Valid `SERVICE_TYPE` values: `web`, `worker`, `beat`, `flower`.
+
+#### Dependencies Added
+- `python-json-logger==3.3.0`
+- `django-prometheus==2.3.1`
+- `flower==2.0.1`
+
+---
+
 ## [0.23.0] — 2026-02-28
 
 ### Code Quality & Test Coverage Sweep
@@ -40,7 +115,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **3 default plans seeded** via `seed_plans`: Free (₹0), Pro Monthly (₹399, was ₹599), Pro Yearly (₹3,999, was ₹7,188).
 - **Job alert quota removed** — unlimited alerts when `job_notifications = true`. `max_job_alerts` field kept but deprecated (no longer enforced).
 - **`ContactSubmission` model** — landing-page contact form (name, email, subject, message). Read-only in Django Admin.
-- **`POST /api/auth/contact/`** — public endpoint for contact form submissions (no auth, anon-throttled).
+- **`POST /api/v1/auth/contact/`** — public endpoint for contact form submissions (no auth, anon-throttled).
 - **Auto-sync plans to Razorpay** — `post_save` signal on Plan automatically creates a Razorpay plan whenever a paid plan is saved without a `razorpay_plan_id`. Skips free plans, already-synced plans, and test environments.
 - **Admin feedback on new plan creation** — `PlanAdmin.save_model` shows success/failure message for Razorpay sync on new paid plans.
 
@@ -64,28 +139,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented across P0/P1/P2 priorities. P3 items documented as backlog TODOs.
 
 #### P0 — Critical Fixes
-- **`first_name` / `last_name` writable on `PUT /api/auth/me/`** — Both fields now accepted by `UpdateUserSerializer` and persisted on the `User` model.
+- **`first_name` / `last_name` writable on `PUT /api/v1/auth/me/`** — Both fields now accepted by `UpdateUserSerializer` and persisted on the `User` model.
 - **`keyword_match_percent` in `score_trend`** — Each trend entry now includes `keyword_match_percent` extracted from the `scores` JSONField.
 - **Aggregated `top_missing_keywords`** in dashboard stats — Top 10 missing keywords across the user's last 20 analyses, computed via `Counter`.
 - **`credit_usage` history (monthly)** in dashboard stats — Wallet transactions grouped by month and type (`debit`/`credit`), returned as a list of `{month, type, total}` objects.
 
 #### P1 — Core Feature Gaps
-- **`DELETE /api/generated-resumes/<uuid:pk>/`** — Delete a generated resume (file removed from R2, record deleted). Ownership-checked.
+- **`DELETE /api/v1/generated-resumes/<uuid:pk>/`** — Delete a generated resume (file removed from R2, record deleted). Ownership-checked.
 - **Server-side search/filter/sort on analyses** — `AnalysisListView` now supports `?search=` (role/company/industry), `?status=`, `?score_min=`, `?score_max=`, `?ordering=` (created_at, ats_score).
 - **Server-side search/filter/sort on resumes** — `ResumeListView` now supports `?search=` (filename), `?ordering=` (uploaded_at, original_filename, file_size).
 - **Payment history pagination** — `PaymentHistoryView` now uses DRF `PageNumberPagination` (page_size=20). Response format changed from `{count, payments}` to standard `{count, next, previous, results}`.
 - **`total_matches`** on `JobAlertSerializer` — Each job alert now includes the total count of associated matches.
-- **`POST /api/resumes/bulk-delete/`** — Bulk-delete up to 50 resumes. Skips resumes with active (processing/pending) analyses; returns `{deleted, skipped, errors}`.
+- **`POST /api/v1/resumes/bulk-delete/`** — Bulk-delete up to 50 resumes. Skips resumes with active (processing/pending) analyses; returns `{deleted, skipped, errors}`.
 - **`weekly_job_matches`** in dashboard stats — Count of job matches created in the last 7 days.
 
 #### P2 — UX Improvements
-- **Social links CRUD** — Added `website_url`, `github_url`, `linkedin_url` (URLFields) to `UserProfile`. Readable via `GET /api/auth/me/`, writable via `PUT /api/auth/me/`.
+- **Social links CRUD** — Added `website_url`, `github_url`, `linkedin_url` (URLFields) to `UserProfile`. Readable via `GET /api/v1/auth/me/`, writable via `PUT /api/v1/auth/me/`.
 - **Resume staleness indicators** — `ResumeSerializer` now includes `days_since_upload` (integer) and `last_analyzed_at` (datetime or null).
-- **`GET /api/shared/<uuid:token>/summary/`** — Lightweight public endpoint returning `{ats_score, overall_grade, jd_role, jd_company}` for social card previews. No auth required.
-- **`GET /api/analyses/compare/?ids=<uuid>,<uuid>`** — Side-by-side comparison of 2–5 analyses. Returns list of `{id, jd_role, jd_company, ats_score, overall_grade, created_at, scores}`. Ownership-checked.
-- **`GET /api/auth/wallet/transactions/export/`** — CSV download of all wallet transactions (columns: date, type, amount, description, balance_after).
-- **`POST /api/auth/avatar/`** — Upload avatar image (JPEG/PNG/WebP, max 2 MB). Validates with Pillow. Stores in R2, updates `avatar_url` on profile.
-- **`DELETE /api/auth/avatar/`** — Remove avatar (deletes file from R2, clears `avatar_url`).
+- **`GET /api/v1/shared/<uuid:token>/summary/`** — Lightweight public endpoint returning `{ats_score, overall_grade, jd_role, jd_company}` for social card previews. No auth required.
+- **`GET /api/v1/analyses/compare/?ids=<uuid>,<uuid>`** — Side-by-side comparison of 2–5 analyses. Returns list of `{id, jd_role, jd_company, ats_score, overall_grade, created_at, scores}`. Ownership-checked.
+- **`GET /api/v1/auth/wallet/transactions/export/`** — CSV download of all wallet transactions (columns: date, type, amount, description, balance_after).
+- **`POST /api/v1/auth/avatar/`** — Upload avatar image (JPEG/PNG/WebP, max 2 MB). Validates with Pillow. Stores in R2, updates `avatar_url` on profile.
+- **`DELETE /api/v1/auth/avatar/`** — Remove avatar (deletes file from R2, clears `avatar_url`).
 - **`industry_benchmark_percentile`** in dashboard stats — User's ATS score percentile rank vs all platform users. `null` if no analyses exist.
 
 #### Migration
@@ -96,7 +171,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **Total tests: 402** (up from 360).
 
 #### Breaking Changes
-- **Payment history response format** — `GET /api/auth/payments/history/` now returns `{count, next, previous, results}` instead of `{count, payments}`. Parameter `?limit=` replaced by `?page=`.
+- **Payment history response format** — `GET /api/v1/auth/payments/history/` now returns `{count, next, previous, results}` instead of `{count, payments}`. Parameter `?limit=` replaced by `?page=`.
 
 #### P3 — Documented as Backlog (not implemented)
 - Activity streak (#10)
@@ -143,11 +218,11 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 ### Backend Backlog Sweep
 
 #### Added — New Endpoints
-- **`POST /api/auth/logout-all/`** — Invalidate all JWT sessions at once (bulk blacklist outstanding tokens).
-- **`POST /api/analyses/<id>/cancel/`** — Cancel a stuck/processing analysis. Revokes Celery task, marks as failed, refunds credits.
-- **`POST /api/analyses/bulk-delete/`** — Soft-delete up to 50 analyses in a single request.
-- **`GET /api/analyses/<id>/export-json/`** — Download complete analysis data as a JSON file attachment.
-- **`GET /api/account/export/`** — GDPR-compliant data export: profile, analyses, resumes, wallet, consent logs, notifications.
+- **`POST /api/v1/auth/logout-all/`** — Invalidate all JWT sessions at once (bulk blacklist outstanding tokens).
+- **`POST /api/v1/analyses/<id>/cancel/`** — Cancel a stuck/processing analysis. Revokes Celery task, marks as failed, refunds credits.
+- **`POST /api/v1/analyses/bulk-delete/`** — Soft-delete up to 50 analyses in a single request.
+- **`GET /api/v1/analyses/<id>/export-json/`** — Download complete analysis data as a JSON file attachment.
+- **`GET /api/v1/account/export/`** — GDPR-compliant data export: profile, analyses, resumes, wallet, consent logs, notifications.
 
 #### Added — Plan Quota Enforcement
 - **Monthly analysis quota** — `AnalyzeResumeView` now checks `plan.analyses_per_month` and returns 403 with `limit`/`used` when exceeded.
@@ -192,25 +267,25 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **`tenacity` retry decorator for all LLM calls** — Exponential backoff (2s → 30s, 3 attempts) on `RateLimitError` (429), `APITimeoutError`, `APIConnectionError`, and 5xx status errors. Applied to resume analysis, resume generation, job matching, and profile extraction.
 - **PDF page limit** — New `MAX_PDF_PAGES` setting (default 50). Oversized PDFs are rejected with a clear error before any processing begins.
 - **Token estimation before LLM calls** — `estimate_tokens()` and `check_prompt_length()` utilities auto-truncate prompts exceeding the model's safe input limit (~100k tokens), preventing wasted API calls.
-- **Dashboard stats caching** — `GET /api/dashboard/stats/` responses are now cached per-user in Redis with a 5-minute TTL. Subsequent requests within the window skip all 5 aggregate queries.
+- **Dashboard stats caching** — `GET /api/v1/dashboard/stats/` responses are now cached per-user in Redis with a 5-minute TTL. Subsequent requests within the window skip all 5 aggregate queries.
 - **Pagination on 3 more endpoints:**
-  - `GET /api/generated-resumes/` — Now returns paginated envelope (was flat array).
-  - `GET /api/job-alerts/` — Now returns paginated envelope (was flat array).
-  - `GET /api/job-alerts/<id>/matches/` — Switched from Django `Paginator` to DRF `PageNumberPagination` (consistent `{count, next, previous, results}` envelope).
+  - `GET /api/v1/generated-resumes/` — Now returns paginated envelope (was flat array).
+  - `GET /api/v1/job-alerts/` — Now returns paginated envelope (was flat array).
+  - `GET /api/v1/job-alerts/<id>/matches/` — Switched from Django `Paginator` to DRF `PageNumberPagination` (consistent `{count, next, previous, results}` envelope).
 - **Celery task retry backoff** — `run_analysis_task` now uses `retry_backoff=True` with `retry_backoff_max=120` for smarter retry spacing.
 - **Migration race prevention** — `entrypoint.sh` now uses `flock -w 120` to serialize concurrent migrations across Railway replicas. Inline migrate removed from `Procfile` web command.
 - **Celery memory leak prevention** — `--max-tasks-per-child=50` (configurable via `CELERY_MAX_TASKS_PER_CHILD` env var) restarts workers after 50 tasks to reclaim leaked memory.
 
 #### Changed
 - **OpenAI client is now LRU-cached** — All modules (`openrouter_provider`, `resume_generator`, `job_matcher`, `job_search_profile`, `embedding_service`) share a cached `OpenAI()` client keyed by `(api_key, base_url)` instead of creating a new instance per call. Enables HTTP connection pooling.
-- **Token blacklisting uses `bulk_create`** — Account deletion (`DELETE /api/auth/profile/`) and password change (`POST /api/auth/change-password/`) now blacklist all outstanding tokens in a single `bulk_create(ignore_conflicts=True)` instead of looping `get_or_create`.
+- **Token blacklisting uses `bulk_create`** — Account deletion (`DELETE /api/v1/auth/profile/`) and password change (`POST /api/v1/auth/change-password/`) now blacklist all outstanding tokens in a single `bulk_create(ignore_conflicts=True)` instead of looping `get_or_create`.
 - **PDF report styles cached at module level** — `_build_styles()` result cached globally instead of recreating ~20 `ParagraphStyle` objects per report.
 - **Job source factory instances cached** — `get_job_sources()` now returns cached provider instances instead of re-instantiating on every call.
 
 #### Breaking Changes (Frontend)
-- **`GET /api/generated-resumes/`** — Response changed from flat array `[...]` to paginated envelope `{count, next, previous, results}`.
-- **`GET /api/job-alerts/`** — Response changed from flat array `[...]` to paginated envelope `{count, next, previous, results}`.
-- **`GET /api/job-alerts/<id>/matches/`** — Response shape changed from `{count, num_pages, page, results}` to standard DRF pagination `{count, next, previous, results}`.
+- **`GET /api/v1/generated-resumes/`** — Response changed from flat array `[...]` to paginated envelope `{count, next, previous, results}`.
+- **`GET /api/v1/job-alerts/`** — Response changed from flat array `[...]` to paginated envelope `{count, next, previous, results}`.
+- **`GET /api/v1/job-alerts/<id>/matches/`** — Response shape changed from `{count, num_pages, page, results}` to standard DRF pagination `{count, next, previous, results}`.
 
 ---
 
@@ -218,8 +293,8 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 
 ### Added
 - **Google OAuth login** — Two new endpoints for Google Sign-In:
-  - `POST /api/auth/google/` — Verifies Google ID token. Existing users get JWT tokens immediately; new users receive a signed `temp_token` for registration completion.
-  - `POST /api/auth/google/complete/` — Completes registration for new Google users with username, password, and consent checkboxes.
+  - `POST /api/v1/auth/google/` — Verifies Google ID token. Existing users get JWT tokens immediately; new users receive a signed `temp_token` for registration completion.
+  - `POST /api/v1/auth/google/complete/` — Completes registration for new Google users with username, password, and consent checkboxes.
 - **Google profile data** — New Google users automatically get:
   - `first_name` / `last_name` from Google's `given_name` / `family_name`.
   - `avatar_url` from Google profile picture.
@@ -240,7 +315,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 ## [0.16.2] — 2026-02-27
 
 ### Added
-- **Registration consent checkboxes** — `POST /api/auth/register/` now requires:
+- **Registration consent checkboxes** — `POST /api/v1/auth/register/` now requires:
   - `agree_to_terms` (boolean, **mandatory**) — Terms of Service & Privacy Policy.
   - `agree_to_data_usage` (boolean, **mandatory**) — AI data processing & Data Usage Policy.
   - `marketing_opt_in` (boolean, optional, default `false`) — Marketing emails & newsletters.
@@ -287,12 +362,12 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **`embedding_matcher.py`** — pgvector `CosineDistance` SQL matching. Falls back to LLM matcher if pgvector unavailable. Threshold: 60% similarity.
 - **Firecrawl job crawler** — `firecrawl_source.py` scrapes LinkedIn + Indeed job board pages, extracts structured listings via single LLM call per page.
 - **`crawl_jobs_daily_task`** — Daily crawl at 2 AM IST (20:30 UTC). Gathers queries from all active profiles, crawls, saves, embeds, chains matching.
-- **`crawl_jobs_for_alert_task`** — Single-alert manual crawl (used by `POST /api/job-alerts/<id>/run/`). Includes credit deduction, crawling, embedding, matching, and notification in one task.
+- **`crawl_jobs_for_alert_task`** — Single-alert manual crawl (used by `POST /api/v1/job-alerts/<id>/run/`). Includes credit deduction, crawling, embedding, matching, and notification in one task.
 - **`match_all_alerts_task`** — Runs after daily crawl. For each active alert: embedding match → JobMatch → SentAlert dedup → Notification → email digest.
 - **`compute_resume_embedding_task`** — Triggered after profile extraction. Stores embedding on `JobSearchProfile`.
 - **`SentAlert` model** — Dedup log preventing resending same job to same user per channel.
 - **`Notification` model** — In-app notification store for bell/badge. Types: `job_match`, `analysis_done`, `resume_generated`, `system`.
-- **Notification API endpoints:** `GET /api/notifications/`, `GET /api/notifications/unread-count/`, `POST /api/notifications/mark-read/`.
+- **Notification API endpoints:** `GET /api/v1/notifications/`, `GET /api/v1/notifications/unread-count/`, `POST /api/v1/notifications/mark-read/`.
 - **Settings:** `EMBEDDING_MODEL`, `JOB_MATCH_THRESHOLD`, `MAX_CRAWL_JOBS_PER_RUN`, `JOB_CRAWL_SOURCES`.
 - **Migrations:** `0014_pgvector_embeddings`, `0015_sentalert_notification`.
 
@@ -305,7 +380,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **`SOURCE_SERPAPI` / `SOURCE_ADZUNA`** — Removed from `DiscoveredJob.SOURCE_CHOICES`.
 
 ### Changed
-- **Manual run endpoint** — `POST /api/job-alerts/<id>/run/` now uses `crawl_jobs_for_alert_task` (Firecrawl + embedding matching) instead of `discover_jobs_for_alert_task`.
+- **Manual run endpoint** — `POST /api/v1/job-alerts/<id>/run/` now uses `crawl_jobs_for_alert_task` (Firecrawl + embedding matching) instead of `discover_jobs_for_alert_task`.
 - **Celery Beat schedule** — Replaced `discover-jobs` (6h interval) with `crawl-jobs-daily` (crontab 20:30 UTC).
 - **Cost reduction** — ~$55-80/month (SerpAPI + Adzuna + LLM scoring) → ~$5-16/month (Firecrawl + embeddings).
 
@@ -316,8 +391,8 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 ### Payment Linkage Audit — Security & Correctness Fixes
 
 ### Fixed
-- **PlanSubscribeView security** — Blocked direct upgrade to paid plans without payment. Returns `402 Payment Required` directing to `/api/auth/payments/subscribe/`. Only free-plan downgrades allowed.
-- **WalletTopUpView security** — Deprecated free credit grants. Returns `402 Payment Required` directing to `/api/auth/payments/topup/`.
+- **PlanSubscribeView security** — Blocked direct upgrade to paid plans without payment. Returns `402 Payment Required` directing to `/api/v1/auth/payments/subscribe/`. Only free-plan downgrades allowed.
+- **WalletTopUpView security** — Deprecated free credit grants. Returns `402 Payment Required` directing to `/api/v1/auth/payments/topup/`.
 - **Re-subscribe after cancellation** — Old cancelled/expired `RazorpaySubscription` records are now deleted before creating a new one (prevents `IntegrityError` from OneToOneField constraint).
 - **`razorpay_payment_id` unique constraint** — Added `default=None` to prevent empty-string collisions when multiple pending payments exist.
 - **Account deletion** — Now cancels active Razorpay subscription before deleting user (prevents continued billing).
@@ -331,8 +406,8 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **Migration** — `0007_fix_razorpay_payment_id_default`.
 
 ### Changed
-- `POST /api/auth/wallet/topup/` — Now returns `402` (deprecated; use `/api/auth/payments/topup/`).
-- `POST /api/auth/plans/subscribe/` — Now returns `402` for paid plans (use `/api/auth/payments/subscribe/`).
+- `POST /api/v1/auth/wallet/topup/` — Now returns `402` (deprecated; use `/api/v1/auth/payments/topup/`).
+- `POST /api/v1/auth/plans/subscribe/` — Now returns `402` for paid plans (use `/api/v1/auth/payments/subscribe/`).
 
 ---
 
@@ -354,7 +429,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
   - `verify_webhook_signature()` — HMAC-SHA256 webhook body verification.
   - `handle_webhook_event()` — Dispatches 7 Razorpay event types: `payment.captured`, `payment.failed`, `subscription.activated`, `subscription.charged`, `subscription.cancelled`, `subscription.completed`, `subscription.halted`.
   - Full **idempotency** — duplicate payment_id checks prevent double-provisioning of credits/plan upgrades.
-- **8 REST API endpoints** (under `/api/auth/payments/`):
+- **8 REST API endpoints** (under `/api/v1/auth/payments/`):
   - `POST /payments/subscribe/` — Create subscription (returns checkout params).
   - `POST /payments/subscribe/verify/` — Verify subscription payment.
   - `POST /payments/subscribe/cancel/` — Cancel subscription (at cycle end).
@@ -398,11 +473,11 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
   - `match_jobs_task(job_alert_id, discovered_job_ids)` — Deducts 1 credit, runs LLM scoring, creates JobMatch records, creates JobAlertRun audit, refunds on failure.
   - `send_job_alert_notification_task(job_alert_id, run_id)` — Sends email digest with top 10 matches via `job-alert-digest` email template.
 - **5 REST API endpoints:**
-  - `GET/POST /api/job-alerts/` — List/create alerts (plan-gated, quota-checked).
-  - `GET/PUT/DELETE /api/job-alerts/<uuid:id>/` — Detail/update/deactivate.
-  - `GET /api/job-alerts/<uuid:id>/matches/` — Paginated matches with `?feedback=` filter.
-  - `POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` — Submit user feedback.
-  - `POST /api/job-alerts/<uuid:id>/run/` — Trigger manual discovery run (202 Accepted).
+  - `GET/POST /api/v1/job-alerts/` — List/create alerts (plan-gated, quota-checked).
+  - `GET/PUT/DELETE /api/v1/job-alerts/<uuid:id>/` — Detail/update/deactivate.
+  - `GET /api/v1/job-alerts/<uuid:id>/matches/` — Paginated matches with `?feedback=` filter.
+  - `POST /api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` — Submit user feedback.
+  - `POST /api/v1/job-alerts/<uuid:id>/run/` — Trigger manual discovery run (202 Accepted).
 - **8 serializers** — `JobSearchProfileSerializer`, `DiscoveredJobSerializer`, `JobMatchSerializer`, `JobMatchFeedbackSerializer`, `JobAlertRunSerializer`, `JobAlertSerializer` (nested), `JobAlertCreateSerializer`, `JobAlertUpdateSerializer`.
 - **5 admin classes** — Full Django admin for all new models with filters, search, and readonly fields.
 - **Seed data:**
@@ -426,10 +501,10 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **`resume_docx_renderer.py`** — python-docx based ATS-optimized DOCX renderer. Calibri font, narrow margins, parallel structure to PDF. Compatible with MS Word, Google Docs, and ATS parsers.
 - **`generate_improved_resume_task` Celery task** — Async pipeline: LLM rewrite → render PDF/DOCX → upload to R2 → mark done. On failure: marks failed + auto-refunds credits via `_refund_generation_credits()`.
 - **Resume generation endpoints:**
-  - `POST /api/analyses/<id>/generate-resume/` — Trigger generation (1 credit). Validates analysis is done. Returns 202 with `{id, status, template, format, credits_used, balance}`. Returns 402 on insufficient credits.
-  - `GET /api/analyses/<id>/generated-resume/` — Poll latest generation status.
-  - `GET /api/analyses/<id>/generated-resume/download/` — 302 redirect to signed R2 URL.
-  - `GET /api/generated-resumes/` — List all user's generated resumes (paginated).
+  - `POST /api/v1/analyses/<id>/generate-resume/` — Trigger generation (1 credit). Validates analysis is done. Returns 202 with `{id, status, template, format, credits_used, balance}`. Returns 402 on insufficient credits.
+  - `GET /api/v1/analyses/<id>/generated-resume/` — Poll latest generation status.
+  - `GET /api/v1/analyses/<id>/generated-resume/download/` — 302 redirect to signed R2 URL.
+  - `GET /api/v1/generated-resumes/` — List all user's generated resumes (paginated).
 - **`GeneratedResumeSerializer` / `GeneratedResumeCreateSerializer`** — Read-only serializer with `file_url` computed field; create serializer validates template slug and format choice.
 - **`GeneratedResumeAdmin`** — Django admin with list display, filters, search, and read-only computed fields.
 - **`resume_generation` credit cost** — Seeded at 1 credit via `seed_credit_costs`. Added to `_DEFAULT_COSTS` fallback.
@@ -448,7 +523,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **Plan credit fields** — `credits_per_month`, `max_credits_balance`, `topup_credits_per_pack`, `topup_price`, `job_notifications` added to `Plan` model.
 - **UserProfile billing fields** — `plan_valid_until` (DateTimeField) and `pending_plan` (FK to Plan) for billing cycle tracking and scheduled downgrades.
 - **`credits_deducted` field on ResumeAnalysis** — Boolean flag for idempotent deduction/refund. Prevents double-debit on Celery redelivery and double-refund on failure.
-- **Credit deduction on analysis submit** — `POST /api/analyze/` and `POST /api/analyses/<id>/retry/` now deduct 1 credit upfront. Returns **HTTP 402** with `{detail, balance, cost}` on insufficient credits. On task failure, credits are automatically refunded.
+- **Credit deduction on analysis submit** — `POST /api/v1/analyze/` and `POST /api/v1/analyses/<id>/retry/` now deduct 1 credit upfront. Returns **HTTP 402** with `{detail, balance, cost}` on insufficient credits. On task failure, credits are automatically refunded.
 - **`accounts/services.py`** — New service layer with all credit/wallet business logic:
   - `deduct_credits()` / `refund_credits()` — Atomic with `select_for_update()` for race safety
   - `topup_credits()` — Multi-pack top-up (Pro only, blocked during pending downgrade)
@@ -458,12 +533,12 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
   - `process_expired_plans()` — Celery Beat hook for scheduled downgrades
   - `InsufficientCreditsError` — Custom exception with balance/cost info
 - **Wallet endpoints:**
-  - `GET /api/auth/wallet/` — Balance, plan credits info, top-up availability
-  - `GET /api/auth/wallet/transactions/` — Paginated transaction history
-  - `POST /api/auth/wallet/topup/` — Buy credit packs (`{quantity: N}`). Pro users only. Multi-pack supported.
+  - `GET /api/v1/auth/wallet/` — Balance, plan credits info, top-up availability
+  - `GET /api/v1/auth/wallet/transactions/` — Paginated transaction history
+  - `POST /api/v1/auth/wallet/topup/` — Buy credit packs (`{quantity: N}`). Pro users only. Multi-pack supported.
 - **Plan endpoints:**
-  - `GET /api/auth/plans/` — List active plans (public, no auth required)
-  - `POST /api/auth/plans/subscribe/` — Switch plan. Upgrades apply immediately with bonus credits. Downgrades scheduled until billing cycle ends.
+  - `GET /api/v1/auth/plans/` — List active plans (public, no auth required)
+  - `POST /api/v1/auth/plans/subscribe/` — Switch plan. Upgrades apply immediately with bonus credits. Downgrades scheduled until billing cycle ends.
 - **`seed_credit_costs` management command** — Seeds `resume_analysis = 1 credit`. Idempotent.
 - **Updated `seed_plans` command** — Now includes `credits_per_month`, `max_credits_balance`, `topup_credits_per_pack`, `topup_price`, `job_notifications` for both Free and Pro plans.
 - **Admin panels** — `WalletAdmin` (read-only), `WalletTransactionAdmin` (fully read-only, no add/change/delete), `CreditCostAdmin` for managing action costs.
@@ -483,7 +558,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 
 ### Changed
 - **PDF export: WeasyPrint → ReportLab** — Replaced WeasyPrint (C-library dependency) with ReportLab 4.4.0 (pure Python). Eliminates native `libpango`, `libcairo` linking failures on Railway Nixpacks. PDF report visuals fully rebuilt with Platypus flowables, score bars, keyword pills, and section feedback.
-- **Share URLs now absolute** — `share_url` in API responses changed from relative (`/api/shared/<uuid>/`) to absolute (`https://host/api/shared/<uuid>/`) using `request.build_absolute_uri()`. Affects `POST /api/analyses/<id>/share/`, list serializer, and detail serializer.
+- **Share URLs now absolute** — `share_url` in API responses changed from relative (`/api/v1/shared/<uuid>/`) to absolute (`https://host/api/v1/shared/<uuid>/`) using `request.build_absolute_uri()`. Affects `POST /api/v1/analyses/<id>/share/`, list serializer, and detail serializer.
 - **CORS: wildcard removed** — Removed `CORS_ALLOW_ALL_ORIGINS=True` path. Only explicit comma-separated origins via `CORS_ALLOWED_ORIGINS` env var are accepted. Prevents accidental wildcard + credentials misconfiguration.
 - **R2 signed URL TTL explicit** — Added `AWS_QUERYSTRING_EXPIRE = 3600` (1 hour). Was relying on django-storages default; now discoverable and tunable.
 - **ScrapeResult cache scoped to user** — `find_cached()` now filters by requesting user, preventing cross-user cache hits and cascade-delete breakage.
@@ -506,18 +581,18 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 ### Phase 9: Profile Management, Jobs Model & Resume Download
 
 ### Added
-- **`PUT /api/auth/me/`** — Update username and/or email (partial update supported). Validates uniqueness of both fields.
-- **`POST /api/auth/change-password/`** — Change password with `current_password` + `new_password`. Validates current password and runs Django password validators on the new one.
-- **`DELETE /api/auth/me/`** — Permanently delete account. Blacklists all tokens, soft-deletes analyses (clears heavy data), cascade-deletes user + resumes + related objects.
-- **`file_url` field on `ResumeSerializer`** — `GET /api/resumes/` now returns the download URL for each resume, so the frontend ResumesPage can link directly.
+- **`PUT /api/v1/auth/me/`** — Update username and/or email (partial update supported). Validates uniqueness of both fields.
+- **`POST /api/v1/auth/change-password/`** — Change password with `current_password` + `new_password`. Validates current password and runs Django password validators on the new one.
+- **`DELETE /api/v1/auth/me/`** — Permanently delete account. Blacklists all tokens, soft-deletes analyses (clears heavy data), cascade-deletes user + resumes + related objects.
+- **`file_url` field on `ResumeSerializer`** — `GET /api/v1/resumes/` now returns the download URL for each resume, so the frontend ResumesPage can link directly.
 - **`Job` model** — Tracked job postings linked to user and optionally a resume. Fields: `id` (UUID), `user`, `resume` (FK, nullable), `job_url`, `title`, `company`, `description`, `relevance` (pending/relevant/irrelevant), `source`, `created_at`, `updated_at`. Migration `0008_add_job_model`.
 - **Job endpoints:**
-  - `GET /api/jobs/` — List user's tracked jobs, filterable by `?relevance=relevant|irrelevant|pending`.
-  - `POST /api/jobs/` — Create a tracked job (optionally linking a `resume_id`).
-  - `GET /api/jobs/<uuid>/` — Retrieve a single job.
-  - `DELETE /api/jobs/<uuid>/` — Delete a tracked job.
-  - `POST /api/jobs/<uuid>/relevant/` — Mark job as relevant.
-  - `POST /api/jobs/<uuid>/irrelevant/` — Mark job as irrelevant.
+  - `GET /api/v1/jobs/` — List user's tracked jobs, filterable by `?relevance=relevant|irrelevant|pending`.
+  - `POST /api/v1/jobs/` — Create a tracked job (optionally linking a `resume_id`).
+  - `GET /api/v1/jobs/<uuid>/` — Retrieve a single job.
+  - `DELETE /api/v1/jobs/<uuid>/` — Delete a tracked job.
+  - `POST /api/v1/jobs/<uuid>/relevant/` — Mark job as relevant.
+  - `POST /api/v1/jobs/<uuid>/irrelevant/` — Mark job as irrelevant.
 - `UpdateUserSerializer` and `ChangePasswordSerializer` in accounts app.
 - `JobSerializer` and `JobCreateSerializer` in analyzer app.
 - `Job` registered in Django admin.
@@ -534,7 +609,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 ### Resume Reuse & Test Infrastructure
 
 ### Added
-- **`resume_id` support in `POST /api/analyze/`** — submit an existing Resume UUID instead of re-uploading the PDF. Send `resume_id` (UUID) as JSON or form field; the analysis reuses the stored file. Exactly one of `resume_file` or `resume_id` is required.
+- **`resume_id` support in `POST /api/v1/analyze/`** — submit an existing Resume UUID instead of re-uploading the PDF. Send `resume_id` (UUID) as JSON or form field; the analysis reuses the stored file. Exactly one of `resume_file` or `resume_id` is required.
 - `JSONParser` added to `AnalyzeResumeView` so `resume_id`-only requests can be sent as `application/json`.
 - **10 new tests** in `test_resume_id.py`: success with JSON, multipart, and form JD; validation for neither/both provided, invalid UUID, non-existent resume, other user's resume, multiple analyses from same resume, file upload regression.
 
@@ -557,9 +632,9 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 
 ### Added
 - **Shareable results link** — owners of a completed analysis can generate a public, read-only URL. No authentication required to view a shared analysis.
-  - `POST /api/analyses/<id>/share/` — generate a UUID share token (idempotent; returns existing token if already shared).
-  - `DELETE /api/analyses/<id>/share/` — revoke the share token (link stops working immediately).
-  - `GET /api/shared/<token>/` — public read-only view returning ATS score, breakdown, keyword gaps, section suggestions, rewritten bullets, and assessment. Excludes all sensitive data (resume file, user info, celery task ID, raw JD text).
+  - `POST /api/v1/analyses/<id>/share/` — generate a UUID share token (idempotent; returns existing token if already shared).
+  - `DELETE /api/v1/analyses/<id>/share/` — revoke the share token (link stops working immediately).
+  - `GET /api/v1/shared/<token>/` — public read-only view returning ATS score, breakdown, keyword gaps, section suggestions, rewritten bullets, and assessment. Excludes all sensitive data (resume file, user info, celery task ID, raw JD text).
 - `share_token` (UUID, nullable, unique) field on `ResumeAnalysis` model. Migration `0007_add_share_token`.
 - `SharedAnalysisSerializer` — public read-only serializer with curated safe fields only.
 - `share_token` and `share_url` exposed in `ResumeAnalysisDetailSerializer` and `ResumeAnalysisListSerializer`.
@@ -581,9 +656,9 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **`Resume` model** — deduplicated resume file storage with SHA-256 hashing per user. Same PDF uploaded multiple times creates only one stored file. Fields: `id` (UUID), `user`, `file`, `file_hash`, `original_filename`, `file_size_bytes`, `uploaded_at`.
 - **Soft-delete on `ResumeAnalysis`** — `deleted_at` field (DateTimeField, nullable). `ActiveAnalysisManager` (default) excludes soft-deleted rows; `all_objects` manager for admin/analytics.
 - **`soft_delete()` method** on `ResumeAnalysis` — sets `deleted_at`, clears heavy fields (`resume_text`, `resolved_jd`, `jd_text`), deletes `report_pdf` from R2, orphan-cleans `ScrapeResult` and `LLMResponse`.
-- **`GET /api/resumes/`** — paginated list of user's deduplicated resumes with `active_analysis_count`.
-- **`DELETE /api/resumes/<uuid:id>/`** — delete resume from R2 storage (blocked if active analyses reference it, returns 409).
-- **`GET /api/dashboard/stats/`** — user-level analytics: total/active/deleted counts, average ATS score, score trend (last 10), top 5 roles, analyses per month (last 6 months). Uses `all_objects` to include soft-deleted rows.
+- **`GET /api/v1/resumes/`** — paginated list of user's deduplicated resumes with `active_analysis_count`.
+- **`DELETE /api/v1/resumes/<uuid:id>/`** — delete resume from R2 storage (blocked if active analyses reference it, returns 409).
+- **`GET /api/v1/dashboard/stats/`** — user-level analytics: total/active/deleted counts, average ATS score, score trend (last 10), top 5 roles, analyses per month (last 6 months). Uses `all_objects` to include soft-deleted rows.
 - **`post_delete` signal** on `Resume` — automatically deletes file from R2 when Resume row is hard-deleted.
 - **Admin enhancements** — `Resume`, `ScrapeResult`, `LLMResponse` registered in admin. `ResumeAnalysis` admin shows soft-deleted rows with `is_deleted` column.
 - **DB indexes** — `(user, deleted_at)` and `(user, status, -created_at)` on `ResumeAnalysis`; `(user, -uploaded_at)` on `Resume`; unique constraint `(user, file_hash)` on `Resume`.
@@ -591,8 +666,8 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 - **27 new tests** in `test_phase7.py` covering: Resume model, dedup, soft-delete, orphan cleanup, API endpoints, dashboard stats, user isolation.
 
 ### Changed
-- **`DELETE /api/analyses/<id>/delete/`** — now performs soft-delete instead of hard-delete (⚠️ breaking behavior change, same 204 response).
-- **`POST /api/analyze/`** — now creates a `Resume` row (deduplicated) and links it to the analysis via `resume` FK.
+- **`DELETE /api/v1/analyses/<id>/delete/`** — now performs soft-delete instead of hard-delete (⚠️ breaking behavior change, same 204 response).
+- **`POST /api/v1/analyze/`** — now creates a `Resume` row (deduplicated) and links it to the analysis via `resume` FK.
 - **`FRONTEND_API_GUIDE.md`** — updated with 3 new endpoints, soft-delete documentation, new sections 9-10, updated ToC and quick reference table.
 
 ---
@@ -604,8 +679,8 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 **Commit:** `563e34f` — 15 files changed, 1,002 insertions, 134 deletions
 
 ### Added
-- **Pagination** on `GET /api/analyses/` — `PageNumberPagination`, PAGE_SIZE=20. Response is now a `{ count, next, previous, results }` envelope (⚠️ breaking change).
-- **Idempotency guard** on `POST /api/analyze/` — Redis lock prevents duplicate submissions within 30 seconds. Returns `409 Conflict` on double-submit.
+- **Pagination** on `GET /api/v1/analyses/` — `PageNumberPagination`, PAGE_SIZE=20. Response is now a `{ count, next, previous, results }` envelope (⚠️ breaking change).
+- **Idempotency guard** on `POST /api/v1/analyze/` — Redis lock prevents duplicate submissions within 30 seconds. Returns `409 Conflict` on double-submit.
 - **DB indexes** on `ResumeAnalysis`: `(user, -created_at)` and `(status, updated_at)`. Migration `0004_add_resumeanalysis_indexes`.
 - **`FRONTEND_API_GUIDE.md`** — comprehensive 750-line technical reference covering all 13 endpoints, schemas, pagination, rate limiting, polling, LLM output schema, and breaking changes.
 - Test `test_analyze_double_submit_blocked` for idempotency guard.
@@ -636,7 +711,7 @@ Systematic audit of 32 frontend-reported gaps. 4 already existed, 28 implemented
 **Commits:** `92df0e8`, `498e7cb`
 
 ### Added
-- `openrouter_provider.py` — OpenRouter AI provider using OpenAI Python SDK pointed at `https://openrouter.ai/api/v1`.
+- `openrouter_provider.py` — OpenRouter AI provider using OpenAI Python SDK pointed at `https://openrouter.ai/api/v1/v1`.
 - Markdown fence stripping (`_MD_FENCE_RE`) — handles Haiku wrapping JSON in ```json fences.
 - JSON repair fallback for malformed LLM responses.
 

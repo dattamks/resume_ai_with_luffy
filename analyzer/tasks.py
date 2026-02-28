@@ -60,6 +60,17 @@ def run_analysis_task(self, analysis_id, user_id):
 
     logger.info('Task started: analysis_id=%s user_id=%s', analysis_id, user_id)
 
+    # Track active analyses
+    try:
+        from resume_ai.metrics import ACTIVE_ANALYSES, ANALYSIS_TOTAL
+        ACTIVE_ANALYSES.inc()
+        ANALYSIS_TOTAL.labels(status='queued').inc()
+    except Exception:
+        pass
+
+    import time as _time
+    _task_start = _time.monotonic()
+
     # Release the idempotency lock as soon as the task starts — the analysis
     # record already exists so a duplicate submission would be harmless.
     cache.delete(f'analyze_lock:{user_id}')
@@ -79,6 +90,15 @@ def run_analysis_task(self, analysis_id, user_id):
         result = analyzer.run(analysis)
         logger.info('Analysis complete: id=%s ATS=%s', analysis_id, result.ats_score)
 
+        # Prometheus: record success duration
+        try:
+            from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
+            ANALYSIS_DURATION.labels(status='done').observe(_time.monotonic() - _task_start)
+            ANALYSIS_TOTAL.labels(status='done').inc()
+            ACTIVE_ANALYSES.dec()
+        except Exception:
+            pass
+
         # Update Redis cache with final status
         _set_analysis_cache(result)
 
@@ -90,6 +110,14 @@ def run_analysis_task(self, analysis_id, user_id):
 
     except ValueError as exc:
         logger.warning('Analysis failed (user=%s): %s', user_id, exc)
+        # Prometheus: record failure
+        try:
+            from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
+            ANALYSIS_DURATION.labels(status='failed').observe(_time.monotonic() - _task_start)
+            ANALYSIS_TOTAL.labels(status='failed').inc()
+            ACTIVE_ANALYSES.dec()
+        except Exception:
+            pass
         try:
             analysis.refresh_from_db()
             analysis.status = ResumeAnalysis.STATUS_FAILED
@@ -104,6 +132,14 @@ def run_analysis_task(self, analysis_id, user_id):
 
     except Exception as exc:
         logger.exception('Unexpected error during analysis (user=%s)', user_id)
+        # Prometheus: record failure
+        try:
+            from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
+            ANALYSIS_DURATION.labels(status='failed').observe(_time.monotonic() - _task_start)
+            ANALYSIS_TOTAL.labels(status='failed').inc()
+            ACTIVE_ANALYSES.dec()
+        except Exception:
+            pass
         try:
             analysis.refresh_from_db()
             analysis.status = ResumeAnalysis.STATUS_FAILED

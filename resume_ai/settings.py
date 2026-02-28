@@ -29,6 +29,7 @@ if not DEBUG:
     ALLOWED_HOSTS += ['.railway.app']
 
 INSTALLED_APPS = [
+    'django_prometheus',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -56,6 +58,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'resume_ai.middleware.RateLimitHeadersMiddleware',
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
 ROOT_URLCONF = 'resume_ai.urls'
@@ -229,6 +232,9 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_VERSIONING_CLASS': 'rest_framework.versioning.URLPathVersioning',
+    'DEFAULT_VERSION': 'v1',
+    'ALLOWED_VERSIONS': ['v1'],
     'DEFAULT_THROTTLE_CLASSES': [
         'accounts.throttles.HeaderAwareAnonThrottle',
         'accounts.throttles.HeaderAwareUserThrottle',
@@ -364,13 +370,17 @@ GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default='')
 GOOGLE_OAUTH2_TEMP_TOKEN_TTL = 600  # 10 minutes for completing registration
 
 # Logging
-# In production (Railway), use only the console handler — Railway captures
-# stdout/stderr automatically. The file handler is kept for local dev only.
+# In production (Railway), use JSON formatter for structured log aggregation.
+# Local dev uses human-readable simple/verbose formatters.
 _LOG_HANDLERS = ['console']
+
+# Choose formatter based on environment: JSON in production, simple in dev
+_CONSOLE_FORMATTER = 'simple' if DEBUG else 'json'
+
 _LOG_CONFIG_HANDLERS = {
     'console': {
         'class': 'logging.StreamHandler',
-        'formatter': 'simple',
+        'formatter': _CONSOLE_FORMATTER,
     },
 }
 
@@ -396,6 +406,18 @@ LOGGING = {
             'format': '{levelname} {asctime} {module}: {message}',
             'style': '{',
         },
+        'json': {
+            '()': 'pythonjsonlogger.json.JsonFormatter',
+            'format': '%(asctime)s %(name)s %(levelname)s %(message)s',
+            'rename_fields': {
+                'asctime': 'timestamp',
+                'name': 'logger',
+                'levelname': 'level',
+            },
+            'static_fields': {
+                'service': 'resume-ai',
+            },
+        },
     },
     'handlers': _LOG_CONFIG_HANDLERS,
     'root': {
@@ -406,6 +428,11 @@ LOGGING = {
         'django': {
             'handlers': ['console'],
             'level': config('DJANGO_LOG_LEVEL', default='WARNING'),
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
             'propagate': False,
         },
         'analyzer': {

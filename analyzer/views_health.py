@@ -19,7 +19,7 @@ logger = logging.getLogger('analyzer')
 @throttle_classes([])  # health checks must never be rate-limited
 def health_check(request):
     """
-    GET /api/health/
+    GET /api/v1/health/
     Returns {"status": "ok"} when the app can reach the database and Redis.
     Returns 503 with {"status": "error", ...} otherwise.
     """

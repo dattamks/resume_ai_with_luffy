@@ -22,6 +22,10 @@ from .views import (
     InterviewPrepView, InterviewPrepStatusView, InterviewPrepListView,
     CoverLetterView, CoverLetterStatusView, CoverLetterListView,
 )
+from .views_celery import (
+    CeleryWorkersView, CeleryActiveTasksView, CeleryTaskStatusView,
+    CeleryQueueLengthView,
+)
 
 urlpatterns = [
     path('analyze/', AnalyzeResumeView.as_view(), name='analyze'),
@@ -74,4 +78,9 @@ urlpatterns = [
     # Phase 13 — Cover Letter
     path('analyses/<int:pk>/cover-letter/', CoverLetterView.as_view(), name='cover-letter'),
     path('cover-letters/', CoverLetterListView.as_view(), name='cover-letter-list'),
+    # Admin — Celery monitoring
+    path('admin/celery/workers/', CeleryWorkersView.as_view(), name='celery-workers'),
+    path('admin/celery/tasks/active/', CeleryActiveTasksView.as_view(), name='celery-active-tasks'),
+    path('admin/celery/tasks/<str:task_id>/', CeleryTaskStatusView.as_view(), name='celery-task-status'),
+    path('admin/celery/queues/', CeleryQueueLengthView.as_view(), name='celery-queues'),
 ]

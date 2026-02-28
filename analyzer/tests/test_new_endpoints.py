@@ -48,7 +48,7 @@ def _make_pdf():
 def _auth(client, username='testuser', email='test@example.com'):
     user = User.objects.create_user(username=username, email=email, password='StrongPass123!')
     resp = client.post(
-        '/api/auth/login/',
+        '/api/v1/auth/login/',
         {'username': username, 'password': 'StrongPass123!'},
         format='json',
     )
@@ -110,7 +110,7 @@ class AnalysisCancelViewTests(TestCase):
             credits_deducted=True,
         )
         with patch('resume_ai.celery.app') as mock_celery:
-            resp = self.client.post(f'/api/analyses/{analysis.id}/cancel/')
+            resp = self.client.post(f'/api/v1/analyses/{analysis.id}/cancel/')
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['status'], 'failed')
@@ -118,11 +118,11 @@ class AnalysisCancelViewTests(TestCase):
 
     def test_cancel_already_done(self):
         analysis = _create_done_analysis(self.user)
-        resp = self.client.post(f'/api/analyses/{analysis.id}/cancel/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/cancel/')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_cancel_not_found(self):
-        resp = self.client.post('/api/analyses/99999/cancel/')
+        resp = self.client.post('/api/v1/analyses/99999/cancel/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_cancel_other_users_analysis(self):
@@ -132,11 +132,11 @@ class AnalysisCancelViewTests(TestCase):
             status=ResumeAnalysis.STATUS_PROCESSING,
             pipeline_step=ResumeAnalysis.STEP_JD_SCRAPE,
         )
-        resp = self.client.post(f'/api/analyses/{analysis.id}/cancel/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/cancel/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_requires_auth(self):
-        resp = APIClient().post('/api/analyses/1/cancel/')
+        resp = APIClient().post('/api/v1/analyses/1/cancel/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -157,7 +157,7 @@ class AnalysisBulkDeleteViewTests(TestCase):
         a1 = _create_done_analysis(self.user)
         a2 = _create_done_analysis(self.user, jd_role='Frontend Dev')
         resp = self.client.post(
-            '/api/analyses/bulk-delete/',
+            '/api/v1/analyses/bulk-delete/',
             {'ids': [a1.id, a2.id]},
             format='json',
         )
@@ -169,7 +169,7 @@ class AnalysisBulkDeleteViewTests(TestCase):
 
     def test_bulk_delete_empty_list(self):
         resp = self.client.post(
-            '/api/analyses/bulk-delete/',
+            '/api/v1/analyses/bulk-delete/',
             {'ids': []},
             format='json',
         )
@@ -177,7 +177,7 @@ class AnalysisBulkDeleteViewTests(TestCase):
 
     def test_bulk_delete_missing_ids(self):
         resp = self.client.post(
-            '/api/analyses/bulk-delete/',
+            '/api/v1/analyses/bulk-delete/',
             {},
             format='json',
         )
@@ -185,7 +185,7 @@ class AnalysisBulkDeleteViewTests(TestCase):
 
     def test_bulk_delete_over_50(self):
         resp = self.client.post(
-            '/api/analyses/bulk-delete/',
+            '/api/v1/analyses/bulk-delete/',
             {'ids': list(range(1, 52))},  # 51 IDs
             format='json',
         )
@@ -196,7 +196,7 @@ class AnalysisBulkDeleteViewTests(TestCase):
         other = User.objects.create_user('other2', 'other2@test.com', 'StrongPass123!')
         other_analysis = _create_done_analysis(other)
         resp = self.client.post(
-            '/api/analyses/bulk-delete/',
+            '/api/v1/analyses/bulk-delete/',
             {'ids': [other_analysis.id]},
             format='json',
         )
@@ -204,7 +204,7 @@ class AnalysisBulkDeleteViewTests(TestCase):
         self.assertEqual(resp.data['deleted'], 0)  # Can't delete someone else's
 
     def test_requires_auth(self):
-        resp = APIClient().post('/api/analyses/bulk-delete/', {'ids': [1]}, format='json')
+        resp = APIClient().post('/api/v1/analyses/bulk-delete/', {'ids': [1]}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -220,7 +220,7 @@ class AnalysisExportJSONViewTests(TestCase):
 
     def test_export_json_success(self):
         analysis = _create_done_analysis(self.user)
-        resp = self.client.get(f'/api/analyses/{analysis.id}/export-json/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/export-json/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('application/json', resp['Content-Type'])
         self.assertIn('attachment', resp['Content-Disposition'])
@@ -232,15 +232,15 @@ class AnalysisExportJSONViewTests(TestCase):
             status=ResumeAnalysis.STATUS_PROCESSING,
             pipeline_step=ResumeAnalysis.STEP_JD_SCRAPE,
         )
-        resp = self.client.get(f'/api/analyses/{analysis.id}/export-json/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/export-json/')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_export_json_not_found(self):
-        resp = self.client.get('/api/analyses/99999/export-json/')
+        resp = self.client.get('/api/v1/analyses/99999/export-json/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_requires_auth(self):
-        resp = APIClient().get('/api/analyses/1/export-json/')
+        resp = APIClient().get('/api/v1/analyses/1/export-json/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -256,7 +256,7 @@ class AccountDataExportViewTests(TestCase):
 
     def test_export_account_data_success(self):
         _create_done_analysis(self.user)
-        resp = self.client.get('/api/account/export/')
+        resp = self.client.get('/api/v1/account/export/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn('application/json', resp['Content-Type'])
         self.assertIn('attachment', resp['Content-Disposition'])
@@ -274,14 +274,14 @@ class AccountDataExportViewTests(TestCase):
 
     def test_export_empty_account(self):
         """User with no analyses should still export successfully."""
-        resp = self.client.get('/api/account/export/')
+        resp = self.client.get('/api/v1/account/export/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         import json
         data = json.loads(resp.content)
         self.assertEqual(data['analyses'], [])
 
     def test_requires_auth(self):
-        resp = APIClient().get('/api/account/export/')
+        resp = APIClient().get('/api/v1/account/export/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -300,7 +300,7 @@ class DashboardStatsEnhancedTests(TestCase):
         self.client, self.user = _auth(self.client, username='dashuser', email='dash@test.com')
 
     def test_dashboard_stats_empty(self):
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['total_analyses'], 0)
         self.assertIsNone(resp.data['average_ats_score'])
@@ -313,7 +313,7 @@ class DashboardStatsEnhancedTests(TestCase):
         _create_done_analysis(self.user, overall_grade='B', ats_score=72, jd_industry='Finance')
 
         cache.clear()
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['total_analyses'], 3)
         self.assertIsNotNone(resp.data['average_ats_score'])
@@ -335,7 +335,7 @@ class DashboardStatsEnhancedTests(TestCase):
             scores={'generic_ats': 85, 'workday_ats': 70, 'greenhouse_ats': 75},
         )
         cache.clear()
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         trend = resp.data['score_trend']
         self.assertEqual(len(trend), 1)
         self.assertEqual(trend[0]['generic_ats'], 85)
@@ -346,12 +346,12 @@ class DashboardStatsEnhancedTests(TestCase):
         """Second request should be cached (no extra DB queries)."""
         _create_done_analysis(self.user)
         cache.clear()
-        resp1 = self.client.get('/api/dashboard/stats/')
-        resp2 = self.client.get('/api/dashboard/stats/')
+        resp1 = self.client.get('/api/v1/dashboard/stats/')
+        resp2 = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp1.data, resp2.data)
 
     def test_requires_auth(self):
-        resp = APIClient().get('/api/dashboard/stats/')
+        resp = APIClient().get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
@@ -381,7 +381,7 @@ class PlanQuotaTests(TestCase):
         profile.save(update_fields=['plan'])
         _give_credits(self.user)
         resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'quotauser', 'password': 'StrongPass123!'},
             format='json',
         )
@@ -397,7 +397,7 @@ class PlanQuotaTests(TestCase):
         # 3rd should be blocked
         cache.clear()
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'Dev role'},
             format='multipart',
         )
@@ -410,7 +410,7 @@ class PlanQuotaTests(TestCase):
         self.plan.save(update_fields=['pdf_export'])
 
         analysis = _create_done_analysis(self.user)
-        resp = self.client.get(f'/api/analyses/{analysis.id}/export-pdf/')
+        resp = self.client.get(f'/api/v1/analyses/{analysis.id}/export-pdf/')
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_share_feature_flag(self):
@@ -419,5 +419,5 @@ class PlanQuotaTests(TestCase):
         self.plan.save(update_fields=['share_analysis'])
 
         analysis = _create_done_analysis(self.user)
-        resp = self.client.post(f'/api/analyses/{analysis.id}/share/')
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/share/')
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)

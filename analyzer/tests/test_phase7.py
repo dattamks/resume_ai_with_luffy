@@ -178,7 +178,7 @@ class AnalysisDeleteViewTests(TestCase):
         self.client = APIClient()
         self.user = User.objects.create_user(username='deluser', password='StrongPass123!')
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'deluser', 'password': 'StrongPass123!'},
             format='json',
         )
@@ -188,14 +188,14 @@ class AnalysisDeleteViewTests(TestCase):
         analysis = ResumeAnalysis.all_objects.create(
             user=self.user, jd_input_type='text', jd_text='test',
         )
-        resp = self.client.delete(f'/api/analyses/{analysis.id}/delete/')
+        resp = self.client.delete(f'/api/v1/analyses/{analysis.id}/delete/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
 
     def test_delete_soft_deletes(self):
         analysis = ResumeAnalysis.all_objects.create(
             user=self.user, jd_input_type='text', jd_text='test',
         )
-        self.client.delete(f'/api/analyses/{analysis.id}/delete/')
+        self.client.delete(f'/api/v1/analyses/{analysis.id}/delete/')
 
         # Not visible via default manager
         self.assertFalse(ResumeAnalysis.objects.filter(pk=analysis.pk).exists())
@@ -207,7 +207,7 @@ class AnalysisDeleteViewTests(TestCase):
         analysis = ResumeAnalysis.all_objects.create(
             user=other, jd_input_type='text',
         )
-        resp = self.client.delete(f'/api/analyses/{analysis.id}/delete/')
+        resp = self.client.delete(f'/api/v1/analyses/{analysis.id}/delete/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_deleted_analysis_excluded_from_list(self):
@@ -218,9 +218,9 @@ class AnalysisDeleteViewTests(TestCase):
         a2 = ResumeAnalysis.all_objects.create(
             user=self.user, jd_input_type='text', jd_text='to_delete',
         )
-        self.client.delete(f'/api/analyses/{a2.id}/delete/')
+        self.client.delete(f'/api/v1/analyses/{a2.id}/delete/')
 
-        resp = self.client.get('/api/analyses/')
+        resp = self.client.get('/api/v1/analyses/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         ids = [r['id'] for r in resp.data['results']]
         self.assertIn(a1.id, ids)
@@ -234,27 +234,27 @@ class ResumeAPITests(TestCase):
         self.client = APIClient()
         self.user = User.objects.create_user(username='resapiuser', password='StrongPass123!')
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'resapiuser', 'password': 'StrongPass123!'},
             format='json',
         )
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_resp.data["access"]}')
 
     def test_list_resumes_empty(self):
-        resp = self.client.get('/api/resumes/')
+        resp = self.client.get('/api/v1/resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['results'], [])
 
     def test_list_resumes_with_data(self):
         resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
-        resp = self.client.get('/api/resumes/')
+        resp = self.client.get('/api/v1/resumes/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data['results']), 1)
         self.assertEqual(resp.data['results'][0]['original_filename'], 'resume.pdf')
 
     def test_delete_resume_no_active_analyses(self):
         resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
-        resp = self.client.delete(f'/api/resumes/{resume.pk}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Resume.objects.filter(pk=resume.pk).exists())
 
@@ -263,7 +263,7 @@ class ResumeAPITests(TestCase):
         ResumeAnalysis.all_objects.create(
             user=self.user, jd_input_type='text', resume=resume,
         )
-        resp = self.client.delete(f'/api/resumes/{resume.pk}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
         self.assertTrue(Resume.objects.filter(pk=resume.pk).exists())
 
@@ -275,13 +275,13 @@ class ResumeAPITests(TestCase):
         )
         analysis.soft_delete()
 
-        resp = self.client.delete(f'/api/resumes/{resume.pk}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
 
     def test_delete_resume_other_user_404(self):
         other = User.objects.create_user(username='other3', password='StrongPass123!')
         resume, _ = Resume.get_or_create_from_upload(other, _make_pdf())
-        resp = self.client.delete(f'/api/resumes/{resume.pk}/')
+        resp = self.client.delete(f'/api/v1/resumes/{resume.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
 
@@ -293,7 +293,7 @@ class DashboardStatsTests(TestCase):
         self.client = APIClient()
         self.user = User.objects.create_user(username='dashuser', password='StrongPass123!')
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'dashuser', 'password': 'StrongPass123!'},
             format='json',
         )
@@ -301,7 +301,7 @@ class DashboardStatsTests(TestCase):
         # Clear dashboard cache to avoid stale data between tests
         cache.delete(f'dashboard_stats:{self.user.id}')
     def test_stats_empty(self):
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['total_analyses'], 0)
         self.assertEqual(resp.data['active_analyses'], 0)
@@ -324,7 +324,7 @@ class DashboardStatsTests(TestCase):
         )
         a3.soft_delete()
 
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['total_analyses'], 3)
         self.assertEqual(resp.data['active_analyses'], 2)
@@ -335,7 +335,7 @@ class DashboardStatsTests(TestCase):
 
     def test_stats_requires_auth(self):
         unauthed = APIClient()
-        resp = unauthed.get('/api/dashboard/stats/')
+        resp = unauthed.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_stats_user_isolation(self):
@@ -348,7 +348,7 @@ class DashboardStatsTests(TestCase):
             user=self.user, jd_input_type='text', status='done', ats_score=75,
         )
 
-        resp = self.client.get('/api/dashboard/stats/')
+        resp = self.client.get('/api/v1/dashboard/stats/')
         self.assertEqual(resp.data['total_analyses'], 1)
         self.assertEqual(resp.data['average_ats_score'], 75.0)
 
@@ -362,7 +362,7 @@ class AnalyzeResumeDeduplicationTests(TestCase):
         self.user = User.objects.create_user(username='dedupuser', password='StrongPass123!')
         _give_credits(self.user)
         token_resp = self.client.post(
-            '/api/auth/login/',
+            '/api/v1/auth/login/',
             {'username': 'dedupuser', 'password': 'StrongPass123!'},
             format='json',
         )
@@ -373,7 +373,7 @@ class AnalyzeResumeDeduplicationTests(TestCase):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
 
         resp = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'Python dev'},
             format='multipart',
         )
@@ -393,14 +393,14 @@ class AnalyzeResumeDeduplicationTests(TestCase):
         content = b'%PDF-1.4 identical pdf bytes'
 
         resp1 = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(content), 'jd_input_type': 'text', 'jd_text': 'Role A'},
             format='multipart',
         )
         cache.delete(f'analyze_lock:{self.user.id}')
 
         resp2 = self.client.post(
-            '/api/analyze/',
+            '/api/v1/analyze/',
             {'resume_file': _make_pdf(content), 'jd_input_type': 'text', 'jd_text': 'Role B'},
             format='multipart',
         )

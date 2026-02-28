@@ -43,23 +43,25 @@
 ### Base URL
 
 ```
-Development:  http://localhost:8000/api
-Production:   https://<backend>.up.railway.app/api
+Development:  http://localhost:8000/api/v1
+Production:   https://<backend>.up.railway.app/api/v1
 ```
 
 Configure via environment variable:
 
 ```env
 # .env (Vite)
-VITE_API_URL=http://localhost:8000/api
+VITE_API_URL=http://localhost:8000/api/v1
 
 # .env (React Native / Expo)
-EXPO_PUBLIC_API_URL=http://localhost:8000/api
+EXPO_PUBLIC_API_URL=http://localhost:8000/api/v1
 ```
+
+> **API Versioning (v0.24.0):** All endpoints are now under `/api/v1/`. The old `/api/` prefix no longer works. Update your `API_URL` configuration accordingly.
 
 ### Authentication — JWT (Bearer Token)
 
-All endpoints except `/api/auth/register/`, `/api/auth/login/`, `/api/auth/token/refresh/`, and `/api/health/` require a JWT access token.
+All endpoints except `/api/v1/auth/register/`, `/api/v1/auth/login/`, `/api/v1/auth/token/refresh/`, and `/api/v1/health/` require a JWT access token.
 
 ```
 Authorization: Bearer <access_token>
@@ -76,7 +78,7 @@ Refresh tokens are **rotated on use** — each refresh call returns a new refres
 
 **Refresh flow:**
 ```http
-POST /api/auth/token/refresh/
+POST /api/v1/auth/token/refresh/
 Content-Type: application/json
 
 { "refresh": "<refresh_token>" }
@@ -105,7 +107,7 @@ Content-Type: application/json
 ### Axios Setup (Web)
 
 ```js
-// src/api/client.js
+// src/api/v1/client.js
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
@@ -189,9 +191,9 @@ export default api;
 
 ## 3. Auth Endpoints
 
-All prefixed with `/api/auth/`.
+All prefixed with `/api/v1/auth/`.
 
-### POST `/api/auth/register/` — Create Account
+### POST `/api/v1/auth/register/` — Create Account
 
 🔓 Public — no auth required. **Throttled:** `auth` scope (20/hour per IP).
 
@@ -287,13 +289,13 @@ Creates a new user account and returns tokens immediately (auto-login).
 >
 > **Newsletter sync:** When `marketing_opt_in` is `true`, the user's `NotificationPreference.newsletters_email` is automatically set to `true`.
 
-> **Email verification (v0.24.0):** Registration now sends a **verification email** (template `email-verification`) instead of the welcome email. The response includes `email_verification_required: true`. The welcome email is only sent after the user verifies their email via `POST /api/auth/verify-email/`. See [§23 Email Verification](#23-email-verification) for the full flow.
+> **Email verification (v0.24.0):** Registration now sends a **verification email** (template `email-verification`) instead of the welcome email. The response includes `email_verification_required: true`. The welcome email is only sent after the user verifies their email via `POST /api/v1/auth/verify-email/`. See [§23 Email Verification](#23-email-verification) for the full flow.
 
-> **New response field:** `is_email_verified` (boolean) is included in the `user` object on registration, login, and `GET /api/auth/me/`. Initially `false` until verified.
+> **New response field:** `is_email_verified` (boolean) is included in the `user` object on registration, login, and `GET /api/v1/auth/me/`. Initially `false` until verified.
 
 ---
 
-### POST `/api/auth/login/` — Sign In
+### POST `/api/v1/auth/login/` — Sign In
 
 🔓 Public — no auth required. **Throttled:** `auth` scope (20/hour per IP).
 
@@ -336,7 +338,7 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 ---
 
-### POST `/api/auth/logout/` — Sign Out
+### POST `/api/v1/auth/logout/` — Sign Out
 
 🔒 Requires auth. Blacklists the refresh token server-side.
 
@@ -360,7 +362,7 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 ---
 
-### GET `/api/auth/me/` — Current User Profile
+### GET `/api/v1/auth/me/` — Current User Profile
 
 🔒 Requires auth. Returns the currently authenticated user's profile including phone fields and plan.
 
@@ -418,7 +420,7 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ---
 
-### PUT `/api/auth/me/` — Update Profile
+### PUT `/api/v1/auth/me/` — Update Profile
 
 🔒 Requires auth. Update the current user's profile. Partial updates are supported (send only the fields you want to change).
 
@@ -451,7 +453,7 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 | `website_url`  | URL    | Personal website (blank to clear) |
 | `github_url`   | URL    | GitHub profile (blank to clear) |
 | `linkedin_url` | URL    | LinkedIn profile (blank to clear) |
-| `avatar_url`   | URL    | Profile picture URL (prefer using `POST /api/auth/avatar/` for uploads) |
+| `avatar_url`   | URL    | Profile picture URL (prefer using `POST /api/v1/auth/avatar/` for uploads) |
 
 **Response (200):**
 ```json
@@ -485,7 +487,7 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ---
 
-### DELETE `/api/auth/me/` — Delete Account
+### DELETE `/api/v1/auth/me/` — Delete Account
 
 🔒 Requires auth. **Permanently** deletes the authenticated user's account and all associated data.
 
@@ -522,7 +524,7 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 
 ---
 
-### POST `/api/auth/avatar/` — Upload Avatar
+### POST `/api/v1/auth/avatar/` — Upload Avatar
 
 🔒 Requires auth. Upload a profile picture. Accepts JPEG, PNG, or WebP images up to **2 MB**. The image is validated server-side using Pillow. Stored in R2 storage and the URL is set on `avatar_url`.
 
@@ -555,7 +557,7 @@ const { data } = await api.post('/auth/avatar/', formData, {
 
 ---
 
-### DELETE `/api/auth/avatar/` — Remove Avatar
+### DELETE `/api/v1/auth/avatar/` — Remove Avatar
 
 🔒 Requires auth. Removes the user's avatar (deletes file from storage and clears `avatar_url`).
 
@@ -569,7 +571,7 @@ const { data } = await api.post('/auth/avatar/', formData, {
 
 ---
 
-### POST `/api/auth/change-password/` — Change Password
+### POST `/api/v1/auth/change-password/` — Change Password
 
 🔒 Requires auth. Changes the authenticated user's password.
 
@@ -599,7 +601,7 @@ const { data } = await api.post('/auth/avatar/', formData, {
 
 ---
 
-### POST `/api/auth/forgot-password/` — Request Password Reset
+### POST `/api/v1/auth/forgot-password/` — Request Password Reset
 
 🔓 Public — no auth header required. **Throttled:** `auth` scope (20/hour per IP).
 
@@ -628,7 +630,7 @@ Sends a password reset email containing a one-time link with a `uid` and `token`
 
 ---
 
-### POST `/api/auth/reset-password/` — Set New Password
+### POST `/api/v1/auth/reset-password/` — Set New Password
 
 🔓 Public — no auth header required. **Throttled:** `auth` scope (20/hour per IP).
 
@@ -666,7 +668,7 @@ Validates the `uid` + `token` from the reset email and sets a new password. The 
 
 ---
 
-### GET `/api/auth/notifications/` — Get Notification Preferences
+### GET `/api/v1/auth/notifications/` — Get Notification Preferences
 
 🔒 Requires auth. Returns the current user's notification preferences. Email notifications default to `true`; mobile notifications default to `false` (except policy changes).
 
@@ -697,7 +699,7 @@ Validates the `uid` + `token` from the reset email and sets a new password. The 
 
 ---
 
-### PUT `/api/auth/notifications/` — Update Notification Preferences
+### PUT `/api/v1/auth/notifications/` — Update Notification Preferences
 
 🔒 Requires auth. Partial updates supported — send only the fields you want to change.
 
@@ -732,7 +734,7 @@ Validates the `uid` + `token` from the reset email and sets a new password. The 
 
 ---
 
-### POST `/api/auth/token/refresh/` — Refresh JWT
+### POST `/api/v1/auth/token/refresh/` — Refresh JWT
 
 🔓 Public — no auth header required (the refresh token is in the body).
 
@@ -767,19 +769,19 @@ Google Sign-In uses a **two-step flow** for new users (existing users get JWT to
 ```
 Step 1:  Frontend gets Google ID token (Google Sign-In / One Tap)
          ↓
-         POST /api/auth/google/  { token: "<google_id_token>" }
+         POST /api/v1/auth/google/  { token: "<google_id_token>" }
          ↓
          Existing user? → JWT tokens returned (done!)
          New user?      → { needs_registration: true, temp_token, email, name, picture }
 
 Step 2:  Frontend shows consent form + username/password fields
          ↓
-         POST /api/auth/google/complete/  { temp_token, username, password, consents... }
+         POST /api/v1/auth/google/complete/  { temp_token, username, password, consents... }
          ↓
          User created → JWT tokens returned (done!)
 ```
 
-### POST `/api/auth/google/` — Google Login (Step 1)
+### POST `/api/v1/auth/google/` — Google Login (Step 1)
 
 Verifies a Google ID token. For existing users, returns JWT tokens immediately (with smart profile sync). For new users, returns a temporary token to complete registration.
 
@@ -833,7 +835,7 @@ Verifies a Google ID token. For existing users, returns JWT tokens immediately (
 | 401 | Invalid/expired Google token | `{ "detail": "Invalid or expired Google token." }` |
 | 503 | Google OAuth not configured | `{ "detail": "Google OAuth is not configured on this server." }` |
 
-### POST `/api/auth/google/complete/` — Complete Google Registration (Step 2)
+### POST `/api/v1/auth/google/complete/` — Complete Google Registration (Step 2)
 
 Completes registration for a new Google user. Requires the `temp_token` from Step 1, a chosen username/password, and consent checkboxes.
 
@@ -921,7 +923,7 @@ interface GoogleCompleteResponse {
 
 ```typescript
 async function handleGoogleLogin(googleIdToken: string) {
-  const res = await api.post('/api/auth/google/', { token: googleIdToken });
+  const res = await api.post('/api/v1/auth/google/', { token: googleIdToken });
 
   if ('needs_registration' in res.data) {
     // New user — show consent + username form, pre-fill email/name
@@ -934,7 +936,7 @@ async function handleGoogleLogin(googleIdToken: string) {
 }
 
 async function completeGoogleRegistration(formData: GoogleCompleteRequest) {
-  const res = await api.post('/api/auth/google/complete/', formData);
+  const res = await api.post('/api/v1/auth/google/complete/', formData);
   storeTokens(res.data.access, res.data.refresh);
   navigateToDashboard();
 }
@@ -942,7 +944,7 @@ async function completeGoogleRegistration(formData: GoogleCompleteRequest) {
 
 ---
 
-### POST `/api/auth/logout-all/` — Logout All Devices
+### POST `/api/v1/auth/logout-all/` — Logout All Devices
 
 🔒 Requires auth. **Throttled:** `auth` scope (20/hour).
 
@@ -976,9 +978,9 @@ navigateToLogin();
 
 ## 4. Analysis Endpoints
 
-All prefixed with `/api/`.
+All prefixed with `/api/v1/`.
 
-### POST `/api/analyze/` — Submit New Analysis
+### POST `/api/v1/analyze/` — Submit New Analysis
 
 🔒 Requires auth. **Throttled:** 10/hour per user. Accepts **`multipart/form-data`** (file upload) or **`application/json`** (resume reuse).
 
@@ -987,7 +989,7 @@ Submits a resume + job description for async analysis. Returns immediately with 
 **Two ways to provide the resume — exactly one is required:**
 
 1. **Upload a new PDF** → send `resume_file` via `multipart/form-data`.
-2. **Reuse an existing resume** → send `resume_id` (UUID from `GET /api/resumes/`) via JSON or form field.
+2. **Reuse an existing resume** → send `resume_id` (UUID from `GET /api/v1/resumes/`) via JSON or form field.
 
 **Idempotency guard:** A second submit within 30 seconds returns **409 Conflict**. The frontend should **disable the submit button** after the first click and show a loading state.
 
@@ -996,7 +998,7 @@ Submits a resume + job description for async analysis. Returns immediately with 
 | Field                 | Type    | Required                    | Description                                              |
 |-----------------------|---------|-----------------------------|----------------------------------------------------------|
 | `resume_file`         | File    | ✅ unless `resume_id` sent  | PDF file, max 5 MB, must have `.pdf` extension and `%PDF` magic bytes |
-| `resume_id`           | UUID    | ✅ unless `resume_file` sent | UUID of an existing Resume owned by the user (from `GET /api/resumes/`) |
+| `resume_id`           | UUID    | ✅ unless `resume_file` sent | UUID of an existing Resume owned by the user (from `GET /api/v1/resumes/`) |
 | `jd_input_type`       | String  | ✅                          | One of: `"text"`, `"url"`, `"form"`                      |
 | `jd_text`             | String  | If type=`text`              | Raw job description text                                 |
 | `jd_url`              | String  | If type=`url`               | URL to a job posting (scraped via Firecrawl)             |
@@ -1060,7 +1062,7 @@ const { data } = await api.post('/analyze/', formData, {
 **Example — Reuse existing resume (JSON):**
 ```js
 const { data } = await api.post('/analyze/', {
-  resume_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',  // from GET /api/resumes/
+  resume_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',  // from GET /api/v1/resumes/
   jd_input_type: 'text',
   jd_text: 'We need a senior Python developer...',
 });
@@ -1069,7 +1071,7 @@ const { data } = await api.post('/analyze/', {
 
 ---
 
-### GET `/api/analyses/` — List Analyses (Paginated)
+### GET `/api/v1/analyses/` — List Analyses (Paginated)
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns **paginated** list of the user's own analyses, newest first.
 
@@ -1088,16 +1090,16 @@ Only returns **active** (non-soft-deleted) analyses.
 
 **Examples:**
 ```
-GET /api/analyses/?search=backend&status=done&score_min=70&ordering=-ats_score
-GET /api/analyses/?search=google&ordering=created_at&page=2
+GET /api/v1/analyses/?search=backend&status=done&score_min=70&ordering=-ats_score
+GET /api/v1/analyses/?search=google&ordering=created_at&page=2
 ```
 
 **Response (200):**
 ```json
 {
   "count": 47,
-  "next": "http://localhost:8000/api/analyses/?page=3",
-  "previous": "http://localhost:8000/api/analyses/?page=1",
+  "next": "http://localhost:8000/api/v1/analyses/?page=3",
+  "previous": "http://localhost:8000/api/v1/analyses/?page=1",
   "results": [
     {
       "id": 42,
@@ -1110,7 +1112,7 @@ GET /api/analyses/?search=google&ordering=created_at&page=2
       "ai_provider_used": "OpenRouterProvider",
       "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
       "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
+      "share_url": "https://yourhost.com/api/v1/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
       "created_at": "2026-02-22T14:30:00Z"
     }
   ]
@@ -1136,7 +1138,7 @@ GET /api/analyses/?search=google&ordering=created_at&page=2
 
 ---
 
-### GET `/api/analyses/<id>/` — Analysis Detail
+### GET `/api/v1/analyses/<id>/` — Analysis Detail
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns the full analysis with all results, nested scrape result, and LLM response.
 
@@ -1146,7 +1148,7 @@ Returns 404 if the analysis is soft-deleted or belongs to another user.
 
 ---
 
-### GET `/api/analyses/<id>/status/` — Poll Status (Lightweight)
+### GET `/api/v1/analyses/<id>/status/` — Poll Status (Lightweight)
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Ultra-fast polling endpoint — reads from Redis cache first, falls back to DB.
 
@@ -1173,7 +1175,7 @@ See [Polling for Analysis Status](#13-polling-for-analysis-status) for the full 
 
 ---
 
-### POST `/api/analyses/<id>/retry/` — Retry Failed Analysis
+### POST `/api/v1/analyses/<id>/retry/` — Retry Failed Analysis
 
 🔒 Requires auth. **Throttled:** `analyze` scope (10/hour per user).
 
@@ -1210,7 +1212,7 @@ After receiving 202, begin [polling for status](#13-polling-for-analysis-status)
 
 ---
 
-### DELETE `/api/analyses/<id>/delete/` — Soft-Delete Analysis
+### DELETE `/api/v1/analyses/<id>/delete/` — Soft-Delete Analysis
 
 🔒 Requires auth. **Throttled:** `write` scope (60/hour).
 
@@ -1222,8 +1224,8 @@ Performs a **soft-delete** — the analysis row is preserved in the database wit
 - Report PDF deleted from R2 storage
 - Orphaned `ScrapeResult` and `LLMResponse` rows cleaned up
 - Lightweight metadata preserved: `ats_score`, `jd_role`, `jd_company`, `status`, `created_at`
-- The analysis **no longer appears** in `GET /api/analyses/` list or `GET /api/analyses/<id>/` detail
-- Soft-deleted analyses **are counted** in `GET /api/dashboard/stats/` for audit trail
+- The analysis **no longer appears** in `GET /api/v1/analyses/` list or `GET /api/v1/analyses/<id>/` detail
+- Soft-deleted analyses **are counted** in `GET /api/v1/dashboard/stats/` for audit trail
 
 **Response (204):** No content.
 
@@ -1233,7 +1235,7 @@ Performs a **soft-delete** — the analysis row is preserved in the database wit
 
 ---
 
-### GET `/api/analyses/<id>/export-pdf/` — Download PDF Report
+### GET `/api/v1/analyses/<id>/export-pdf/` — Download PDF Report
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour).
 
@@ -1273,7 +1275,7 @@ URL.revokeObjectURL(url);
 
 ---
 
-### POST `/api/analyses/<id>/cancel/` — Cancel Stuck Analysis
+### POST `/api/v1/analyses/<id>/cancel/` — Cancel Stuck Analysis
 
 🔒 Requires auth. **Throttled:** `write` scope (30/hour).
 
@@ -1306,7 +1308,7 @@ await api.post(`/analyses/${id}/cancel/`);
 
 ---
 
-### POST `/api/analyses/bulk-delete/` — Bulk Soft-Delete Analyses
+### POST `/api/v1/analyses/bulk-delete/` — Bulk Soft-Delete Analyses
 
 🔒 Requires auth. **Throttled:** `write` scope (30/hour).
 
@@ -1346,7 +1348,7 @@ const { data } = await api.post('/analyses/bulk-delete/', {
 
 ---
 
-### GET `/api/analyses/<id>/export-json/` — Download Analysis as JSON
+### GET `/api/v1/analyses/<id>/export-json/` — Download Analysis as JSON
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour).
 
@@ -1377,7 +1379,7 @@ URL.revokeObjectURL(url);
 
 ---
 
-### GET `/api/account/export/` — GDPR Data Export
+### GET `/api/v1/account/export/` — GDPR Data Export
 
 🔒 Requires auth. **Throttled:** `write` scope (30/hour).
 
@@ -1416,11 +1418,11 @@ URL.revokeObjectURL(url);
 
 ## 5. Resume Endpoints
 
-All prefixed with `/api/`.
+All prefixed with `/api/v1/`.
 
 Resume files are **deduplicated by SHA-256 hash per user** — uploading the same PDF for multiple analyses stores the file only once. Each unique file gets a `Resume` row with a UUID primary key.
 
-### GET `/api/resumes/` — List Resumes (Paginated)
+### GET `/api/v1/resumes/` — List Resumes (Paginated)
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns **paginated** list of the user's deduplicated resume files, newest first.
 
@@ -1470,7 +1472,7 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 
 ---
 
-### DELETE `/api/resumes/<uuid:id>/` — Delete Resume
+### DELETE `/api/v1/resumes/<uuid:id>/` — Delete Resume
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Permanently deletes the resume file from R2 storage.
 
@@ -1507,7 +1509,7 @@ try {
 
 ---
 
-### POST `/api/resumes/bulk-delete/` — Bulk Delete Resumes
+### POST `/api/v1/resumes/bulk-delete/` — Bulk Delete Resumes
 
 🔒 Requires auth. **Throttled:** `write` scope (60/hour). Delete up to 50 resumes in a single request. Resumes with active (processing/pending) analyses are **skipped** (not deleted).
 
@@ -1541,7 +1543,7 @@ try {
 
 ---
 
-### GET `/api/analyses/compare/` — Compare Analyses Side-by-Side
+### GET `/api/v1/analyses/compare/` — Compare Analyses Side-by-Side
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Compare 2–5 analyses in a single response. All analyses must belong to the authenticated user.
 
@@ -1551,7 +1553,7 @@ try {
 |-------|----------|-------------|
 | `ids` | ✅       | Comma-separated analysis IDs (2–5) |
 
-**Example:** `GET /api/analyses/compare/?ids=42,43,44`
+**Example:** `GET /api/v1/analyses/compare/?ids=42,43,44`
 
 **Response (200):**
 ```json
@@ -1590,7 +1592,7 @@ try {
 
 ## 6. Dashboard Endpoints
 
-### GET `/api/dashboard/stats/` — User Dashboard Analytics
+### GET `/api/v1/dashboard/stats/` — User Dashboard Analytics
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail.
 
@@ -1723,7 +1725,7 @@ try {
 
 Allow users to generate a public, read-only link for a completed analysis. Anyone with the link can view the results — no login required.
 
-### POST `/api/analyses/<id>/share/` — Generate Share Link
+### POST `/api/v1/analyses/<id>/share/` — Generate Share Link
 
 🔒 Requires auth. **Throttled:** `write` scope (60/hour). Only works on **completed** (`status: "done"`) analyses.
 
@@ -1735,7 +1737,7 @@ Allow users to generate a public, read-only link for a completed analysis. Anyon
 ```json
 {
   "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/"
+  "share_url": "https://yourhost.com/api/v1/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/"
 }
 ```
 
@@ -1757,7 +1759,7 @@ showToast('Share link copied!');
 
 ---
 
-### DELETE `/api/analyses/<id>/share/` — Revoke Share Link
+### DELETE `/api/v1/analyses/<id>/share/` — Revoke Share Link
 
 🔒 Requires auth. **Throttled:** `write` scope (60/hour). Immediately revokes the share token — the public link stops working.
 
@@ -1774,7 +1776,7 @@ showToast('Share link copied!');
 
 ---
 
-### GET `/api/shared/<token>/` — Public Shared Analysis
+### GET `/api/v1/shared/<token>/` — Public Shared Analysis
 
 🔓 **Public — no auth required.** Returns a curated, read-only subset of the analysis results.
 
@@ -1871,7 +1873,7 @@ showToast('Share link copied!');
 
 ---
 
-### GET `/api/shared/<token>/summary/` — Shared Score Summary
+### GET `/api/v1/shared/<token>/summary/` — Shared Score Summary
 
 🔓 **Public — no auth required.** Lightweight endpoint returning only score data for social card previews (OG meta tags, share widgets).
 
@@ -1894,7 +1896,7 @@ showToast('Share link copied!');
 
 ## 8. Health Check
 
-### GET `/api/health/` — Health Check
+### GET `/api/v1/health/` — Health Check
 
 🔓 Public (no auth required). Use this to verify backend connectivity before showing the login screen.
 
@@ -1914,7 +1916,7 @@ showToast('Share link copied!');
 
 ### Detail Response Schema
 
-Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with all results.
+Returned by `GET /api/v1/analyses/<id>/`. This is the full analysis payload with all results.
 
 ```json
 {
@@ -2020,7 +2022,7 @@ Returned by `GET /api/analyses/<id>/`. This is the full analysis payload with al
   "ai_provider_used": "OpenRouterProvider",
   "report_pdf_url": "https://r2.example.com/reports/report_42.pdf",
   "share_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "share_url": "https://yourhost.com/api/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
+  "share_url": "https://yourhost.com/api/v1/shared/a1b2c3d4-e5f6-7890-abcd-ef1234567890/",
   "created_at": "2026-02-22T14:30:00Z",
   "updated_at": "2026-02-22T14:30:12Z"
 }
@@ -2321,7 +2323,7 @@ The backend parses `llm_response.parsed_response` and flattens key fields onto t
 
 ## 11. Pagination
 
-All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`, `GET /api/generated-resumes/`, `GET /api/job-alerts/`, `GET /api/job-alerts/<id>/matches/`) return paginated responses.
+All list endpoints (`GET /api/v1/analyses/`, `GET /api/v1/resumes/`, `GET /api/v1/generated-resumes/`, `GET /api/v1/job-alerts/`, `GET /api/v1/job-alerts/<id>/matches/`) return paginated responses.
 
 | Setting     | Value                    |
 |-------------|--------------------------|
@@ -2333,8 +2335,8 @@ All list endpoints (`GET /api/analyses/`, `GET /api/resumes/`, `GET /api/generat
 ```json
 {
   "count": 47,
-  "next": "http://localhost:8000/api/analyses/?page=3",
-  "previous": "http://localhost:8000/api/analyses/?page=1",
+  "next": "http://localhost:8000/api/v1/analyses/?page=3",
+  "previous": "http://localhost:8000/api/v1/analyses/?page=1",
   "results": [ ... ]
 }
 ```
@@ -2376,7 +2378,7 @@ Every endpoint is throttled. Six scopes exist, each overridable via environment 
 | `anon` (IP-based) | 60 / hour | `ANON_THROTTLE_RATE` | All unauthenticated requests (global default) |
 | `user` (per user) | 200 / hour | `USER_THROTTLE_RATE` | All authenticated requests (global default) |
 | `auth` (IP-based) | 20 / hour | `AUTH_THROTTLE_RATE` | Register, Login, Forgot-password, Reset-password |
-| `analyze` (per user) | 10 / hour | `ANALYZE_THROTTLE_RATE` | `POST /api/analyze/`, `POST /api/analyses/<id>/retry/` |
+| `analyze` (per user) | 10 / hour | `ANALYZE_THROTTLE_RATE` | `POST /api/v1/analyze/`, `POST /api/v1/analyses/<id>/retry/` |
 | `readonly` (per user) | 120 / hour | `READONLY_THROTTLE_RATE` | All authenticated read endpoints |
 | `write` (per user) | 60 / hour | `WRITE_THROTTLE_RATE` | Analysis delete, share toggle |
 | `payment` (per user) | 30 / hour | `PAYMENT_THROTTLE_RATE` | All Razorpay payment endpoints (subscribe, verify, cancel, topup, history) |
@@ -2404,7 +2406,7 @@ All API responses now include rate-limit headers (when DRF throttling is active)
 | `X-RateLimit-Remaining` | Requests remaining before throttled | `187` |
 | `X-RateLimit-Reset` | Unix timestamp when the window resets | `1709120000` |
 
-The headers reflect the **most restrictive** throttle scope active on the endpoint. For example, `POST /api/analyze/` has both `user` (200/hr) and `analyze` (10/hr) scopes — the headers will show whichever has fewer remaining requests.
+The headers reflect the **most restrictive** throttle scope active on the endpoint. For example, `POST /api/v1/analyze/` has both `user` (200/hr) and `analyze` (10/hr) scopes — the headers will show whichever has fewer remaining requests.
 
 **Frontend usage:**
 ```js
@@ -2419,8 +2421,8 @@ api.interceptors.response.use((response) => {
 ```
 
 **Exempt endpoints (no throttle applied):**
-- `GET /api/health/` — health check (must always respond)
-- `GET /api/shared/<token>/` — public shared analysis (uses default `anon` scope only)
+- `GET /api/v1/health/` — health check (must always respond)
+- `GET /api/v1/shared/<token>/` — public shared analysis (uses default `anon` scope only)
 
 **Frontend handling:**
 ```js
@@ -2438,7 +2440,7 @@ api.interceptors.response.use(null, (error) => {
 
 ## 13. Polling for Analysis Status
 
-After submitting an analysis (`POST /api/analyze/` → `{ id, status }`), poll the lightweight status endpoint until complete.
+After submitting an analysis (`POST /api/v1/analyze/` → `{ id, status }`), poll the lightweight status endpoint until complete.
 
 ### Status flow
 
@@ -2464,7 +2466,7 @@ pending → processing → done
 ```js
 /**
  * Poll analysis status until done/failed.
- * @param {number} analysisId - The analysis ID from POST /api/analyze/
+ * @param {number} analysisId - The analysis ID from POST /api/v1/analyze/
  * @param {function} onUpdate - Callback called with each status response
  * @returns {Promise<object>} Final status object
  */
@@ -2917,7 +2919,7 @@ interface RetryResponse {
 
 interface ShareResponse {
   share_token: string;          // UUID
-  share_url: string;            // e.g., "https://yourhost.com/api/shared/<uuid>/"
+  share_url: string;            // e.g., "https://yourhost.com/api/v1/shared/<uuid>/"
 }
 
 interface SharedAnalysis {
@@ -2976,7 +2978,7 @@ interface DashboardStats {
 
 ```jsx
 import { useState } from 'react';
-import api from '../api/client';
+import api from '../api/v1/client';
 
 function AnalyzePage() {
   const [step, setStep] = useState(null);     // pipeline_step
@@ -3048,7 +3050,7 @@ function AnalyzePage() {
 ```jsx
 import { useEffect, useState } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import api from '../api/client';
+import api from '../api/v1/client';
 
 function DashboardPage() {
   const [stats, setStats] = useState(null);
@@ -3095,7 +3097,7 @@ function DashboardPage() {
 
 ```jsx
 import { useEffect, useState } from 'react';
-import api from '../api/client';
+import api from '../api/v1/client';
 
 function HistoryPage() {
   const [analyses, setAnalyses] = useState([]);
@@ -3154,7 +3156,7 @@ function HistoryPage() {
 
 ```jsx
 import { useEffect, useState } from 'react';
-import api from '../api/client';
+import api from '../api/v1/client';
 
 function ResumesPage() {
   const [resumes, setResumes] = useState([]);
@@ -3239,7 +3241,7 @@ Plans define subscription tiers with quotas, rate limits, and feature flags. Eac
 ### Credit Flow
 
 ```
-POST /api/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
+POST /api/v1/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
                                    → YES → deduct 1 credit → dispatch task
                                                  ↓
                      Celery task → FAILED → refund 1 credit
@@ -3340,7 +3342,7 @@ The `plan`, `wallet`, `plan_valid_until`, and `pending_plan` objects are include
 
 ### Wallet Endpoints
 
-#### `GET /api/auth/wallet/`
+#### `GET /api/v1/auth/wallet/`
 
 Returns wallet balance, plan credits info, and top-up availability.
 
@@ -3359,7 +3361,7 @@ Returns wallet balance, plan credits info, and top-up availability.
 }
 ```
 
-#### `GET /api/auth/wallet/transactions/`
+#### `GET /api/v1/auth/wallet/transactions/`
 
 Paginated transaction history.
 
@@ -3403,7 +3405,7 @@ Paginated transaction history.
 | `admin_adjustment` | Admin-initiated adjustment |
 | `upgrade_bonus` | Credits granted on plan upgrade |
 
-#### `GET /api/auth/wallet/transactions/export/` — Download Transactions CSV
+#### `GET /api/v1/auth/wallet/transactions/export/` — Download Transactions CSV
 
 🔒 Requires auth. Downloads all wallet transactions as a CSV file.
 
@@ -3426,28 +3428,28 @@ a.click();
 URL.revokeObjectURL(url);
 ```
 
-#### `POST /api/auth/wallet/topup/` *(DEPRECATED)*
+#### `POST /api/v1/auth/wallet/topup/` *(DEPRECATED)*
 
 > **Deprecated in v0.13.1.** Credit top-ups now require payment via Razorpay.
-> Use `POST /api/auth/payments/topup/` instead (see [§ 21](#21-razorpay-payments)).
+> Use `POST /api/v1/auth/payments/topup/` instead (see [§ 21](#21-razorpay-payments)).
 
 This endpoint now always returns **402 Payment Required**:
 
 ```json
 {
-  "detail": "Credit top-ups require payment. Use POST /api/auth/payments/topup/ instead.",
-  "payment_url": "/api/auth/payments/topup/"
+  "detail": "Credit top-ups require payment. Use POST /api/v1/auth/payments/topup/ instead.",
+  "payment_url": "/api/v1/auth/payments/topup/"
 }
 ```
 
 **Migration guide:** Replace direct top-up calls with the Razorpay checkout flow:
-1. `POST /api/auth/payments/topup/` → get `order_id` + `key_id`
+1. `POST /api/v1/auth/payments/topup/` → get `order_id` + `key_id`
 2. Open Razorpay checkout with the returned params
-3. `POST /api/auth/payments/topup/verify/` → credits are added after payment verification
+3. `POST /api/v1/auth/payments/topup/verify/` → credits are added after payment verification
 
 ### Plan Endpoints
 
-#### `GET /api/auth/plans/`
+#### `GET /api/v1/auth/plans/`
 
 List all active plans. **Public endpoint — no auth required.**
 
@@ -3496,7 +3498,7 @@ List all active plans. **Public endpoint — no auth required.**
 ]
 ```
 
-#### `POST /api/auth/plans/subscribe/`
+#### `POST /api/v1/auth/plans/subscribe/`
 
 Switch to a different plan. **Only allows downgrade to free plan.** Upgrading to a paid plan
 requires payment via Razorpay (see [§ 21](#21-razorpay-payments)).
@@ -3511,15 +3513,15 @@ requires payment via Razorpay (see [§ 21](#21-razorpay-payments)).
 **Paid Plan Upgrade Attempt (402):**
 ```json
 {
-  "detail": "Upgrading to a paid plan requires payment. Use POST /api/auth/payments/subscribe/ instead.",
-  "payment_url": "/api/auth/payments/subscribe/"
+  "detail": "Upgrading to a paid plan requires payment. Use POST /api/v1/auth/payments/subscribe/ instead.",
+  "payment_url": "/api/v1/auth/payments/subscribe/"
 }
 ```
 
 > **Migration guide:** To upgrade to Pro, use the Razorpay subscription flow:
-> 1. `POST /api/auth/payments/subscribe/` with `{"plan_slug": "pro"}`
+> 1. `POST /api/v1/auth/payments/subscribe/` with `{"plan_slug": "pro"}`
 > 2. Open Razorpay checkout with the returned `subscription_id` + `key_id`
-> 3. `POST /api/auth/payments/subscribe/verify/` → plan is upgraded after payment
+> 3. `POST /api/v1/auth/payments/subscribe/verify/` → plan is upgraded after payment
 
 **Downgrade Response (200):**
 ```json
@@ -3543,7 +3545,7 @@ requires payment via Razorpay (see [§ 21](#21-razorpay-payments)).
 
 ### Analysis Submit Response Changes
 
-`POST /api/analyze/` and `POST /api/analyses/<id>/retry/` now include credit info:
+`POST /api/v1/analyze/` and `POST /api/v1/analyses/<id>/retry/` now include credit info:
 
 **Success (202):**
 ```json
@@ -3740,9 +3742,9 @@ Seeded via `python manage.py seed_email_templates` (idempotent — safe to re-ru
 
 | Slug | Category | Trigger | Template Variables |
 |------|----------|---------|--------------------|
-| `password-reset` | `auth` | `POST /api/auth/forgot-password/` | `{{ username }}`, `{{ reset_link }}`, `{{ expiry_hours }}`, `{{ app_name }}` |
-| `welcome` | `auth` | `POST /api/auth/register/` | `{{ username }}`, `{{ frontend_url }}`, `{{ app_name }}` |
-| `password-changed` | `auth` | `POST /api/auth/change-password/` | `{{ username }}`, `{{ changed_at }}`, `{{ app_name }}` |
+| `password-reset` | `auth` | `POST /api/v1/auth/forgot-password/` | `{{ username }}`, `{{ reset_link }}`, `{{ expiry_hours }}`, `{{ app_name }}` |
+| `welcome` | `auth` | `POST /api/v1/auth/register/` | `{{ username }}`, `{{ frontend_url }}`, `{{ app_name }}` |
+| `password-changed` | `auth` | `POST /api/v1/auth/change-password/` | `{{ username }}`, `{{ changed_at }}`, `{{ app_name }}` |
 
 ### Auto-injected Variables
 
@@ -3779,7 +3781,7 @@ Generate an AI-improved resume directly from a completed analysis report. The sy
 ### 19.1 Trigger Generation
 
 ```
-POST /api/analyses/<id>/generate-resume/
+POST /api/v1/analyses/<id>/generate-resume/
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -3823,7 +3825,7 @@ Content-Type: application/json
 ### 19.2 Poll Generation Status
 
 ```
-GET /api/analyses/<id>/generated-resume/
+GET /api/v1/analyses/<id>/generated-resume/
 Authorization: Bearer <token>
 ```
 
@@ -3854,7 +3856,7 @@ Authorization: Bearer <token>
 ### 19.3 Download Generated Resume
 
 ```
-GET /api/analyses/<id>/generated-resume/download/
+GET /api/v1/analyses/<id>/generated-resume/download/
 Authorization: Bearer <token>
 ```
 
@@ -3868,7 +3870,7 @@ Authorization: Bearer <token>
 ### 19.4 List All Generated Resumes
 
 ```
-GET /api/generated-resumes/
+GET /api/v1/generated-resumes/
 Authorization: Bearer <token>
 ```
 
@@ -3899,7 +3901,7 @@ Returns a **paginated** list of all generated resumes for the authenticated user
 ### 19.5 Delete Generated Resume
 
 ```
-DELETE /api/generated-resumes/<uuid:id>/
+DELETE /api/v1/generated-resumes/<uuid:id>/
 Authorization: Bearer <token>
 ```
 
@@ -3989,8 +3991,8 @@ Smart Job Alerts automatically discover job opportunities that match a user's re
 ### 20.1 List / Create Job Alerts
 
 ```
-GET  /api/job-alerts/
-POST /api/job-alerts/
+GET  /api/v1/job-alerts/
+POST /api/v1/job-alerts/
 ```
 
 **GET** returns a **paginated** list of active alerts for the authenticated user (20 per page, newest first).
@@ -4038,9 +4040,9 @@ POST /api/job-alerts/
 ### 20.2 Job Alert Detail
 
 ```
-GET    /api/job-alerts/<uuid:id>/
-PUT    /api/job-alerts/<uuid:id>/
-DELETE /api/job-alerts/<uuid:id>/
+GET    /api/v1/job-alerts/<uuid:id>/
+PUT    /api/v1/job-alerts/<uuid:id>/
+DELETE /api/v1/job-alerts/<uuid:id>/
 ```
 
 **GET** returns the alert detail including nested `search_profile` and `last_run`.
@@ -4071,7 +4073,7 @@ DELETE /api/job-alerts/<uuid:id>/
 ### 20.3 List Matches
 
 ```
-GET /api/job-alerts/<uuid:id>/matches/
+GET /api/v1/job-alerts/<uuid:id>/matches/
 ```
 
 Returns paginated job matches for an alert, ordered by relevance score (highest first).
@@ -4086,8 +4088,8 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
 ```json
 {
   "count": 42,
-  "next": "http://localhost:8000/api/job-alerts/.../matches/?page=3",
-  "previous": "http://localhost:8000/api/job-alerts/.../matches/?page=1",
+  "next": "http://localhost:8000/api/v1/job-alerts/.../matches/?page=3",
+  "previous": "http://localhost:8000/api/v1/job-alerts/.../matches/?page=1",
   "results": [
     {
       "id": "uuid",
@@ -4115,7 +4117,7 @@ Returns paginated job matches for an alert, ordered by relevance score (highest 
 ### 20.4 Submit Match Feedback
 
 ```
-POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
+POST /api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
 ```
 
 **Request body:**
@@ -4143,7 +4145,7 @@ POST /api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
 ### 20.5 Manual Run
 
 ```
-POST /api/job-alerts/<uuid:id>/run/
+POST /api/v1/job-alerts/<uuid:id>/run/
 ```
 
 Triggers an immediate job discovery + matching run for the alert. Costs 1 credit.
@@ -4258,13 +4260,13 @@ interface JobMatch {
 ```typescript
 // Fetch user's job alerts (now paginated)
 const fetchAlerts = async (page = 1): Promise<PaginatedResponse<JobAlert>> => {
-  const { data } = await api.get('/api/job-alerts/', { params: { page } });
+  const { data } = await api.get('/api/v1/job-alerts/', { params: { page } });
   return data;  // paginated { count, next, previous, results }
 };
 
 // Create a new alert
 const createAlert = async (resumeId: string, frequency: 'daily' | 'weekly') => {
-  const { data } = await api.post('/api/job-alerts/', {
+  const { data } = await api.post('/api/v1/job-alerts/', {
     resume: resumeId,
     frequency,
   });
@@ -4275,14 +4277,14 @@ const createAlert = async (resumeId: string, frequency: 'daily' | 'weekly') => {
 const fetchMatches = async (alertId: string, page = 1, feedback?: string) => {
   const params: Record<string, string> = { page: String(page) };
   if (feedback) params.feedback = feedback;
-  const { data } = await api.get(`/api/job-alerts/${alertId}/matches/`, { params });
+  const { data } = await api.get(`/api/v1/job-alerts/${alertId}/matches/`, { params });
   return data;  // paginated { count, next, previous, results }
 };
 
 // Submit feedback on a match
 const submitFeedback = async (alertId: string, matchId: string, feedback: MatchFeedback, reason?: string) => {
   const { data } = await api.post(
-    `/api/job-alerts/${alertId}/matches/${matchId}/feedback/`,
+    `/api/v1/job-alerts/${alertId}/matches/${matchId}/feedback/`,
     { user_feedback: feedback, feedback_reason: reason }
   );
   return data;
@@ -4290,7 +4292,7 @@ const submitFeedback = async (alertId: string, matchId: string, feedback: MatchF
 
 // Trigger manual run
 const triggerRun = async (alertId: string) => {
-  const { data } = await api.post(`/api/job-alerts/${alertId}/run/`);
+  const { data } = await api.post(`/api/v1/job-alerts/${alertId}/run/`);
   return data;
 };
 ```
@@ -4310,7 +4312,7 @@ Full Razorpay payment gateway integration for **plan subscriptions** (recurring)
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
-POST /api/auth/payments/subscribe/
+POST /api/v1/auth/payments/subscribe/
 Auth: Bearer token
 Body: { "plan_slug": "pro" }
 ```
@@ -4349,7 +4351,7 @@ rzp.open();
 **Step 3 — Verify subscription payment:**
 
 ```
-POST /api/auth/payments/subscribe/verify/
+POST /api/v1/auth/payments/subscribe/verify/
 Auth: Bearer token
 Body: {
   "razorpay_subscription_id": "sub_Abc123",
@@ -4374,7 +4376,7 @@ Body: {
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
-POST /api/auth/payments/subscribe/cancel/
+POST /api/v1/auth/payments/subscribe/cancel/
 Auth: Bearer token
 ```
 
@@ -4393,7 +4395,7 @@ Auth: Bearer token
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
-GET /api/auth/payments/subscribe/status/
+GET /api/v1/auth/payments/subscribe/status/
 Auth: Bearer token
 ```
 
@@ -4419,7 +4421,7 @@ Auth: Bearer token
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
-POST /api/auth/payments/topup/
+POST /api/v1/auth/payments/topup/
 Auth: Bearer token
 Body: { "quantity": 2 }   // default: 1
 ```
@@ -4458,7 +4460,7 @@ rzp.open();
 **Step 3 — Verify top-up payment:**
 
 ```
-POST /api/auth/payments/topup/verify/
+POST /api/v1/auth/payments/topup/verify/
 Auth: Bearer token
 Body: {
   "razorpay_order_id": "order_Abc123",
@@ -4483,7 +4485,7 @@ Body: {
 🔒 Requires auth. **Throttled:** `payment` scope (30/hour per user).
 
 ```
-GET /api/auth/payments/history/?limit=20
+GET /api/v1/auth/payments/history/?limit=20
 Auth: Bearer token
 ```
 
@@ -4517,7 +4519,7 @@ Auth: Bearer token
 ### 21.6 Webhook Endpoint (Backend-Only)
 
 ```
-POST /api/auth/payments/webhook/
+POST /api/v1/auth/payments/webhook/
 Auth: None (signature verification via X-Razorpay-Signature header)
 ```
 
@@ -4608,7 +4610,7 @@ await loadScript('https://checkout.razorpay.com/v1/checkout.js');
 
 // 2. Subscribe to Pro plan
 const subscribeToPro = async () => {
-  const { data } = await api.post('/api/auth/payments/subscribe/', {
+  const { data } = await api.post('/api/v1/auth/payments/subscribe/', {
     plan_slug: 'pro',
   });
 
@@ -4618,7 +4620,7 @@ const subscribeToPro = async () => {
     name: 'i-Luffy',
     description: `${data.plan_name} Plan`,
     handler: async (response: RazorpayResponse) => {
-      const result = await api.post('/api/auth/payments/subscribe/verify/', {
+      const result = await api.post('/api/v1/auth/payments/subscribe/verify/', {
         razorpay_subscription_id: response.razorpay_subscription_id,
         razorpay_payment_id: response.razorpay_payment_id,
         razorpay_signature: response.razorpay_signature,
@@ -4635,7 +4637,7 @@ const subscribeToPro = async () => {
 
 // 3. Top up credits
 const topUpCredits = async (quantity = 1) => {
-  const { data } = await api.post('/api/auth/payments/topup/', { quantity });
+  const { data } = await api.post('/api/v1/auth/payments/topup/', { quantity });
 
   const options = {
     key: data.key_id,
@@ -4645,7 +4647,7 @@ const topUpCredits = async (quantity = 1) => {
     name: 'i-Luffy',
     description: `${data.credits} Credits`,
     handler: async (response: RazorpayResponse) => {
-      const result = await api.post('/api/auth/payments/topup/verify/', {
+      const result = await api.post('/api/v1/auth/payments/topup/verify/', {
         razorpay_order_id: response.razorpay_order_id,
         razorpay_payment_id: response.razorpay_payment_id,
         razorpay_signature: response.razorpay_signature,
@@ -4661,13 +4663,13 @@ const topUpCredits = async (quantity = 1) => {
 
 // 4. Check subscription status
 const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
-  const { data } = await api.get('/api/auth/payments/subscribe/status/');
+  const { data } = await api.get('/api/v1/auth/payments/subscribe/status/');
   return data;
 };
 
 // 5. Cancel subscription
 const cancelSubscription = async () => {
-  const { data } = await api.post('/api/auth/payments/subscribe/cancel/');
+  const { data } = await api.post('/api/v1/auth/payments/subscribe/cancel/');
   await fetchMe();
   toast.info(data.message);
 };
@@ -4679,7 +4681,7 @@ const cancelSubscription = async () => {
 
 Public endpoint for landing-page contact form submissions. No authentication required.
 
-### `POST /api/auth/contact/`
+### `POST /api/v1/auth/contact/`
 
 Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 
@@ -4732,7 +4734,7 @@ New user accounts require email verification before the welcome email is sent. T
 Register → verification email sent → user clicks link → POST /verify-email/ → verified → welcome email sent
 ```
 
-### `POST /api/auth/verify-email/` — Verify Email
+### `POST /api/v1/auth/verify-email/` — Verify Email
 
 🔓 Public — no auth required. **Throttled:** `auth` scope (20/hour per IP).
 
@@ -4760,7 +4762,7 @@ Register → verification email sent → user clicks link → POST /verify-email
 | Already used | `"This token has already been used."` |
 | Expired (24h) | `"This verification token has expired. Please request a new one."` |
 
-### `POST /api/auth/resend-verification/` — Resend Verification Email
+### `POST /api/v1/auth/resend-verification/` — Resend Verification Email
 
 🔒 Authenticated. **Throttled:** `auth` scope (20/hour per IP).
 
@@ -4790,21 +4792,21 @@ if (response.data.email_verification_required) {
 
 // Verify email (from link in email)
 const verifyEmail = async (token) => {
-  const { data } = await api.post('/api/auth/verify-email/', { token });
+  const { data } = await api.post('/api/v1/auth/verify-email/', { token });
   showToast(data.detail, 'success');
   navigate('/login');
 };
 
 // Resend verification (authenticated)
 const resendVerification = async () => {
-  await api.post('/api/auth/resend-verification/');
+  await api.post('/api/v1/auth/resend-verification/');
   showToast('Verification email sent!', 'info');
 };
 ```
 
 ### `is_email_verified` field
 
-The `user` object in login, register, and `GET /api/auth/me/` responses now includes:
+The `user` object in login, register, and `GET /api/v1/auth/me/` responses now includes:
 
 ```json
 {
@@ -4820,7 +4822,7 @@ Use this to conditionally show a verification banner in the UI.
 
 Analyze one resume against multiple job descriptions in a single API call. Each JD creates a separate `ResumeAnalysis` and deducts 1 credit.
 
-### `POST /api/analyze/bulk/`
+### `POST /api/v1/analyze/bulk/`
 
 🔒 Authenticated. **Throttled:** `analyze` scope (10/hour). **Parsers:** `multipart/form-data`, `application/json`.
 
@@ -4901,7 +4903,7 @@ Each `job_descriptions[i]` follows the same schema as single analysis (`jd_input
 
 Generate AI-powered interview questions customized to a specific resume + JD analysis. Questions are categorized (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers.
 
-### `POST /api/analyses/<id>/interview-prep/` — Generate Interview Prep
+### `POST /api/v1/analyses/<id>/interview-prep/` — Generate Interview Prep
 
 🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Cost:** 1 credit.
 
@@ -4927,7 +4929,7 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 | `402` | Insufficient credits | `{ "detail", "balance", "cost" }` |
 | `404` | Analysis not found | `{ "detail": "Analysis not found." }` |
 
-### `GET /api/analyses/<id>/interview-prep/` — Get Interview Prep Status
+### `GET /api/v1/analyses/<id>/interview-prep/` — Get Interview Prep Status
 
 🔒 Authenticated. Returns the latest interview prep for this analysis.
 
@@ -4957,7 +4959,7 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 
 **Error:** `404` if no interview prep exists for this analysis.
 
-### `GET /api/interview-preps/` — List All Interview Preps
+### `GET /api/v1/interview-preps/` — List All Interview Preps
 
 🔒 Authenticated. **Throttled:** `readonly` scope (120/hour). **Paginated.**
 
@@ -4967,10 +4969,10 @@ Returns all interview preps for the authenticated user (newest first).
 
 ```js
 const generateInterviewPrep = async (analysisId) => {
-  const { data } = await api.post(`/api/analyses/${analysisId}/interview-prep/`);
+  const { data } = await api.post(`/api/v1/analyses/${analysisId}/interview-prep/`);
   // Poll for completion
   const poll = setInterval(async () => {
-    const { data: status } = await api.get(`/api/analyses/${analysisId}/interview-prep/`);
+    const { data: status } = await api.get(`/api/v1/analyses/${analysisId}/interview-prep/`);
     if (status.status === 'done' || status.status === 'failed') {
       clearInterval(poll);
       // Use status.questions and status.tips
@@ -4985,7 +4987,7 @@ const generateInterviewPrep = async (analysisId) => {
 
 Generate an AI-powered cover letter tailored to a specific resume + JD analysis. Supports three tone options.
 
-### `POST /api/analyses/<id>/cover-letter/` — Generate Cover Letter
+### `POST /api/v1/analyses/<id>/cover-letter/` — Generate Cover Letter
 
 🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Cost:** 1 credit.
 
@@ -5022,7 +5024,7 @@ Generate an AI-powered cover letter tailored to a specific resume + JD analysis.
 | `402` | Insufficient credits | `{ "detail", "balance", "cost" }` |
 | `404` | Analysis not found | `{ "detail": "Analysis not found." }` |
 
-### `GET /api/analyses/<id>/cover-letter/` — Get Cover Letter Status
+### `GET /api/v1/analyses/<id>/cover-letter/` — Get Cover Letter Status
 
 🔒 Authenticated. Returns the latest cover letter for this analysis.
 
@@ -5043,7 +5045,7 @@ Generate an AI-powered cover letter tailored to a specific resume + JD analysis.
 
 **Error:** `404` if no cover letter exists for this analysis.
 
-### `GET /api/cover-letters/` — List All Cover Letters
+### `GET /api/v1/cover-letters/` — List All Cover Letters
 
 🔒 Authenticated. **Throttled:** `readonly` scope (120/hour). **Paginated.**
 
@@ -5053,9 +5055,9 @@ Returns all cover letters for the authenticated user (newest first).
 
 ```js
 const generateCoverLetter = async (analysisId, tone = 'professional') => {
-  const { data } = await api.post(`/api/analyses/${analysisId}/cover-letter/`, { tone });
+  const { data } = await api.post(`/api/v1/analyses/${analysisId}/cover-letter/`, { tone });
   const poll = setInterval(async () => {
-    const { data: status } = await api.get(`/api/analyses/${analysisId}/cover-letter/`);
+    const { data: status } = await api.get(`/api/v1/analyses/${analysisId}/cover-letter/`);
     if (status.status === 'done' || status.status === 'failed') {
       clearInterval(poll);
       // Use status.content or status.content_html
@@ -5070,7 +5072,7 @@ const generateCoverLetter = async (analysisId, tone = 'professional') => {
 
 Track how a resume evolves over time. When a user re-uploads a modified resume with the same filename, a version chain is created automatically.
 
-### `GET /api/resumes/<uuid:id>/versions/` — Get Version History
+### `GET /api/v1/resumes/<uuid:id>/versions/` — Get Version History
 
 🔒 Authenticated. **Throttled:** `readonly` scope (120/hour).
 
@@ -5118,105 +5120,121 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
 | **Auth** |||||
-| POST | `/api/auth/register/` | ❌ | Auth (20/hr IP) | Create account + auto-login |
-| POST | `/api/auth/login/` | ❌ | Auth (20/hr IP) | Get JWT tokens |
-| POST | `/api/auth/google/` | ❌ | Auth (20/hr IP) | Google login (Step 1) |
-| POST | `/api/auth/google/complete/` | ❌ | Auth (20/hr IP) | Google registration (Step 2) |
-| POST | `/api/auth/logout/` | ✅ | User (200/hr) | Blacklist refresh token |
-| POST | `/api/auth/token/refresh/` | ❌ | Anon (60/hr IP) | Refresh JWT tokens |
-| GET | `/api/auth/me/` | ✅ | User (200/hr) | Current user profile + plan |
-| PUT | `/api/auth/me/` | ✅ | User (200/hr) | Update profile (name, email, social links, avatar) |
-| DELETE | `/api/auth/me/` | ✅ | User (200/hr) | Delete account permanently |
-| POST | `/api/auth/change-password/` | ✅ | User (200/hr) | Change password |
-| POST | `/api/auth/forgot-password/` | ❌ | Auth (20/hr IP) | Request password reset email |
-| POST | `/api/auth/reset-password/` | ❌ | Auth (20/hr IP) | Set new password with reset token |
-| POST | `/api/auth/avatar/` | ✅ | User (200/hr) | Upload avatar image (JPEG/PNG/WebP, max 2 MB) |
-| DELETE | `/api/auth/avatar/` | ✅ | User (200/hr) | Remove avatar |
-| POST | `/api/auth/contact/` | ❌ | Anon (per IP) | Landing page contact form submission |
-| GET | `/api/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
-| PUT | `/api/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
+| POST | `/api/v1/auth/register/` | ❌ | Auth (20/hr IP) | Create account + auto-login |
+| POST | `/api/v1/auth/login/` | ❌ | Auth (20/hr IP) | Get JWT tokens |
+| POST | `/api/v1/auth/google/` | ❌ | Auth (20/hr IP) | Google login (Step 1) |
+| POST | `/api/v1/auth/google/complete/` | ❌ | Auth (20/hr IP) | Google registration (Step 2) |
+| POST | `/api/v1/auth/logout/` | ✅ | User (200/hr) | Blacklist refresh token |
+| POST | `/api/v1/auth/token/refresh/` | ❌ | Anon (60/hr IP) | Refresh JWT tokens |
+| GET | `/api/v1/auth/me/` | ✅ | User (200/hr) | Current user profile + plan |
+| PUT | `/api/v1/auth/me/` | ✅ | User (200/hr) | Update profile (name, email, social links, avatar) |
+| DELETE | `/api/v1/auth/me/` | ✅ | User (200/hr) | Delete account permanently |
+| POST | `/api/v1/auth/change-password/` | ✅ | User (200/hr) | Change password |
+| POST | `/api/v1/auth/forgot-password/` | ❌ | Auth (20/hr IP) | Request password reset email |
+| POST | `/api/v1/auth/reset-password/` | ❌ | Auth (20/hr IP) | Set new password with reset token |
+| POST | `/api/v1/auth/avatar/` | ✅ | User (200/hr) | Upload avatar image (JPEG/PNG/WebP, max 2 MB) |
+| DELETE | `/api/v1/auth/avatar/` | ✅ | User (200/hr) | Remove avatar |
+| POST | `/api/v1/auth/contact/` | ❌ | Anon (per IP) | Landing page contact form submission |
+| GET | `/api/v1/auth/notifications/` | ✅ | User (200/hr) | Get notification preferences |
+| PUT | `/api/v1/auth/notifications/` | ✅ | User (200/hr) | Update notification preferences |
 | **Email Verification** |||||
-| POST | `/api/auth/verify-email/` | ❌ | Auth (20/hr IP) | Verify email with token |
-| POST | `/api/auth/resend-verification/` | ✅ | Auth (20/hr IP) | Resend verification email |
+| POST | `/api/v1/auth/verify-email/` | ❌ | Auth (20/hr IP) | Verify email with token |
+| POST | `/api/v1/auth/resend-verification/` | ✅ | Auth (20/hr IP) | Resend verification email |
 | **Wallet & Plans** |||||
-| GET | `/api/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
-| GET | `/api/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
-| GET | `/api/auth/wallet/transactions/export/` | ✅ | User (200/hr) | Download transactions as CSV |
-| POST | `/api/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§21) |
-| GET | `/api/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
-| POST | `/api/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
+| GET | `/api/v1/auth/wallet/` | ✅ | User (200/hr) | Wallet balance + plan credits info |
+| GET | `/api/v1/auth/wallet/transactions/` | ✅ | User (200/hr) | Paginated transaction history |
+| GET | `/api/v1/auth/wallet/transactions/export/` | ✅ | User (200/hr) | Download transactions as CSV |
+| POST | `/api/v1/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§21) |
+| GET | `/api/v1/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
+| POST | `/api/v1/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
 | **Razorpay Payments** |||||
-| POST | `/api/auth/payments/subscribe/` | ✅ | Payment (30/hr) | Create Razorpay subscription |
-| POST | `/api/auth/payments/subscribe/verify/` | ✅ | Payment (30/hr) | Verify subscription payment |
-| POST | `/api/auth/payments/subscribe/cancel/` | ✅ | Payment (30/hr) | Cancel subscription |
-| GET | `/api/auth/payments/subscribe/status/` | ✅ | Payment (30/hr) | Subscription status |
-| POST | `/api/auth/payments/topup/` | ✅ | Payment (30/hr) | Create top-up order |
-| POST | `/api/auth/payments/topup/verify/` | ✅ | Payment (30/hr) | Verify top-up payment |
-| POST | `/api/auth/payments/webhook/` | ❌ | None (signature) | Razorpay webhook receiver |
-| GET | `/api/auth/payments/history/` | ✅ | Payment (30/hr) | Payment history |
+| POST | `/api/v1/auth/payments/subscribe/` | ✅ | Payment (30/hr) | Create Razorpay subscription |
+| POST | `/api/v1/auth/payments/subscribe/verify/` | ✅ | Payment (30/hr) | Verify subscription payment |
+| POST | `/api/v1/auth/payments/subscribe/cancel/` | ✅ | Payment (30/hr) | Cancel subscription |
+| GET | `/api/v1/auth/payments/subscribe/status/` | ✅ | Payment (30/hr) | Subscription status |
+| POST | `/api/v1/auth/payments/topup/` | ✅ | Payment (30/hr) | Create top-up order |
+| POST | `/api/v1/auth/payments/topup/verify/` | ✅ | Payment (30/hr) | Verify top-up payment |
+| POST | `/api/v1/auth/payments/webhook/` | ❌ | None (signature) | Razorpay webhook receiver |
+| GET | `/api/v1/auth/payments/history/` | ✅ | Payment (30/hr) | Payment history |
 | **Analysis** |||||
-| POST | `/api/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
-| POST | `/api/analyze/bulk/` | ✅ | Analyze (10/hr) | Bulk analyze: 1 resume × up to 10 JDs |
-| GET | `/api/analyses/` | ✅ | Readonly (120/hr) | List analyses (search/filter/sort/paginated) |
-| GET | `/api/analyses/compare/` | ✅ | Readonly (120/hr) | Compare 2–5 analyses side-by-side |
-| GET | `/api/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
-| GET | `/api/analyses/<id>/status/` | ✅ | Readonly (120/hr) | Poll status (lightweight) |
-| POST | `/api/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
-| DELETE | `/api/analyses/<id>/delete/` | ✅ | Write (60/hr) | Soft-delete analysis |
-| GET | `/api/analyses/<id>/export-pdf/` | ✅ | Readonly (120/hr) | Download PDF report |
-| POST | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Generate public share link |
-| DELETE | `/api/analyses/<id>/share/` | ✅ | Write (60/hr) | Revoke share link |
+| POST | `/api/v1/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
+| POST | `/api/v1/analyze/bulk/` | ✅ | Analyze (10/hr) | Bulk analyze: 1 resume × up to 10 JDs |
+| GET | `/api/v1/analyses/` | ✅ | Readonly (120/hr) | List analyses (search/filter/sort/paginated) |
+| GET | `/api/v1/analyses/compare/` | ✅ | Readonly (120/hr) | Compare 2–5 analyses side-by-side |
+| GET | `/api/v1/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
+| GET | `/api/v1/analyses/<id>/status/` | ✅ | Readonly (120/hr) | Poll status (lightweight) |
+| POST | `/api/v1/analyses/<id>/retry/` | ✅ | Analyze (10/hr) | Retry failed analysis |
+| DELETE | `/api/v1/analyses/<id>/delete/` | ✅ | Write (60/hr) | Soft-delete analysis |
+| GET | `/api/v1/analyses/<id>/export-pdf/` | ✅ | Readonly (120/hr) | Download PDF report |
+| POST | `/api/v1/analyses/<id>/share/` | ✅ | Write (60/hr) | Generate public share link |
+| DELETE | `/api/v1/analyses/<id>/share/` | ✅ | Write (60/hr) | Revoke share link |
 | **Interview Prep** |||||
-| POST | `/api/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Generate interview prep (1 credit) |
-| GET | `/api/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Get latest interview prep status |
-| GET | `/api/interview-preps/` | ✅ | Readonly (120/hr) | List all interview preps |
+| POST | `/api/v1/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Generate interview prep (1 credit) |
+| GET | `/api/v1/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Get latest interview prep status |
+| GET | `/api/v1/interview-preps/` | ✅ | Readonly (120/hr) | List all interview preps |
 | **Cover Letter** |||||
-| POST | `/api/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Generate cover letter (1 credit) |
-| GET | `/api/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Get latest cover letter status |
-| GET | `/api/cover-letters/` | ✅ | Readonly (120/hr) | List all cover letters |
+| POST | `/api/v1/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Generate cover letter (1 credit) |
+| GET | `/api/v1/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Get latest cover letter status |
+| GET | `/api/v1/cover-letters/` | ✅ | Readonly (120/hr) | List all cover letters |
 | **Resume** |||||
-| GET | `/api/resumes/` | ✅ | Readonly (120/hr) | List resumes (search/sort/paginated) |
-| DELETE | `/api/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
-| POST | `/api/resumes/bulk-delete/` | ✅ | Write (60/hr) | Bulk-delete up to 50 resumes |
-| GET | `/api/resumes/<uuid:id>/versions/` | ✅ | Readonly (120/hr) | Resume version history |
+| GET | `/api/v1/resumes/` | ✅ | Readonly (120/hr) | List resumes (search/sort/paginated) |
+| DELETE | `/api/v1/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
+| POST | `/api/v1/resumes/bulk-delete/` | ✅ | Write (60/hr) | Bulk-delete up to 50 resumes |
+| GET | `/api/v1/resumes/<uuid:id>/versions/` | ✅ | Readonly (120/hr) | Resume version history |
 | **Resume Generation** |||||
-| POST | `/api/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
-| GET | `/api/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
-| GET | `/api/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
-| GET | `/api/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes (paginated) |
-| DELETE | `/api/generated-resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete a generated resume |
+| POST | `/api/v1/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
+| GET | `/api/v1/analyses/<id>/generated-resume/` | ✅ | Readonly (120/hr) | Poll generation status |
+| GET | `/api/v1/analyses/<id>/generated-resume/download/` | ✅ | Readonly (120/hr) | Download generated resume (302 redirect) |
+| GET | `/api/v1/generated-resumes/` | ✅ | Readonly (120/hr) | List all generated resumes (paginated) |
+| DELETE | `/api/v1/generated-resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete a generated resume |
 | **Job Alerts** |||||
-| GET | `/api/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts (paginated) |
-| POST | `/api/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
-| GET | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Job alert detail |
-| PUT | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Update job alert |
-| DELETE | `/api/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Deactivate job alert |
-| GET | `/api/job-alerts/<uuid:id>/matches/` | ✅ | Readonly (120/hr) | List matches (paginated) |
-| POST | `/api/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
-| POST | `/api/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
+| GET | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts (paginated) |
+| POST | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
+| GET | `/api/v1/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Job alert detail |
+| PUT | `/api/v1/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Update job alert |
+| DELETE | `/api/v1/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Deactivate job alert |
+| GET | `/api/v1/job-alerts/<uuid:id>/matches/` | ✅ | Readonly (120/hr) | List matches (paginated) |
+| POST | `/api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
+| POST | `/api/v1/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
 | **Dashboard** |||||
-| GET | `/api/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
+| GET | `/api/v1/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
 | **Share** |||||
-| GET | `/api/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
-| GET | `/api/shared/<uuid:token>/summary/` | ❌ | Anon (60/hr IP) | Lightweight score summary for social cards |
+| GET | `/api/v1/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
+| GET | `/api/v1/shared/<uuid:token>/summary/` | ❌ | Anon (60/hr IP) | Lightweight score summary for social cards |
 | **System** |||||
-| GET | `/api/health/` | ❌ | None | Health check |
+| GET | `/api/v1/health/` | ❌ | None | Health check |
 
 ---
 
 ## Changelog
 
-### v0.24.0 — Email Verification, Bulk Analysis, Interview Prep, Cover Letter, Rate Limit Headers
+### v0.24.0 — Email Verification, Bulk Analysis, Interview Prep, Cover Letter, Infrastructure & API Versioning
 
-- **Email verification flow**: Registration now sends a verification email instead of a welcome email. Response includes `email_verification_required: true` and `is_email_verified: false`. New endpoints: `POST /api/auth/verify-email/`, `POST /api/auth/resend-verification/`. Welcome email is sent only after verification.
-- **`is_email_verified` field**: Added to user object in register, login, and `GET /api/auth/me/` responses.
-- **Bulk analysis**: `POST /api/analyze/bulk/` — analyze one resume against up to 10 job descriptions in a single call. Returns array of analysis IDs. Each deducts 1 credit.
-- **Interview prep generation**: `POST /api/analyses/<id>/interview-prep/` (1 credit) — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers. `GET` on same URL returns status/results. `GET /api/interview-preps/` lists all.
-- **Cover letter generation**: `POST /api/analyses/<id>/cover-letter/` (1 credit) — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Returns `content` (plain text) and `content_html`. `GET` on same URL returns status/results. `GET /api/cover-letters/` lists all.
-- **Resume version history**: `GET /api/resumes/<uuid>/versions/` — tracks resume evolution with version numbers, `best_ats_score`, and `best_grade` per version. Auto-linked when re-uploading same filename.
+#### ⚠ Breaking Changes
+- **API versioning** — All endpoints moved from `/api/` to `/api/v1/`. Update your `API_URL` / `VITE_API_URL` / `EXPO_PUBLIC_API_URL` from `http://localhost:8000/api` to `http://localhost:8000/api/v1`. The old `/api/` prefix returns 404.
+- **Registration** no longer sends welcome email immediately — sends verification email instead. Frontend must handle the verification step.
+
+#### Features
+- **Email verification flow**: Registration now sends a verification email instead of a welcome email. Response includes `email_verification_required: true` and `is_email_verified: false`. New endpoints: `POST /api/v1/auth/verify-email/`, `POST /api/v1/auth/resend-verification/`. Welcome email is sent only after verification.
+- **`is_email_verified` field**: Added to user object in register, login, and `GET /api/v1/auth/me/` responses.
+- **Bulk analysis**: `POST /api/v1/analyze/bulk/` — analyze one resume against up to 10 job descriptions in a single call. Returns array of analysis IDs. Each deducts 1 credit.
+- **Interview prep generation**: `POST /api/v1/analyses/<id>/interview-prep/` (1 credit) — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers. `GET` on same URL returns status/results. `GET /api/v1/interview-preps/` lists all.
+- **Cover letter generation**: `POST /api/v1/analyses/<id>/cover-letter/` (1 credit) — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Returns `content` (plain text) and `content_html`. `GET` on same URL returns status/results. `GET /api/v1/cover-letters/` lists all.
+- **Resume version history**: `GET /api/v1/resumes/<uuid>/versions/` — tracks resume evolution with version numbers, `best_ats_score`, and `best_grade` per version. Auto-linked when re-uploading same filename.
 - **Rate limit headers on all responses**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers are now included in every API response. Use to show proactive warnings before users hit 429.
 - **New credit costs**: `interview_prep = 1`, `cover_letter = 1`.
-- **Breaking**: Registration no longer sends welcome email immediately — sends verification email instead. Frontend must handle the verification step.
+
+#### Infrastructure
+- **Structured JSON logging** — Production logs now emit JSON format (via `python-json-logger`) for better log aggregation in Railway/Datadog. Local dev unchanged (human-readable format).
+- **Prometheus metrics** — `GET /metrics` exposes Prometheus-compatible metrics: analysis duration, LLM token usage, credit operations, payment failures, Celery task stats. No auth required (standard for metrics endpoints).
+- **Gunicorn timeout reduced** — From 120s to 110s to respond before Railway's proxy timeout kills the connection.
+- **Flower dashboard** — Celery monitoring via Flower available as a separate Railway service (`SERVICE_TYPE=flower`). Protected by basic auth (`FLOWER_USER`/`FLOWER_PASSWORD` env vars).
+- **Celery monitoring endpoints** (admin-only):
+  - `GET /api/v1/admin/celery/workers/` — Active workers and stats
+  - `GET /api/v1/admin/celery/tasks/active/` — Currently running tasks
+  - `GET /api/v1/admin/celery/tasks/<task_id>/` — Task status by ID
+  - `GET /api/v1/admin/celery/queues/` — Queue lengths
+- **Session invalidation** on password change — all existing tokens blacklisted
 
 ### v0.23.0 — Code Quality & Validation Hardening
 
@@ -5229,7 +5247,7 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 - **3 plans seeded**: Free (₹0), Pro Monthly (₹399, was ₹599), Pro Yearly (₹3,999, was ₹7,188)
 - **`original_price` field** added to Plan model and serializer — use for strikethrough pricing display
 - **Job alert quota removed**: Unlimited alerts when `job_notifications = true` (no more 403 quota errors). `max_job_alerts` field kept but deprecated.
-- **Contact form endpoint**: `POST /api/auth/contact/` — public, anon-throttled, no auth required
+- **Contact form endpoint**: `POST /api/v1/auth/contact/` — public, anon-throttled, no auth required
 - **ContactSubmission model**: `name`, `email`, `subject`, `message`, `created_at` — viewable in Django Admin (read-only)
 - **Auto-sync plans to Razorpay**: New paid plans are automatically synced via `post_save` signal. Admin also shows sync feedback on save. Existing "Sync with Razorpay" action available as manual fallback.
 - **PostgreSQL fix**: Migration 0014 sets server-side `DEFAULT ''` on `razorpay_plan_id` column to prevent `IntegrityError` when creating plans via Admin
@@ -5237,10 +5255,10 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 ### v0.21.0 — Frontend–Backend Gap Fixes
 
 - **28 items implemented** across P0, P1, and P2 priorities. See [CHANGELOG.md](CHANGELOG.md) for full details.
-- **New endpoints:** `POST/DELETE /api/auth/avatar/`, `GET /api/auth/wallet/transactions/export/`, `DELETE /api/generated-resumes/<uuid>/`, `POST /api/resumes/bulk-delete/`, `GET /api/analyses/compare/`, `GET /api/shared/<token>/summary/`
+- **New endpoints:** `POST/DELETE /api/v1/auth/avatar/`, `GET /api/v1/auth/wallet/transactions/export/`, `DELETE /api/v1/generated-resumes/<uuid>/`, `POST /api/v1/resumes/bulk-delete/`, `GET /api/v1/analyses/compare/`, `GET /api/v1/shared/<token>/summary/`
 - **New query params on analyses:** `?search=`, `?status=`, `?score_min=`, `?score_max=`, `?ordering=`
 - **New query params on resumes:** `?search=`, `?ordering=`
-- **New writable fields on `PUT /api/auth/me/`:** `first_name`, `last_name`, `website_url`, `github_url`, `linkedin_url`, `avatar_url`
+- **New writable fields on `PUT /api/v1/auth/me/`:** `first_name`, `last_name`, `website_url`, `github_url`, `linkedin_url`, `avatar_url`
 - **New fields in resume list:** `days_since_upload`, `last_analyzed_at`
 - **New fields in job alert list:** `total_matches`
 - **New dashboard stats fields:** `keyword_match_percent` in score_trend, `top_missing_keywords`, `credit_usage`, `weekly_job_matches`, `industry_benchmark_percentile`
@@ -5248,7 +5266,7 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 
 ### v0.17.0 — Unified Job Alerts Architecture
 
-- **Job model removed**: The manual job tracker (`/api/jobs/`) has been removed. All job discovery is now handled exclusively through Smart Job Alerts.
+- **Job model removed**: The manual job tracker (`/api/v1/jobs/`) has been removed. All job discovery is now handled exclusively through Smart Job Alerts.
 - **Firecrawl replaces SerpAPI/Adzuna**: Job crawling now uses Firecrawl for web scraping. The `source` field on discovered jobs is now `"firecrawl"` (previously `"serpapi"` or `"adzuna"`).
 - **CrawlSource admin model**: Admins can configure crawl sources (job boards and company career pages) via Django Admin.
 - **Admin-configurable crawl schedule**: The crawl schedule is now managed via `django-celery-beat` instead of a hardcoded 6-hour interval. Default: daily at 20:30 UTC.
@@ -5260,9 +5278,9 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 
 ### v0.15.0 — Edge Case Fixes
 
-- **New `write` throttle scope (60/hour):** Analysis delete (`DELETE /api/analyses/<id>/delete/`), share create (`POST /api/analyses/<id>/share/`), and share revoke (`DELETE /api/analyses/<id>/share/`) now use the stricter `write` scope instead of `readonly`.
+- **New `write` throttle scope (60/hour):** Analysis delete (`DELETE /api/v1/analyses/<id>/delete/`), share create (`POST /api/v1/analyses/<id>/share/`), and share revoke (`DELETE /api/v1/analyses/<id>/share/`) now use the stricter `write` scope instead of `readonly`.
 - **`quick_wins` count is 1–3:** Previously documented as "always exactly 3 items"; the backend now validates and accepts 1–3 items.
-- **Payment history `limit` clamped:** The `limit` query parameter on `GET /api/auth/payments/history/` is now clamped server-side to **1–100**.
+- **Payment history `limit` clamped:** The `limit` query parameter on `GET /api/v1/auth/payments/history/` is now clamped server-side to **1–100**.
 - **`section_feedback[].score` clamped 0–100:** Scores outside range are now clamped by the backend.
 - **`overall_grade` always uppercase:** The backend normalises the LLM response to uppercase (`A`–`F`).
 - **Subscription model:** Users can now have multiple historical subscriptions. The subscription status endpoint always returns the latest active subscription.
@@ -5271,7 +5289,6 @@ Track how a resume evolves over time. When a user re-uploads a modified resume w
 
 ### v0.14.0 — Security Hardening
 
-- **Account deletion requires password** (`DELETE /api/auth/profile/`)
+- **Account deletion requires password** (`DELETE /api/v1/auth/profile/`)
 - **`celery_task_id` removed** from analysis responses
 - **`payment` throttle scope** added (30/hour) for all payment endpoints
-- **Session invalidation** on password change — all existing tokens blacklisted

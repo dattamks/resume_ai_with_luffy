@@ -438,7 +438,7 @@ class GoogleAuthSerializer(serializers.Serializer):
 class GoogleCompleteSerializer(serializers.Serializer):
     """Input for completing Google sign-up — username, password, and consent checkboxes."""
     temp_token = serializers.CharField(
-        help_text='Temporary token received from POST /api/auth/google/.',
+        help_text='Temporary token received from POST /api/v1/auth/google/.',
     )
     username = serializers.CharField(
         max_length=150,
