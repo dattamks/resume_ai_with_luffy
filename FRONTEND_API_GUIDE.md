@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-02-28 &nbsp;|&nbsp; **API version:** v0.22.0
+> **Last updated:** 2026-02-28 &nbsp;|&nbsp; **API version:** v0.23.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -4768,6 +4768,12 @@ Submit a contact form enquiry. Rate-limited by IP (anonymous throttle).
 ---
 
 ## Changelog
+
+### v0.23.0 — Code Quality & Validation Hardening
+
+- **PDF magic-byte validation enforced**: Uploading a non-PDF file (e.g. DOCX, HTML, image) now returns **400** with `"The uploaded file is not a valid PDF. Please upload a PDF document."` before any processing begins. Previously, invalid files would fail deeper in the pipeline with less clear errors.
+- **DOCX resume generation sanitised**: Control characters and null bytes in user data are now stripped before DOCX rendering, preventing corrupted output files.
+- **No API contract changes** — all endpoints, request/response schemas, and error codes remain identical to v0.22.0.
 
 ### v0.22.0 — Plans, Pricing & Contact Form
 
