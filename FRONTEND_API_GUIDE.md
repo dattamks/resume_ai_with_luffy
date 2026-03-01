@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.27.0
+> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.28.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -36,8 +36,9 @@
 27. [Resume Version History](#27-resume-version-history)
 28. [Resume Templates (Template Marketplace)](#28-resume-templates-template-marketplace)
 29. [Resume Chat — Text-Based Resume Builder](#29-resume-chat--text-based-resume-builder)
-30. [Database Table Reference — Job & Company Models](#30-database-table-reference--job--company-models)
-31. [Quick Reference — All Endpoints](#31-quick-reference--all-endpoints)
+30. [Feed & Analytics Endpoints](#30-feed--analytics-endpoints)
+31. [Database Table Reference — Job & Company Models](#31-database-table-reference--job--company-models)
+32. [Quick Reference — All Endpoints](#32-quick-reference--all-endpoints)
 
 ---
 
@@ -6077,7 +6078,486 @@ async function loadSession(chatId: string) {
 
 ---
 
-## 30. Database Table Reference — Job & Company Models
+## 30. Feed & Analytics Endpoints
+
+Endpoints powering the in-app home/feed page, market insights, and dashboard extras. All are **GET-only**, require auth, and use the `readonly` throttle scope (120/hour).
+
+---
+
+### 30.1 GET `/api/v1/feed/jobs/` — Personalised Job Feed
+
+🔒 Requires auth. Returns jobs ranked by **pgvector embedding similarity** against the user's `JobSearchProfile`. Falls back to recency ordering when no profile embedding exists.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | int | `1` | Page number |
+| `page_size` | int | `20` | Results per page (max 50) |
+| `days` | int | `30` | How far back to look |
+| `remote` | string | — | Filter: `onsite`, `hybrid`, or `remote` |
+| `seniority` | string | — | Filter: `intern`, `junior`, `mid`, `senior`, `lead`, etc. |
+| `location` | string | — | Substring match on job location |
+| `employment_type` | string | — | Filter: `full_time`, `part_time`, `contract`, `internship`, `freelance` |
+
+**Response (200):**
+
+```json
+{
+  "count": 142,
+  "page": 1,
+  "page_size": 20,
+  "results": [
+    {
+      "id": "e5f6a7b8-...",
+      "title": "Senior Software Engineer",
+      "company": "Google",
+      "location": "Bangalore, India",
+      "url": "https://careers.google.com/jobs/123/",
+      "salary_range": "₹30L - ₹50L",
+      "salary_min_usd": 36000,
+      "salary_max_usd": 60000,
+      "employment_type": "full_time",
+      "remote_policy": "hybrid",
+      "seniority_level": "senior",
+      "industry": "Technology",
+      "skills_required": ["Python", "Go", "Kubernetes"],
+      "posted_at": "2026-02-28T00:00:00Z",
+      "created_at": "2026-02-28T06:00:00Z",
+      "relevance": 0.8742
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `relevance` | float \| null | 0–1 cosine similarity score. `null` when pgvector is unavailable |
+| `count` | int | Total matching jobs (for pagination) |
+
+**Frontend usage:** Main feed page job cards. Sort by relevance (default) or recency. Show `relevance` as a match percentage badge (e.g., "87% match").
+
+---
+
+### 30.2 GET `/api/v1/feed/insights/` — Market Intelligence
+
+🔒 Requires auth. Aggregated job market data from the last 30 days. **Cached 60 minutes.**
+
+**Response (200):**
+
+```json
+{
+  "total_jobs_last_30d": 1523,
+  "avg_salary_usd": 72000,
+  "top_skills": [
+    {
+      "skill": "python",
+      "demand_count": 342,
+      "growth_pct": 12.5,
+      "you_have": true
+    },
+    {
+      "skill": "kubernetes",
+      "demand_count": 198,
+      "growth_pct": 28.3,
+      "you_have": false
+    }
+  ],
+  "top_companies": [
+    { "company": "Google", "job_count": 45 },
+    { "company": "Stripe", "job_count": 32 }
+  ],
+  "top_locations": [
+    { "location": "Bangalore, India", "job_count": 89 }
+  ],
+  "employment_type_breakdown": {
+    "full_time": 1200,
+    "contract": 180,
+    "internship": 95
+  },
+  "remote_policy_breakdown": {
+    "remote": 450,
+    "hybrid": 620,
+    "onsite": 453
+  },
+  "seniority_breakdown": {
+    "senior": 520,
+    "mid": 480,
+    "junior": 310
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `top_skills[].you_have` | bool | Whether the user's profile includes this skill |
+| `top_skills[].growth_pct` | float | % change vs previous 30-day period |
+| `avg_salary_usd` | int \| null | Average of `salary_min_usd` across jobs with salary data |
+
+**Frontend usage:** Insights dashboard cards — donut charts for breakdowns, bar charts for top skills/companies.
+
+---
+
+### 30.3 GET `/api/v1/feed/trending-skills/` — Skills Gap Analysis
+
+🔒 Requires auth. Compares the user's skills against market demand. **Personalised — not cached.**
+
+**Response (200):**
+
+```json
+{
+  "matches": [
+    { "skill": "python", "demand_count": 342, "you_have": true, "category": "match" },
+    { "skill": "react", "demand_count": 215, "you_have": true, "category": "match" }
+  ],
+  "gaps": [
+    { "skill": "kubernetes", "demand_count": 198, "you_have": false, "category": "gap" },
+    { "skill": "terraform", "demand_count": 156, "you_have": false, "category": "gap" }
+  ],
+  "niche": [
+    { "skill": "fortran", "demand_count": 0, "you_have": true, "category": "niche" }
+  ],
+  "match_pct": 40.0
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `matches` | array | Skills you have that are in demand |
+| `gaps` | array | In-demand skills you're missing |
+| `niche` | array | Skills you have that aren't trending |
+| `match_pct` | float | % of top 30 trending skills you possess |
+
+**Frontend usage:** Skill gap radar chart, "Skills you should learn" cards, match percentage ring.
+
+---
+
+### 30.4 GET `/api/v1/feed/hub/` — Alerts & Prep Hub
+
+🔒 Requires auth. Composite endpoint — active job alerts + recent interview preps + recent cover letters in one call.
+
+**Response (200):**
+
+```json
+{
+  "alerts": [
+    {
+      "id": "a1b2c3d4-...",
+      "resume_filename": "john_doe_resume.pdf",
+      "frequency": "daily",
+      "is_active": true,
+      "matches_this_week": 12,
+      "health": "ok",
+      "last_run_at": "2026-03-01T06:00:00Z",
+      "next_run_at": "2026-03-02T06:00:00Z",
+      "created_at": "2026-02-15T10:00:00Z"
+    }
+  ],
+  "interview_preps": [
+    {
+      "id": "b2c3d4e5-...",
+      "analysis_role": "Senior SWE",
+      "status": "done",
+      "created_at": "2026-02-28T14:00:00Z"
+    }
+  ],
+  "cover_letters": [
+    {
+      "id": "c3d4e5f6-...",
+      "analysis_role": "Backend Engineer",
+      "tone": "professional",
+      "status": "done",
+      "created_at": "2026-02-27T11:00:00Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `alerts[].health` | `"ok"` \| `"quiet"` | `ok` = ≥1 match this week; `quiet` = 0 matches (suggest broadening) |
+| `alerts[].matches_this_week` | int | Match count in the last 7 days |
+
+**Frontend usage:** Hub section on home page — alert cards with health badges, recent prep/letter links.
+
+---
+
+### 30.5 GET `/api/v1/feed/recommendations/` — Next Actions
+
+🔒 Requires auth. Rules-based (not LLM) action suggestions based on user state.
+
+**Response (200):**
+
+```json
+[
+  {
+    "key": "upload_resume",
+    "title": "Upload your resume",
+    "description": "Upload a resume to unlock analysis, job matching, and interview prep.",
+    "priority": "high",
+    "action_url": "/resumes/upload",
+    "completed": true
+  },
+  {
+    "key": "run_analysis",
+    "title": "Analyse your resume",
+    "description": "Get ATS scores, keyword gaps, and improvement suggestions.",
+    "priority": "high",
+    "action_url": "/analyze",
+    "completed": false
+  },
+  {
+    "key": "skill_gaps",
+    "title": "Close your skill gaps",
+    "description": "Top in-demand skills you're missing: kubernetes, terraform, aws.",
+    "priority": "medium",
+    "action_url": "/feed/trending-skills",
+    "completed": false
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | string | Machine-readable identifier for the action |
+| `priority` | `"high"` \| `"medium"` \| `"low"` | Suggested visual weight |
+| `action_url` | string | Frontend route to navigate to |
+| `completed` | bool | Whether the user has done this already |
+
+**Possible `key` values:** `upload_resume`, `run_analysis`, `create_alert`, `interview_prep`, `cover_letter`, `resume_chat`, `skill_gaps`
+
+**Sorted:** Incomplete items first, then by priority (high → medium → low).
+
+**Frontend usage:** Action cards on home page — show incomplete first with CTA buttons, grey out completed items.
+
+---
+
+### 30.6 GET `/api/v1/feed/onboarding/` — Completion Checklist
+
+🔒 Requires auth. Lightweight checklist of user milestones.
+
+**Response (200):**
+
+```json
+{
+  "has_resume": true,
+  "has_analysis": true,
+  "has_alert": false,
+  "has_interview_prep": false,
+  "has_cover_letter": false,
+  "has_chat": false,
+  "completed_count": 2,
+  "total_steps": 6,
+  "completion_pct": 33.3,
+  "suggested_next": "create_alert"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `completion_pct` | float | 0–100 |
+| `suggested_next` | string \| null | Next uncompleted step key, or `null` if all done |
+
+**Frontend usage:** Progress bar on home page or onboarding modal. Show step-by-step checklist with checkmarks.
+
+---
+
+### 30.7 GET `/api/v1/dashboard/skill-gap/` — Skill Radar Chart Data
+
+🔒 Requires auth. Data for a radar/spider chart comparing user skills vs market demand.
+
+**Response (200):**
+
+```json
+[
+  { "skill": "python", "user_score": 100, "market_score": 85 },
+  { "skill": "kubernetes", "user_score": 0, "market_score": 72 },
+  { "skill": "react", "user_score": 100, "market_score": 68 },
+  { "skill": "terraform", "user_score": 0, "market_score": 55 }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_score` | int | `100` if user has the skill, `0` if not |
+| `market_score` | int | 0–100 normalised demand (100 = most demanded skill) |
+
+**Frontend usage:** Radar chart widget on the dashboard. Each axis is a skill.
+
+---
+
+### 30.8 GET `/api/v1/dashboard/market-insights/` — Weekly Trend Card
+
+🔒 Requires auth. Short summary of this week vs last week. **Cached 60 minutes.**
+
+**Response (200):**
+
+```json
+{
+  "jobs_this_week": 245,
+  "jobs_last_week": 198,
+  "growth_pct": 23.7,
+  "trend": "up",
+  "top_skill_this_week": "python",
+  "top_skills": [
+    { "skill": "python", "count": 82 },
+    { "skill": "react", "count": 65 },
+    { "skill": "kubernetes", "count": 48 }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trend` | `"up"` \| `"down"` \| `"flat"` | Direction of job volume change |
+| `growth_pct` | float | % change vs last week |
+
+**Frontend usage:** Dashboard "Weekly Insight" card with trend arrow icon and top skill badge.
+
+---
+
+### 30.9 GET `/api/v1/dashboard/activity/` — Activity Streak
+
+🔒 Requires auth. Uses existing `UserActivity.get_streak()` model method.
+
+**Response (200):**
+
+```json
+{
+  "streak_days": 7,
+  "actions_this_month": 23
+}
+```
+
+**Frontend usage:** Dashboard streak widget with fire 🔥 icon and day count.
+
+---
+
+### TypeScript Types (Feed)
+
+```typescript
+interface FeedJob {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  salary_range: string;
+  salary_min_usd: number | null;
+  salary_max_usd: number | null;
+  employment_type: string;
+  remote_policy: string;
+  seniority_level: string;
+  industry: string;
+  skills_required: string[];
+  posted_at: string | null;
+  created_at: string;
+  relevance: number | null;  // 0-1 cosine similarity, null if no embedding
+}
+
+interface FeedJobsResponse {
+  count: number;
+  page: number;
+  page_size: number;
+  results: FeedJob[];
+}
+
+interface TrendingSkill {
+  skill: string;
+  demand_count: number;
+  growth_pct: number;
+  you_have: boolean;
+}
+
+interface SkillGapItem {
+  skill: string;
+  demand_count: number;
+  you_have: boolean;
+  category: 'match' | 'gap' | 'niche';
+}
+
+interface TrendingVsUser {
+  matches: SkillGapItem[];
+  gaps: SkillGapItem[];
+  niche: SkillGapItem[];
+  match_pct: number;
+}
+
+interface InsightsResponse {
+  total_jobs_last_30d: number;
+  avg_salary_usd: number | null;
+  top_skills: TrendingSkill[];
+  top_companies: { company: string; job_count: number }[];
+  top_locations: { location: string; job_count: number }[];
+  employment_type_breakdown: Record<string, number>;
+  remote_policy_breakdown: Record<string, number>;
+  seniority_breakdown: Record<string, number>;
+}
+
+interface HubAlertSummary {
+  id: string;
+  resume_filename: string;
+  frequency: 'daily' | 'weekly';
+  is_active: boolean;
+  matches_this_week: number;
+  health: 'ok' | 'quiet';
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+}
+
+interface HubResponse {
+  alerts: HubAlertSummary[];
+  interview_preps: { id: string; analysis_role: string; status: string; created_at: string }[];
+  cover_letters: { id: string; analysis_role: string; tone: string; status: string; created_at: string }[];
+}
+
+interface Recommendation {
+  key: string;
+  title: string;
+  description: string;
+  priority: 'high' | 'medium' | 'low';
+  action_url: string;
+  completed: boolean;
+}
+
+interface OnboardingChecklist {
+  has_resume: boolean;
+  has_analysis: boolean;
+  has_alert: boolean;
+  has_interview_prep: boolean;
+  has_cover_letter: boolean;
+  has_chat: boolean;
+  completed_count: number;
+  total_steps: number;
+  completion_pct: number;
+  suggested_next: string | null;
+}
+
+interface SkillGapRadarItem {
+  skill: string;
+  user_score: number;   // 0 or 100
+  market_score: number; // 0-100
+}
+
+interface MarketInsights {
+  jobs_this_week: number;
+  jobs_last_week: number;
+  growth_pct: number;
+  trend: 'up' | 'down' | 'flat';
+  top_skill_this_week: string | null;
+  top_skills: { skill: string; count: number }[];
+}
+
+interface ActivityStreak {
+  streak_days: number;
+  actions_this_month: number;
+}
+```
+
+---
+
+## 31. Database Table Reference — Job & Company Models
 
 Complete column-level reference for all Job Alert and Company Intelligence tables. All primary keys are UUIDv4 unless noted. Timestamps use ISO 8601 (UTC). Admin-only models (CrawlSource, SentAlert) are included for completeness but have no user-facing API.
 
@@ -6423,7 +6903,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 
 ---
 
-## 31. Quick Reference — All Endpoints
+## 32. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|
@@ -6514,8 +6994,18 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/job-alerts/<uuid:id>/matches/` | ✅ | Readonly (120/hr) | List matches (paginated) |
 | POST | `/api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
 | POST | `/api/v1/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
+| **Feed & Analytics** |||||
+| GET | `/api/v1/feed/jobs/` | ✅ | Readonly (120/hr) | Personalised job feed (pgvector similarity) |
+| GET | `/api/v1/feed/insights/` | ✅ | Readonly (120/hr) | Market intelligence (cached 60 min) |
+| GET | `/api/v1/feed/trending-skills/` | ✅ | Readonly (120/hr) | User skills vs market demand |
+| GET | `/api/v1/feed/hub/` | ✅ | Readonly (120/hr) | Alerts + preps + cover letters composite |
+| GET | `/api/v1/feed/recommendations/` | ✅ | Readonly (120/hr) | AI-suggested next actions |
+| GET | `/api/v1/feed/onboarding/` | ✅ | Readonly (120/hr) | Completion checklist |
 | **Dashboard** |||||
 | GET | `/api/v1/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
+| GET | `/api/v1/dashboard/skill-gap/` | ✅ | Readonly (120/hr) | Skill radar chart data |
+| GET | `/api/v1/dashboard/market-insights/` | ✅ | Readonly (120/hr) | Weekly trend card (cached 60 min) |
+| GET | `/api/v1/dashboard/activity/` | ✅ | Readonly (120/hr) | Activity streak + monthly actions |
 | **Share** |||||
 | GET | `/api/v1/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
 | GET | `/api/v1/shared/<uuid:token>/summary/` | ❌ | Anon (60/hr IP) | Lightweight score summary for social cards |
@@ -6525,6 +7015,21 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 ---
 
 ## Changelog
+
+### v0.28.0 — Feed & Analytics Endpoints
+
+- **9 new GET endpoints** powering the home/feed page and dashboard extras (§30):
+  - `/api/v1/feed/jobs/` — Personalised job feed ranked by pgvector embedding similarity (paginated, filterable by remote/seniority/location/employment_type)
+  - `/api/v1/feed/insights/` — Market intelligence: top skills, companies, locations, salary avg, breakdowns (cached 60 min)
+  - `/api/v1/feed/trending-skills/` — User skills vs market demand with match/gap/niche buckets
+  - `/api/v1/feed/hub/` — Composite: active alerts with health indicator + recent interview preps + cover letters
+  - `/api/v1/feed/recommendations/` — Rules-based next-action suggestions (sorted by completion + priority)
+  - `/api/v1/feed/onboarding/` — 6-step completion checklist with `completion_pct` and `suggested_next`
+  - `/api/v1/dashboard/skill-gap/` — Radar chart data (user_score vs market_score per skill)
+  - `/api/v1/dashboard/market-insights/` — Weekly job trend summary (this week vs last week, growth %)
+  - `/api/v1/dashboard/activity/` — Streak days + actions this month
+- **Batch-ready ingest pipeline**: Bot-ingested jobs now automatically trigger batch embeddings (100/API call) + user matching with Redis dedup locks. No frontend changes needed.
+- **TypeScript types** added for all feed response shapes.
 
 ### v0.26.0 — Conversational Resume Builder
 
