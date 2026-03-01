@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.28.0
+> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.30.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -1049,6 +1049,13 @@ After receiving the `id`, begin [polling for status](#13-polling-for-analysis-st
 > ```json
 > { "id": 42, "status": "processing", "duplicate_resume_warning": "This resume has been analyzed before." }
 > ```
+
+> **Backend sync (v0.30.0):** After a successful analysis, the backend automatically:
+> 1. Saves the JD as a `DiscoveredJob` with `source = "user_analysis"` (upserted by URL or analysis ID).
+> 2. Computes a pgvector embedding for the job so it appears in personalised feed results.
+> 3. If the Crawler Bot integration is configured, pushes the company and job to the Crawler Bot DB so both databases stay in sync.
+>
+> This is entirely transparent to the frontend — **no request/response changes**. Jobs created this way appear in `/api/v1/feed/jobs/` alongside crawler-sourced jobs, identifiable by `source: "user_analysis"`.
 
 **Example — New file upload (multipart/form-data):**
 ```js
@@ -5618,6 +5625,16 @@ if (data.status === 403) {
 
 Build a resume through a **pure text conversation**. The frontend is just a chat box — no forms, no component rendering, no action routing. The user types naturally, the AI extracts structured data, asks follow-up questions, and builds the resume incrementally.
 
+> **Markdown in messages:** All `content` fields in assistant messages use **Markdown formatting** (bold, bullet lists, inline code, blockquotes). Your frontend **must** render message content through a Markdown parser (e.g. `react-markdown`). User messages are plain text.
+>
+> ```tsx
+> import ReactMarkdown from 'react-markdown';
+>
+> <div className="chat-bubble assistant">
+>   <ReactMarkdown>{message.content}</ReactMarkdown>
+> </div>
+> ```
+
 **3 starting paths** (all converge into the same text chat after the welcome):
 
 | Path | Source | What happens |
@@ -5673,7 +5690,7 @@ Content-Type: application/json
     {
       "id": "msg-uuid",
       "role": "assistant",
-      "content": "Hi! I'll help you build your resume from scratch...",
+      "content": "Hi! I'll help you build your resume **from scratch** through a quick conversation.\n\nLet's start with the basics — what's your **full name**, **email**, and **phone number**?",
       "ui_spec": null,
       "extracted_data": null,
       "step": "contact",
@@ -5685,9 +5702,11 @@ Content-Type: application/json
 
 **Welcome messages by source:**
 
-- **`scratch`** — _"Hi! I'll help you build your resume from scratch. Let's start — what's your full name, email, and phone number?"_
-- **`profile`** — _"Hi John! I pulled this from your profile: Name: John Doe, Email: john@x.com... Does this look correct?"_
-- **`previous`** — _"Hi John! I've loaded data from your resume. Contact: John Doe. Experience: 2 role(s) — Senior Dev @ Acme... Want to update anything?"_
+- **`scratch`** — _"Hi! I'll help you build your resume **from scratch**... what's your **full name**, **email**, and **phone number**?"_
+- **`profile`** — _"Hi John! I pulled this from your profile: **Name:** John Doe, **Email:** john@x.com... Does this look correct?"_
+- **`previous`** — _"Hi John! I've loaded data from your resume. - **Contact:** John Doe. - **Experience:** 2 role(s)... Want to update anything?"_
+
+> All welcome messages and AI responses use **Markdown**. Render with `react-markdown` or equivalent.
 
 **Error — 400 (session limit):**
 
@@ -5735,7 +5754,7 @@ Content-Type: application/json
   "assistant_message": {
     "id": "asst-msg-uuid",
     "role": "assistant",
-    "content": "Great, I've added your role at Acme Corp! Any other positions, or shall we move on to education?",
+    "content": "Great! I've added your role as **Senior Backend Developer** at **Acme Corp**.\n\n- Built microservices platform, reducing deploy times by **60%**\n\nAny other positions, or shall we move on to education?",
     "ui_spec": null,
     "extracted_data": {
       "experience": [
@@ -5915,7 +5934,7 @@ type MessageRole = 'user' | 'assistant' | 'system';
 interface ChatMessage {
   id: string;
   role: MessageRole;
-  content: string;
+  content: string;                               // Markdown-formatted (assistant) or plain text (user)
   ui_spec: null;                                // always null in text mode
   extracted_data: Record<string, any> | null;   // data extracted from this turn
   step: string;
@@ -7015,6 +7034,15 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 ---
 
 ## Changelog
+
+### v0.30.0 — Analyzed Job Sync & Crawler Bot Integration
+
+- **Auto-save analyzed JDs**: Every successful analysis now saves (or updates) the JD as a `DiscoveredJob` with `source = "user_analysis"`. URL-based JDs use the URL as the unique key; text/form JDs use `analysis:<id>`.
+- **Embedding auto-compute**: A pgvector embedding is computed for each user-analyzed job, so it immediately participates in personalised feed ranking (`/api/v1/feed/jobs/`).
+- **Crawler Bot sync**: If `CRAWLER_BOT_INGEST_URL` and `CRAWLER_API_KEY` are configured, the company and job are pushed to the Crawler Bot's ingest API (fire-and-forget Celery task, never blocks the user).
+- **New `CrawlerBotClient` service**: Reusable HTTP client with `X-Crawler-Key` auth, exponential-backoff retry (3 attempts on 429/5xx), 30 s timeout.
+- **New `DiscoveredJob.source` value**: `"user_analysis"` added alongside `"firecrawl"`. Feed endpoints already expose the `source` field — no frontend changes needed.
+- **No API contract changes**: The analyze endpoint request/response shapes are unchanged. Sync is a backend-only background task.
 
 ### v0.28.0 — Feed & Analytics Endpoints
 

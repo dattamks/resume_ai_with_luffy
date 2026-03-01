@@ -1979,9 +1979,17 @@ type "done" or keep adding sections. Don't push to finalize too early.
 - If the user asks to change/edit something, update only the mentioned fields.
 - Certifications and projects are optional — don't insist on them.
 
+FORMATTING (for the "message" field):
+- Use **Markdown** for rich formatting in your conversational text.
+- Use **bold** for emphasis and section labels.
+- Use bullet lists (`- `) when listing items or skills.
+- Use `inline code` for technical terms like tool names.
+- Keep it conversational — don't over-format. A natural chat feel is key.
+- Example: "Great! I've added your role as **Senior Developer** at **Acme Corp**."
+
 YOU MUST RESPOND WITH VALID JSON ONLY (no markdown fences, no extra text):
 {{
-  "message": "Your conversational response to the user",
+  "message": "Your conversational response (use Markdown formatting)",
   "data_updates": {{
     // ONLY include sections with NEW or CHANGED data.
     // Use the exact same schema as CURRENT RESUME DATA above.
@@ -2095,8 +2103,8 @@ def _build_welcome_message(source: str, resume_data: dict, user) -> str:
     # ── Path 1: From scratch ────────────────────────────────────────────
     if source == ResumeChat.SOURCE_SCRATCH:
         return (
-            "Hi! I'll help you build your resume from scratch through a quick conversation.\n\n"
-            "Let's start with the basics — what's your full name, email, and phone number?"
+            "Hi! I'll help you build your resume **from scratch** through a quick conversation.\n\n"
+            "Let's start with the basics — what's your **full name**, **email**, and **phone number**?"
         )
 
     # ── Path 3: From profile ────────────────────────────────────────────
@@ -2119,12 +2127,12 @@ def _build_welcome_message(source: str, resume_data: dict, user) -> str:
         greeting = f"Hi{' ' + name.split()[0] if name else ''}!"
         lines = [f"{greeting} I pulled this from your profile:\n"]
         if parts:
-            lines.append('\n'.join(f"• {p}" for p in parts))
+            lines.append('\n'.join(f"- **{p.split(':')[0].strip()}:** {':'.join(p.split(':')[1:]).strip()}" if ':' in p else f"- {p}" for p in parts))
         if skill_list:
-            lines.append(f"\nSkills: {', '.join(skill_list[:10])}")
+            lines.append(f"\n**Skills:** {', '.join(f'`{s}`' for s in skill_list[:10])}")
         lines.append(
             "\n\nDoes this look correct? Feel free to update anything, "
-            "or just say \"looks good\" and we'll move on to your work experience."
+            "or just say **\"looks good\"** and we'll move on to your work experience."
         )
         return '\n'.join(lines)
 
@@ -2145,7 +2153,7 @@ def _build_welcome_message(source: str, resume_data: dict, user) -> str:
             contact_parts.append(contact['name'])
         if contact.get('email'):
             contact_parts.append(contact['email'])
-        lines.append(f"**Contact:** {', '.join(contact_parts)}")
+        lines.append(f"- **Contact:** {', '.join(contact_parts)}")
 
     if experience:
         exp_summary = []
@@ -2156,7 +2164,7 @@ def _build_welcome_message(source: str, resume_data: dict, user) -> str:
                 exp_summary.append(f"{title} @ {company}")
             elif title:
                 exp_summary.append(title)
-        lines.append(f"**Experience:** {len(experience)} role(s) — {'; '.join(exp_summary)}")
+        lines.append(f"- **Experience:** {len(experience)} role(s) — {'; '.join(exp_summary)}")
 
     if education:
         edu_summary = []
@@ -2167,15 +2175,15 @@ def _build_welcome_message(source: str, resume_data: dict, user) -> str:
                 edu_summary.append(f"{degree}, {institution}")
             elif degree:
                 edu_summary.append(degree)
-        lines.append(f"**Education:** {'; '.join(edu_summary)}")
+        lines.append(f"- **Education:** {'; '.join(edu_summary)}")
 
     all_skills = skills.get('technical', []) + skills.get('tools', [])
     if all_skills:
-        lines.append(f"**Skills:** {', '.join(all_skills[:8])}")
+        lines.append(f"- **Skills:** {', '.join(f'`{s}`' for s in all_skills[:8])}")
 
     empty = [s for s in _RESUME_SECTIONS if s not in filled]
     if empty:
-        lines.append(f"\nStill missing: {', '.join(empty)}.")
+        lines.append(f"\n> **Still missing:** {', '.join(empty)}")
 
     lines.append(
         "\nWant to update anything, add missing sections, "

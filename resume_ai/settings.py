@@ -310,6 +310,7 @@ FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')
 
 # Crawler Bot Ingest API — shared secret for X-Crawler-Key auth
 CRAWLER_API_KEY = config('CRAWLER_API_KEY', default='')
+CRAWLER_BOT_INGEST_URL = config('CRAWLER_BOT_INGEST_URL', default='')
 
 # ── Phase 12: Firecrawl + pgvector job crawling ──────────────────────────────
 EMBEDDING_MODEL = config('EMBEDDING_MODEL', default='openai/text-embedding-3-small')

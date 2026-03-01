@@ -108,6 +108,9 @@ def run_analysis_task(self, analysis_id, user_id):
         # Send analysis completion email (respects notification preferences)
         _send_analysis_complete_email(result)
 
+        # Sync analyzed job to local DiscoveredJob DB + crawler bot (fire-and-forget)
+        sync_analyzed_job_task.delay(analysis_id)
+
     except ValueError as exc:
         logger.warning('Analysis failed (user=%s): %s', user_id, exc)
         # Prometheus: record failure
@@ -225,6 +228,146 @@ def _send_analysis_complete_email(analysis):
         logger.info('Analysis complete email sent: user=%s analysis=%s', user.id, analysis.id)
     except Exception:
         logger.debug('Analysis complete email not sent (template may not exist): analysis=%s', analysis.id)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sync analyzed jobs to local DiscoveredJob + Crawler Bot
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SOURCE_USER_ANALYSIS = 'user_analysis'
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=20,
+    acks_late=True,
+    ignore_result=True,
+)
+def sync_analyzed_job_task(self, analysis_id):
+    """
+    After a successful resume analysis, save the JD as a DiscoveredJob
+    in our own DB and push it to the Crawler Bot ingest API so both
+    databases stay in sync.
+
+    Fires as a fire-and-forget Celery task from ``run_analysis_task``.
+    Only runs when the analysis has a ``jd_url`` (URL-based JD input).
+    For text/form-based JDs we still create a local DiscoveredJob if
+    we have enough metadata (title + company).
+    """
+    from .models import ResumeAnalysis, DiscoveredJob
+
+    try:
+        analysis = ResumeAnalysis.objects.get(id=analysis_id)
+    except ResumeAnalysis.DoesNotExist:
+        logger.warning('sync_analyzed_job_task: analysis %s not found', analysis_id)
+        return
+
+    if analysis.status != ResumeAnalysis.STATUS_DONE:
+        return
+
+    # Need at minimum a title to create a useful job record
+    title = (analysis.jd_role or '').strip()
+    company = (analysis.jd_company or '').strip()
+    jd_url = (analysis.jd_url or '').strip()
+
+    if not title:
+        logger.debug('sync_analyzed_job: skipped — no jd_role for analysis %s', analysis_id)
+        return
+
+    # ── Parse skills from comma-separated string ────────────────────
+    skills_raw = analysis.jd_skills or ''
+    skills_list = [s.strip() for s in skills_raw.split(',') if s.strip()] if skills_raw else []
+
+    # ── Build the external_id (dedup key) ──────────────────────────
+    # For URL-based: use the URL itself
+    # For text/form-based: use "analysis:<analysis_id>"
+    if jd_url:
+        external_id = jd_url
+    else:
+        external_id = f'analysis:{analysis_id}'
+
+    # ── 1. Save to local DiscoveredJob DB ──────────────────────────
+    job_data = {
+        'title': title[:500],
+        'company': company[:255],
+        'url': jd_url or f'https://iluffy.app/analyses/{analysis_id}/',
+        'source': _SOURCE_USER_ANALYSIS,
+        'description_snippet': (analysis.resolved_jd or '')[:500],
+        'skills_required': skills_list,
+        'industry': (analysis.jd_industry or '')[:100],
+    }
+
+    if analysis.jd_experience_years is not None:
+        job_data['experience_years_min'] = analysis.jd_experience_years
+
+    try:
+        job, created = DiscoveredJob.objects.update_or_create(
+            source=_SOURCE_USER_ANALYSIS,
+            external_id=external_id,
+            defaults=job_data,
+        )
+
+        # Compute embedding if missing
+        if created and hasattr(DiscoveredJob, 'embedding') and not job.embedding:
+            try:
+                from .services.embedding_service import compute_embedding
+                text = f"{title} at {company}. {(analysis.resolved_jd or '')[:500]}"
+                job.embedding = compute_embedding(text)
+                job.save(update_fields=['embedding'])
+            except Exception as emb_exc:
+                logger.warning('sync_analyzed_job: embedding failed for job %s: %s', job.id, emb_exc)
+
+        action = 'created' if created else 'updated'
+        logger.info(
+            'sync_analyzed_job: %s DiscoveredJob %s — "%s" @ %s (analysis=%s)',
+            action, job.id, title, company, analysis_id,
+        )
+    except Exception as exc:
+        logger.error('sync_analyzed_job: failed to save DiscoveredJob: %s', exc)
+
+    # ── 2. Push to Crawler Bot ─────────────────────────────────────
+    try:
+        from .services.crawler_bot_client import get_crawler_bot_client
+        client = get_crawler_bot_client()
+        if not client:
+            logger.debug('sync_analyzed_job: crawler bot not configured — skipping push')
+            return
+
+        # Push company first (skeleton — crawler bot will enrich later)
+        if company:
+            try:
+                client.push_company({
+                    'name': company,
+                    'industry': analysis.jd_industry or '',
+                })
+                logger.debug('sync_analyzed_job: pushed company "%s" to crawler bot', company)
+            except Exception as co_exc:
+                # Non-fatal — the job push will auto-create a skeleton company
+                logger.debug('sync_analyzed_job: company push failed (non-fatal): %s', co_exc)
+
+        # Push job
+        crawler_job_data = {
+            'url': jd_url or f'https://iluffy.app/analyses/{analysis_id}/',
+            'title': title,
+            'company': company or 'Unknown',
+            'description_snippet': (analysis.resolved_jd or '')[:500],
+            'skills_required': skills_list,
+            'industry': analysis.jd_industry or '',
+            'source_type': 'career_page' if jd_url else 'job_listing_site',
+        }
+
+        if analysis.jd_experience_years is not None:
+            crawler_job_data['experience_years_min'] = analysis.jd_experience_years
+
+        result = client.push_job(crawler_job_data)
+        logger.info(
+            'sync_analyzed_job: pushed job to crawler bot — id=%s title="%s" (analysis=%s)',
+            result.get('id', '?'), title, analysis_id,
+        )
+    except Exception as exc:
+        logger.warning('sync_analyzed_job: crawler bot push failed: %s', exc)
+        # Don't retry for crawler bot failures — local DB is already saved
 
 
 @shared_task(

@@ -361,10 +361,17 @@ class ResumeTemplateSerializer(serializers.ModelSerializer):
             return not obj.is_premium
         if not obj.is_premium:
             return True
-        # Check user's plan premium_templates flag
+        # Check user's plan premium_templates flag + expiry
         profile = getattr(request.user, 'profile', None)
-        if profile and profile.plan:
-            return profile.plan.premium_templates
+        if profile and profile.plan and profile.plan.premium_templates:
+            from django.utils import timezone
+            # Plan is valid if: free tier, no expiry set, or not expired
+            if (
+                profile.plan.billing_cycle == 'free'
+                or not profile.plan_valid_until
+                or profile.plan_valid_until >= timezone.now()
+            ):
+                return True
         return False
 
 

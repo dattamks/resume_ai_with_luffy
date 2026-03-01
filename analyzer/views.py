@@ -960,7 +960,16 @@ class GenerateResumeView(APIView):
         template_obj = getattr(serializer, '_template_obj', None)
         if template_obj and template_obj.is_premium:
             profile = getattr(request.user, 'profile', None)
-            has_access = profile and profile.plan and profile.plan.premium_templates
+            has_access = (
+                profile
+                and profile.plan
+                and profile.plan.premium_templates
+                and (
+                    profile.plan.billing_cycle == 'free'
+                    or not profile.plan_valid_until
+                    or profile.plan_valid_until >= timezone.now()
+                )
+            )
             if not has_access:
                 return Response(
                     {
