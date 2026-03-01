@@ -85,41 +85,21 @@ def start_session(user: User, source: str, base_resume_id: str = None) -> Resume
     """
     Create a new ResumeChat session and pre-fill resume_data based on source.
 
+    All sessions are pure text chat. The source only determines what data
+    is pre-filled before the conversation starts:
+      - scratch:  empty — AI asks everything from zero
+      - profile:  pre-fill from UserProfile + JobSearchProfile
+      - previous: pre-fill from selected resume's analysis / generated data
+
     Args:
         user: The authenticated user.
         source: 'scratch', 'profile', or 'previous'.
         base_resume_id: UUID of Resume to use as base (for 'previous').
 
     Returns:
-        The created ResumeChat instance with initial messages added.
+        The created ResumeChat instance with welcome message.
     """
-    chat = ResumeChat.objects.create(
-        user=user,
-        source=source,
-        current_step=ResumeChat.STEP_START,
-    )
-
-    resume_data = _empty_resume_data()
-
-    if source == ResumeChat.SOURCE_PROFILE:
-        resume_data = _prefill_from_profile(user, resume_data)
-    elif source == ResumeChat.SOURCE_PREVIOUS:
-        resume_data = _prefill_from_resume(user, base_resume_id, resume_data)
-        if base_resume_id:
-            try:
-                chat.base_resume = Resume.objects.get(id=base_resume_id, user=user)
-                chat.save(update_fields=['base_resume'])
-            except Resume.DoesNotExist:
-                pass
-
-    chat.resume_data = resume_data
-    chat.current_step = ResumeChat.STEP_CONTACT
-    chat.save(update_fields=['resume_data', 'current_step'])
-
-    # Generate the first assistant message
-    _generate_step_message(chat)
-
-    return chat
+    return start_text_session(user, source, base_resume_id)
 
 
 def _empty_resume_data() -> dict:
@@ -1960,3 +1940,452 @@ def get_user_resumes_for_selection(user):
         })
 
     return resumes
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Text-Based Chat Mode — pure LLM conversation
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Sections the LLM should collect
+_RESUME_SECTIONS = ['contact', 'experience', 'education', 'skills', 'certifications', 'projects']
+
+_TEXT_CHAT_SYSTEM_PROMPT = """\
+You are a friendly, professional resume builder assistant. You help users \
+create their resume through natural conversation.
+
+CURRENT RESUME DATA:
+{resume_data}
+
+SECTIONS TO COLLECT:
+1. contact — name, email, phone, location, linkedin, portfolio
+2. experience — list of jobs: title, company, location, start_date, end_date, bullets (achievements)
+3. education — list of degrees: degree, institution, location, year, gpa
+4. skills — technical (list), tools (list), soft (list)
+5. certifications — list: name, issuer, year  (optional)
+6. projects — list: name, description, technologies (list), url  (optional)
+
+SECTIONS WITH DATA: {filled_sections}
+SECTIONS STILL EMPTY: {empty_sections}
+
+RULES:
+- Be concise. 1-3 sentences per response.
+- Ask about ONE section at a time, focusing on the next empty section.
+- If the user gives info about multiple sections at once, extract ALL of it.
+- For work experience bullets, use strong action verbs and preserve numbers/metrics.
+- Do NOT invent data. Only include what the user actually said.
+- When all key sections (contact + experience) have data, mention they can \
+type "done" or keep adding sections. Don't push to finalize too early.
+- If the user says "done", "finish", "finalize", or similar, set ready_to_finalize: true.
+- If the user asks to change/edit something, update only the mentioned fields.
+- Certifications and projects are optional — don't insist on them.
+
+YOU MUST RESPOND WITH VALID JSON ONLY (no markdown fences, no extra text):
+{{
+  "message": "Your conversational response to the user",
+  "data_updates": {{
+    // ONLY include sections with NEW or CHANGED data.
+    // Use the exact same schema as CURRENT RESUME DATA above.
+    // Omit sections with no changes.
+  }},
+  "sections_with_data": ["contact", "experience"],
+  "current_focus": "experience",
+  "ready_to_finalize": false
+}}"""
+
+
+def _get_filled_sections(resume_data: dict) -> list[str]:
+    """Return list of section names that have meaningful data."""
+    filled = []
+    contact = resume_data.get('contact', {})
+    if contact.get('name') or contact.get('email'):
+        filled.append('contact')
+    if resume_data.get('experience'):
+        filled.append('experience')
+    if resume_data.get('education'):
+        filled.append('education')
+    skills = resume_data.get('skills', {})
+    if any(skills.get(k) for k in ('technical', 'tools', 'soft')):
+        filled.append('skills')
+    if resume_data.get('certifications'):
+        filled.append('certifications')
+    if resume_data.get('projects'):
+        filled.append('projects')
+    return filled
+
+
+def _merge_data_updates(resume_data: dict, updates: dict) -> dict:
+    """
+    Merge LLM-provided data_updates into resume_data.
+
+    - For dict sections (contact, skills): shallow merge keys.
+    - For list sections (experience, education, etc.): replace if update is
+      non-empty, otherwise keep existing. This avoids duplicating entries
+      when the LLM echoes back the same data.
+    """
+    result = copy.deepcopy(resume_data)
+
+    for section, value in updates.items():
+        if section not in result:
+            result[section] = value
+            continue
+
+        if isinstance(value, dict) and isinstance(result[section], dict):
+            # Merge dict-type sections (contact, skills)
+            for k, v in value.items():
+                if v not in (None, '', []):
+                    result[section][k] = v
+        elif isinstance(value, list) and value:
+            # For list sections, LLM returns the full list — replace
+            result[section] = value
+        elif isinstance(value, str) and value:
+            result[section] = value
+
+    return result
+
+
+def start_text_session(user, source: str, base_resume_id: str = None) -> ResumeChat:
+    """
+    Start a pure text chat session for resume building.
+
+    Path 1 (scratch):   Empty data. AI asks everything from zero.
+    Path 2 (previous):  Load from selected resume's analysis. Summarize what was found.
+    Path 3 (profile):   Load from UserProfile. Show what was pulled, ask to confirm.
+
+    All paths converge into the same text conversation after the welcome message.
+    """
+    chat = ResumeChat.objects.create(
+        user=user,
+        source=source,
+        mode=ResumeChat.MODE_TEXT,
+        current_step=ResumeChat.STEP_CONTACT,
+    )
+
+    resume_data = _empty_resume_data()
+
+    if source == ResumeChat.SOURCE_PROFILE:
+        resume_data = _prefill_from_profile(user, resume_data)
+    elif source == ResumeChat.SOURCE_PREVIOUS:
+        resume_data = _prefill_from_resume(user, base_resume_id, resume_data)
+        if base_resume_id:
+            try:
+                chat.base_resume = Resume.objects.get(id=base_resume_id, user=user)
+                chat.save(update_fields=['base_resume'])
+            except Resume.DoesNotExist:
+                pass
+
+    chat.resume_data = resume_data
+    chat.save(update_fields=['resume_data'])
+
+    # ── Build contextual welcome message ────────────────────────────────
+    welcome = _build_welcome_message(source, resume_data, user)
+
+    ResumeChatMessage.objects.create(
+        chat=chat,
+        role=ResumeChatMessage.ROLE_ASSISTANT,
+        content=welcome,
+        step='contact',
+    )
+
+    return chat
+
+
+def _build_welcome_message(source: str, resume_data: dict, user) -> str:
+    """Build a contextual welcome message based on source and pre-filled data."""
+
+    # ── Path 1: From scratch ────────────────────────────────────────────
+    if source == ResumeChat.SOURCE_SCRATCH:
+        return (
+            "Hi! I'll help you build your resume from scratch through a quick conversation.\n\n"
+            "Let's start with the basics — what's your full name, email, and phone number?"
+        )
+
+    # ── Path 3: From profile ────────────────────────────────────────────
+    if source == ResumeChat.SOURCE_PROFILE:
+        contact = resume_data.get('contact', {})
+        name = contact.get('name', '').strip()
+        parts = []
+        if name:
+            parts.append(f"Name: {name}")
+        if contact.get('email'):
+            parts.append(f"Email: {contact['email']}")
+        if contact.get('phone'):
+            parts.append(f"Phone: {contact['phone']}")
+        if contact.get('linkedin'):
+            parts.append(f"LinkedIn: {contact['linkedin']}")
+
+        skills = resume_data.get('skills', {})
+        skill_list = skills.get('technical', [])
+
+        greeting = f"Hi{' ' + name.split()[0] if name else ''}!"
+        lines = [f"{greeting} I pulled this from your profile:\n"]
+        if parts:
+            lines.append('\n'.join(f"• {p}" for p in parts))
+        if skill_list:
+            lines.append(f"\nSkills: {', '.join(skill_list[:10])}")
+        lines.append(
+            "\n\nDoes this look correct? Feel free to update anything, "
+            "or just say \"looks good\" and we'll move on to your work experience."
+        )
+        return '\n'.join(lines)
+
+    # ── Path 2: From existing resume ────────────────────────────────────
+    contact = resume_data.get('contact', {})
+    name = contact.get('name', '').strip()
+    experience = resume_data.get('experience', [])
+    education = resume_data.get('education', [])
+    skills = resume_data.get('skills', {})
+    filled = _get_filled_sections(resume_data)
+
+    greeting = f"Hi{' ' + name.split()[0] if name else ''}!"
+    lines = [f"{greeting} I've loaded data from your resume. Here's what I found:\n"]
+
+    if contact.get('name') or contact.get('email'):
+        contact_parts = []
+        if contact.get('name'):
+            contact_parts.append(contact['name'])
+        if contact.get('email'):
+            contact_parts.append(contact['email'])
+        lines.append(f"**Contact:** {', '.join(contact_parts)}")
+
+    if experience:
+        exp_summary = []
+        for exp in experience[:3]:
+            title = exp.get('title', '')
+            company = exp.get('company', '')
+            if title and company:
+                exp_summary.append(f"{title} @ {company}")
+            elif title:
+                exp_summary.append(title)
+        lines.append(f"**Experience:** {len(experience)} role(s) — {'; '.join(exp_summary)}")
+
+    if education:
+        edu_summary = []
+        for edu in education[:2]:
+            degree = edu.get('degree', '')
+            institution = edu.get('institution', '')
+            if degree and institution:
+                edu_summary.append(f"{degree}, {institution}")
+            elif degree:
+                edu_summary.append(degree)
+        lines.append(f"**Education:** {'; '.join(edu_summary)}")
+
+    all_skills = skills.get('technical', []) + skills.get('tools', [])
+    if all_skills:
+        lines.append(f"**Skills:** {', '.join(all_skills[:8])}")
+
+    empty = [s for s in _RESUME_SECTIONS if s not in filled]
+    if empty:
+        lines.append(f"\nStill missing: {', '.join(empty)}.")
+
+    lines.append(
+        "\nWant to update anything, add missing sections, "
+        "or tell me what role you're targeting so I can tailor the resume?"
+    )
+    return '\n'.join(lines)
+
+    ResumeChatMessage.objects.create(
+        chat=chat,
+        role=ResumeChatMessage.ROLE_ASSISTANT,
+        content=welcome,
+        step='contact',
+    )
+
+    return chat
+
+
+def process_text_message(chat: ResumeChat, user_text: str) -> dict:
+    """
+    Process a free-text user message in text chat mode.
+
+    1. Saves the user message
+    2. Builds conversation context (last 20 messages + resume_data)
+    3. Calls LLM to get response + data updates
+    4. Merges extracted data into resume_data
+    5. Returns response dict for the view
+
+    Returns:
+        {
+            'user_message': ResumeChatMessage,
+            'assistant_message': ResumeChatMessage,
+            'resume_data': dict,
+            'progress': {
+                'sections_with_data': list,
+                'total_sections': int,
+                'ready_to_finalize': bool,
+                'current_focus': str,
+            },
+        }
+    """
+    from .ai_providers.factory import get_openai_client, llm_retry
+    from .ai_providers.json_repair import repair_json
+
+    # 1. Save user message
+    user_msg = ResumeChatMessage.objects.create(
+        chat=chat,
+        role=ResumeChatMessage.ROLE_USER,
+        content=user_text,
+        step=chat.current_step,
+    )
+
+    # 2. Build conversation for LLM
+    resume_data = chat.resume_data or _empty_resume_data()
+    filled = _get_filled_sections(resume_data)
+    empty = [s for s in _RESUME_SECTIONS if s not in filled]
+
+    system_prompt = _TEXT_CHAT_SYSTEM_PROMPT.format(
+        resume_data=json.dumps(resume_data, indent=2),
+        filled_sections=', '.join(filled) or 'none',
+        empty_sections=', '.join(empty) or 'none',
+    )
+
+    # Get last N messages for conversation context
+    recent_messages = list(
+        chat.messages.filter(
+            role__in=[ResumeChatMessage.ROLE_USER, ResumeChatMessage.ROLE_ASSISTANT]
+        ).order_by('-created_at')[:20]
+    )
+    recent_messages.reverse()
+
+    llm_messages = [{'role': 'system', 'content': system_prompt}]
+    for msg in recent_messages:
+        if msg.role == ResumeChatMessage.ROLE_ASSISTANT:
+            # For assistant messages, we only send the text (not raw JSON)
+            llm_messages.append({'role': 'assistant', 'content': msg.content})
+        else:
+            llm_messages.append({'role': 'user', 'content': msg.content})
+
+    # 3. Call LLM
+    client = get_openai_client()
+    model = getattr(settings, 'OPENROUTER_MODEL', 'anthropic/claude-3.5-haiku')
+
+    req_start = time.time()
+
+    @llm_retry
+    def _call():
+        return client.chat.completions.create(
+            model=model,
+            messages=llm_messages,
+            max_tokens=2048,
+            temperature=0.4,
+            timeout=60,
+        )
+
+    try:
+        response = _call()
+    except Exception as exc:
+        logger.exception('Text chat LLM call failed: chat=%s', chat.id)
+        # Return a graceful fallback
+        fallback_msg = ResumeChatMessage.objects.create(
+            chat=chat,
+            role=ResumeChatMessage.ROLE_ASSISTANT,
+            content="Sorry, I had trouble processing that. Could you try again?",
+            step=chat.current_step,
+        )
+        return {
+            'user_message': user_msg,
+            'assistant_message': fallback_msg,
+            'resume_data': resume_data,
+            'progress': {
+                'sections_with_data': filled,
+                'total_sections': len(_RESUME_SECTIONS),
+                'ready_to_finalize': False,
+                'current_focus': empty[0] if empty else 'review',
+            },
+        }
+
+    elapsed = time.time() - req_start
+
+    # 4. Parse LLM response
+    raw = response.choices[0].message.content.strip()
+    fence_match = _MD_FENCE_RE.match(raw)
+    if fence_match:
+        raw = fence_match.group(1).strip()
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        repaired = repair_json(raw)
+        try:
+            parsed = json.loads(repaired)
+        except json.JSONDecodeError:
+            logger.error('Text chat JSON parse failed: chat=%s raw=%s', chat.id, raw[:200])
+            parsed = {'message': raw, 'data_updates': {}, 'sections_with_data': filled,
+                       'current_focus': empty[0] if empty else 'review', 'ready_to_finalize': False}
+
+    response_text = parsed.get('message', '')
+    data_updates = parsed.get('data_updates', {})
+    sections_with_data = parsed.get('sections_with_data', filled)
+    current_focus = parsed.get('current_focus', empty[0] if empty else 'review')
+    ready_to_finalize = parsed.get('ready_to_finalize', False)
+
+    # 5. Merge data updates into resume_data
+    if data_updates:
+        resume_data = _merge_data_updates(resume_data, data_updates)
+        chat.resume_data = resume_data
+
+    # Update target_role / target_company if the LLM extracted them
+    if data_updates.get('target_role'):
+        chat.target_role = data_updates['target_role']
+    if data_updates.get('target_company'):
+        chat.target_company = data_updates['target_company']
+
+    # Track current step based on focus
+    step_map = {
+        'contact': ResumeChat.STEP_CONTACT,
+        'experience': ResumeChat.STEP_EXPERIENCE_INPUT,
+        'education': ResumeChat.STEP_EDUCATION,
+        'skills': ResumeChat.STEP_SKILLS,
+        'certifications': ResumeChat.STEP_CERTIFICATIONS,
+        'projects': ResumeChat.STEP_PROJECTS,
+        'review': ResumeChat.STEP_REVIEW,
+    }
+    if current_focus in step_map:
+        chat.current_step = step_map[current_focus]
+
+    chat.save(update_fields=['resume_data', 'current_step', 'target_role', 'target_company', 'updated_at'])
+
+    # Recompute filled sections after merge
+    filled = _get_filled_sections(resume_data)
+
+    # Save LLM record for cost tracking
+    usage = getattr(response, 'usage', None)
+    llm_record = LLMResponse.objects.create(
+        user=chat.user,
+        prompt_sent=json.dumps(llm_messages[:2]),  # system + first user msg only (save space)
+        raw_response=raw,
+        parsed_response=parsed,
+        model_used=model,
+        status=LLMResponse.STATUS_DONE,
+        duration_seconds=elapsed,
+        call_purpose='resume_chat_text',
+        prompt_tokens=getattr(usage, 'prompt_tokens', None),
+        completion_tokens=getattr(usage, 'completion_tokens', None),
+        total_tokens=getattr(usage, 'total_tokens', None),
+    )
+
+    # 6. Save assistant message
+    assistant_msg = ResumeChatMessage.objects.create(
+        chat=chat,
+        role=ResumeChatMessage.ROLE_ASSISTANT,
+        content=response_text,
+        extracted_data=data_updates if data_updates else None,
+        step=chat.current_step,
+        llm_response=llm_record,
+    )
+
+    logger.info(
+        'Text chat message processed: chat=%s focus=%s sections=%s elapsed=%.2fs',
+        chat.id, current_focus, ','.join(filled), elapsed,
+    )
+
+    return {
+        'user_message': user_msg,
+        'assistant_message': assistant_msg,
+        'resume_data': resume_data,
+        'progress': {
+            'sections_with_data': filled,
+            'total_sections': len(_RESUME_SECTIONS),
+            'ready_to_finalize': ready_to_finalize,
+            'current_focus': current_focus,
+        },
+    }

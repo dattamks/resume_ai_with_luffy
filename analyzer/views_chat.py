@@ -177,6 +177,65 @@ class ResumeChatSubmitView(APIView):
         })
 
 
+class ResumeChatTextMessageView(APIView):
+    """
+    POST /api/v1/resume-chat/<id>/message/
+    Send a free-text message in text chat mode.
+
+    Body: {"text": "I'm John Doe, john@doe.com, based in Mumbai"}
+    Returns the assistant's response, updated resume_data, and progress.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def post(self, request, pk):
+        try:
+            chat = ResumeChat.objects.get(
+                id=pk, user=request.user, status=ResumeChat.STATUS_ACTIVE,
+            )
+        except ResumeChat.DoesNotExist:
+            return Response(
+                {'detail': 'Chat session not found or not active.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if chat.mode != ResumeChat.MODE_TEXT:
+            return Response(
+                {'detail': 'This session uses guided mode. Use the /submit/ endpoint instead.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Limit messages per session (prevent abuse)
+        msg_count = chat.messages.filter(role='user').count()
+        if msg_count >= 50:
+            return Response(
+                {'detail': 'Message limit reached for this session. Please finalize or start a new session.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ResumeChatTextMessageSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user_text = serializer.validated_data['text']
+
+        try:
+            result = process_text_message(chat, user_text)
+        except Exception as exc:
+            logger.exception('Error processing text message: chat=%s', pk)
+            return Response(
+                {'detail': f'Error processing message: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            'user_message': ResumeChatMessageSerializer(result['user_message']).data,
+            'assistant_message': ResumeChatMessageSerializer(result['assistant_message']).data,
+            'resume_data': result['resume_data'],
+            'progress': result['progress'],
+        })
+
+
 class ResumeChatFinalizeView(APIView):
     """
     POST /api/v1/resume-chat/<id>/finalize/

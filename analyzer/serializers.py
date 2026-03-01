@@ -732,7 +732,7 @@ class ResumeChatSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResumeChat
         fields = (
-            'id', 'source', 'current_step', 'status',
+            'id', 'mode', 'source', 'current_step', 'status',
             'target_role', 'target_company', 'target_industry',
             'experience_level', 'resume_data',
             'step_number', 'total_steps',
@@ -756,7 +756,7 @@ class ResumeChatListSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResumeChat
         fields = (
-            'id', 'source', 'current_step', 'status',
+            'id', 'mode', 'source', 'current_step', 'status',
             'target_role', 'step_number', 'total_steps',
             'name', 'created_at', 'updated_at',
         )
@@ -793,6 +793,11 @@ class ResumeChatSubmitSerializer(serializers.Serializer):
     """Input serializer for submitting an action in a chat step."""
     action = serializers.CharField(max_length=50)
     payload = serializers.DictField(required=False, default=dict)
+
+
+class ResumeChatTextMessageSerializer(serializers.Serializer):
+    """Input serializer for sending a text message in text chat mode."""
+    text = serializers.CharField(max_length=5000, help_text='User message text')
 
 
 class ResumeChatFinalizeSerializer(serializers.Serializer):

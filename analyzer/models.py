@@ -1134,6 +1134,55 @@ class SentAlert(models.Model):
         return f"SentAlert({self.user.username}, {self.discovered_job.title[:30]}, {self.channel})"
 
 
+class UserCompanyFollow(models.Model):
+    """
+    Global per-user company preference (follow / block).
+
+    - **follow**: The user is interested in this company — boost matches
+      from all its entities across all job alerts.
+    - **block**: The user never wants to see jobs from this company.
+
+    One row per (user, company).  The matching pipeline merges these
+    global preferences with any per-alert ``preferences`` overrides.
+    """
+
+    FOLLOW = 'follow'
+    BLOCK = 'block'
+    RELATION_CHOICES = [
+        (FOLLOW, 'Follow'),
+        (BLOCK, 'Block'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='company_follows',
+    )
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name='followers',
+    )
+    relation = models.CharField(
+        max_length=10, choices=RELATION_CHOICES, default=FOLLOW,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'User Company Follow'
+        verbose_name_plural = 'User Company Follows'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'company'],
+                name='unique_user_company_follow',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'relation']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} → {self.company.name} ({self.relation})"
+
+
 class Notification(models.Model):
     """
     In-app notification store. Powers the notification bell/badge in the frontend.
@@ -1508,6 +1557,14 @@ class ResumeChat(models.Model):
         STEP_PROJECTS, STEP_REVIEW, STEP_DONE,
     ]
 
+    # ── Mode ────────────────────────────────────────────────────────────
+    MODE_TEXT = 'text'
+    MODE_GUIDED = 'guided'
+    MODE_CHOICES = [
+        (MODE_TEXT, 'Text Chat'),
+        (MODE_GUIDED, 'Guided Wizard'),
+    ]
+
     # ── Status ──────────────────────────────────────────────────────────
     STATUS_ACTIVE = 'active'
     STATUS_COMPLETED = 'completed'
@@ -1522,6 +1579,10 @@ class ResumeChat(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name='resume_chats',
+    )
+    mode = models.CharField(
+        max_length=10, choices=MODE_CHOICES, default=MODE_TEXT,
+        help_text='Chat mode: text (LLM conversation) or guided (step wizard)',
     )
     source = models.CharField(
         max_length=20, choices=SOURCE_CHOICES, default=SOURCE_SCRATCH,

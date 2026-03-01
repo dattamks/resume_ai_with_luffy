@@ -35,9 +35,9 @@
 26. [Cover Letter Generation](#26-cover-letter-generation)
 27. [Resume Version History](#27-resume-version-history)
 28. [Resume Templates (Template Marketplace)](#28-resume-templates-template-marketplace)
-29. [Conversational Resume Builder (Chat)](#29-conversational-resume-builder-chat)
-30. [Quick Reference — All Endpoints](#30-quick-reference--all-endpoints)
-31. [Database Table Reference — Job & Company Models](#31-database-table-reference--job--company-models)
+29. [Resume Chat — Text-Based Resume Builder](#29-resume-chat--text-based-resume-builder)
+30. [Database Table Reference — Job & Company Models](#30-database-table-reference--job--company-models)
+31. [Quick Reference — All Endpoints](#31-quick-reference--all-endpoints)
 
 ---
 
@@ -5613,11 +5613,19 @@ if (data.status === 403) {
 
 ---
 
-## 29. Conversational Resume Builder (Chat)
+## 29. Resume Chat — Text-Based Resume Builder
 
-Build a resume from scratch through a guided, step-by-step chat experience. The user proceeds through a wizard (contact → target role → experience → education → skills → certifications → projects → review) answering one question at a time. Each assistant message includes a `ui_spec` JSON that tells the frontend what interactive component to render (buttons, chips, editable cards, text inputs, etc.).
+Build a resume through a **pure text conversation**. The frontend is just a chat box — no forms, no component rendering, no action routing. The user types naturally, the AI extracts structured data, asks follow-up questions, and builds the resume incrementally.
 
-**Cost:** 2 credits — charged only on finalize (PDF/DOCX generation). Chat steps are free.
+**3 starting paths** (all converge into the same text chat after the welcome):
+
+| Path | Source | What happens |
+|------|--------|--------------|
+| **From Scratch** | `scratch` | AI asks everything from zero: name, email, experience, etc. |
+| **From Existing Resume** | `previous` | Pre-loads data from selected resume's analysis. AI summarizes what it found, asks for updates. |
+| **From Profile** | `profile` | Pulls profile info (name, email, phone, LinkedIn, skills). AI shows it, asks to confirm. |
+
+**Cost:** 2 credits — charged only on finalize (PDF/DOCX generation). Chat messages are free (LLM cost is server-side).
 
 ### 29.1 Start a Session
 
@@ -5631,21 +5639,21 @@ Content-Type: application/json
 
 ```json
 {
-  "source": "scratch",
-  "base_resume_id": null
+  "source": "scratch"
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `source` | `string` | Yes | One of: `scratch` (empty), `profile` (pre-fill from user profile), `previous` (copy from existing resume) |
-| `base_resume_id` | `uuid\|null` | Only if `source="previous"` | UUID of the resume to use as base data |
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `source` | `string` | No | `scratch` | `scratch`, `profile`, or `previous` |
+| `base_resume_id` | `uuid\|null` | Only if `source="previous"` | — | UUID of resume to use as base |
 
 **Response — 201 Created:**
 
 ```json
 {
   "id": "a1b2c3d4-...",
+  "mode": "text",
   "source": "scratch",
   "current_step": "contact",
   "status": "active",
@@ -5653,7 +5661,7 @@ Content-Type: application/json
   "target_company": "",
   "target_industry": "",
   "experience_level": "",
-  "resume_data": { "contact": { "name": "", ... }, ... },
+  "resume_data": { "contact": { "name": "", ... }, "experience": [], ... },
   "step_number": 2,
   "total_steps": 11,
   "generated_resume_url": null,
@@ -5664,8 +5672,8 @@ Content-Type: application/json
     {
       "id": "msg-uuid",
       "role": "assistant",
-      "content": "Let's start with your contact information.",
-      "ui_spec": { "type": "editable_card", "fields": [...] },
+      "content": "Hi! I'll help you build your resume from scratch...",
+      "ui_spec": null,
       "extracted_data": null,
       "step": "contact",
       "created_at": "2026-03-01T10:00:00Z"
@@ -5673,6 +5681,12 @@ Content-Type: application/json
   ]
 }
 ```
+
+**Welcome messages by source:**
+
+- **`scratch`** — _"Hi! I'll help you build your resume from scratch. Let's start — what's your full name, email, and phone number?"_
+- **`profile`** — _"Hi John! I pulled this from your profile: Name: John Doe, Email: john@x.com... Does this look correct?"_
+- **`previous`** — _"Hi John! I've loaded data from your resume. Contact: John Doe. Experience: 2 role(s) — Senior Dev @ Acme... Want to update anything?"_
 
 **Error — 400 (session limit):**
 
@@ -5682,7 +5696,95 @@ Content-Type: application/json
 }
 ```
 
-### 29.2 List Sessions
+### 29.2 Send a Message
+
+The core endpoint. User types anything → backend returns AI response + updated resume data.
+
+```
+POST /api/v1/resume-chat/<uuid:id>/message/
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Request body:**
+
+```json
+{
+  "text": "I'm a Senior Backend Developer at Acme Corp since Jan 2022. I built their microservices platform and reduced deploy times by 60%."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `text` | `string` | Yes | User's message (max 5,000 chars) |
+
+**Response — 200 OK:**
+
+```json
+{
+  "user_message": {
+    "id": "user-msg-uuid",
+    "role": "user",
+    "content": "I'm a Senior Backend Developer at Acme Corp since Jan 2022...",
+    "ui_spec": null,
+    "extracted_data": null,
+    "step": "contact",
+    "created_at": "2026-03-01T10:01:00Z"
+  },
+  "assistant_message": {
+    "id": "asst-msg-uuid",
+    "role": "assistant",
+    "content": "Great, I've added your role at Acme Corp! Any other positions, or shall we move on to education?",
+    "ui_spec": null,
+    "extracted_data": {
+      "experience": [
+        {
+          "title": "Senior Backend Developer",
+          "company": "Acme Corp",
+          "start_date": "Jan 2022",
+          "end_date": "Present",
+          "bullets": ["Built microservices platform, reducing deploy times by 60%"]
+        }
+      ]
+    },
+    "step": "experience_input",
+    "created_at": "2026-03-01T10:01:02Z"
+  },
+  "resume_data": {
+    "contact": { "name": "", "email": "", ... },
+    "experience": [ { "title": "Senior Backend Developer", ... } ],
+    "education": [],
+    "skills": { "technical": [], "tools": [], "soft": [] },
+    "certifications": [],
+    "projects": []
+  },
+  "progress": {
+    "sections_with_data": ["experience"],
+    "total_sections": 6,
+    "ready_to_finalize": false,
+    "current_focus": "contact"
+  }
+}
+```
+
+**Key fields in `progress`:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sections_with_data` | `string[]` | Which sections have data: `contact`, `experience`, `education`, `skills`, `certifications`, `projects` |
+| `total_sections` | `int` | Always 6 |
+| `ready_to_finalize` | `bool` | `true` when user says "done" / "finish" / "I'm ready" |
+| `current_focus` | `string` | Which section the AI is currently asking about |
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Message limit reached (50 user messages per session) |
+| 404 | Session not found or not active |
+| 500 | LLM call failed (returns fallback "Sorry, try again" message) |
+
+### 29.3 List Sessions
 
 ```
 GET /api/v1/resume-chat/
@@ -5690,7 +5792,7 @@ GET /api/v1/resume-chat/?status=active
 Authorization: Bearer <token>
 ```
 
-Returns up to 20 sessions, ordered by `updated_at` (newest first). Optional `?status=` filter: `active`, `completed`, `abandoned`.
+Returns up to 20 sessions, newest first. Optional `?status=` filter: `active`, `completed`, `abandoned`.
 
 **Response — 200 OK:**
 
@@ -5698,7 +5800,8 @@ Returns up to 20 sessions, ordered by `updated_at` (newest first). Optional `?st
 [
   {
     "id": "a1b2c3d4-...",
-    "source": "scratch",
+    "mode": "text",
+    "source": "profile",
     "current_step": "skills",
     "status": "active",
     "target_role": "Software Engineer",
@@ -5711,73 +5814,44 @@ Returns up to 20 sessions, ordered by `updated_at` (newest first). Optional `?st
 ]
 ```
 
-### 29.3 Get Session Detail
+### 29.4 Get Session Detail
 
 ```
 GET /api/v1/resume-chat/<uuid:id>/
 Authorization: Bearer <token>
 ```
 
-Returns full session including all messages with their `ui_spec`.
+Returns full session including all messages. Use this to restore chat on page reload.
 
-**Response — 200 OK:** Same shape as the start response (§29.1).
+**Response — 200 OK:** Same shape as start response (§29.1).
 
-### 29.4 Submit Action (Advance Step)
+### 29.5 List Resumes for Base Selection
+
+For `source="previous"` — get the user's resumes to pick from.
 
 ```
-POST /api/v1/resume-chat/<uuid:id>/submit/
+GET /api/v1/resume-chat/resumes/
 Authorization: Bearer <token>
-Content-Type: application/json
 ```
-
-**Request body:**
-
-```json
-{
-  "action": "continue",
-  "payload": {}
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `action` | `string` | Yes | Action identifier — varies per step (see §29.8) |
-| `payload` | `object` | No | Additional data (field values, selections). Default: `{}` |
 
 **Response — 200 OK:**
 
 ```json
 {
-  "messages": [
+  "resumes": [
     {
-      "id": "user-msg-uuid",
-      "role": "user",
-      "content": "Contact info confirmed ✓",
-      "ui_spec": null,
-      "extracted_data": null,
-      "step": "contact",
-      "created_at": "..."
-    },
-    {
-      "id": "assistant-msg-uuid",
-      "role": "assistant",
-      "content": "What role are you targeting?",
-      "ui_spec": { "type": "text_input", ... },
-      "extracted_data": null,
-      "step": "target_role",
-      "created_at": "..."
+      "id": "resume-uuid",
+      "type": "uploaded",
+      "label": "my_resume.pdf",
+      "date": "Feb 15, 2026"
     }
-  ],
-  "current_step": "target_role",
-  "step_number": 3,
-  "total_steps": 11,
-  "status": "active"
+  ]
 }
 ```
 
-**Error — 404:** Session not found or not active (completed/abandoned sessions cannot be submitted to).
+### 29.6 Finalize (Generate PDF/DOCX)
 
-### 29.5 Finalize (Generate PDF/DOCX)
+When `progress.ready_to_finalize` is `true`, the frontend shows a finalize button.
 
 ```
 POST /api/v1/resume-chat/<uuid:id>/finalize/
@@ -5812,19 +5886,16 @@ Content-Type: application/json
 }
 ```
 
-Poll the generated resume status via `GET /api/v1/analyses/<id>/generated-resume/` (same as existing resume generation — the `id` returned here is a `GeneratedResume` UUID).
-
 **Error responses:**
 
 | Status | Condition |
 |--------|-----------|
-| 400 | Invalid template slug (lists available templates) |
-| 400 | `resume_data` is empty or incomplete |
+| 400 | Invalid template or empty resume_data |
 | 402 | Insufficient credits (returns `balance` and `cost`) |
 | 403 | Premium template without premium plan |
 | 404 | Session not found or not active |
 
-### 29.6 Delete Session
+### 29.7 Delete Session
 
 ```
 DELETE /api/v1/resume-chat/<uuid:id>/
@@ -5833,181 +5904,34 @@ Authorization: Bearer <token>
 
 **Response — 204 No Content.**
 
-### 29.7 List Resumes for Base Selection
-
-```
-GET /api/v1/resume-chat/resumes/
-Authorization: Bearer <token>
-```
-
-Returns the user's resumes that can be used as base data when starting a session with `source="previous"`.
-
-**Response — 200 OK:**
-
-```json
-{
-  "resumes": [
-    {
-      "id": "resume-uuid",
-      "filename": "my_resume.pdf",
-      "uploaded_at": "2026-02-15T08:00:00Z"
-    }
-  ]
-}
-```
-
-### 29.8 Wizard Steps & Actions
-
-The chat progresses through these steps in order. Each step has specific actions the frontend should send:
-
-| # | Step | Description | Actions | Payload |
-|---|------|-------------|---------|--------|
-| 1 | `start` | Source selection | — | Auto-advanced by `start_session` |
-| 2 | `contact` | Edit contact info card | `update_card` | `{name, email, phone, location, linkedin, portfolio}` |
-| | | Confirm & proceed | `continue` | `{}` |
-| 3 | `target_role` | Enter target role | `submit` | `{target_role, target_company}` |
-| | | Select experience level | `select_level` | `{value: "mid"}` |
-| | | Select industry | `select_industry` | `{value: "technology"}` |
-| | | Confirm & proceed | `continue` | `{}` |
-| 4 | `experience_input` | Paste experience text | `submit_text` | `{text: "..."}` |
-| | | Skip (no experience) | `skip` | `{}` |
-| 5 | `experience_review` | Edit structured entries | `update_card` | `{index, ...fields}` |
-| | | Confirm & proceed | `continue` | `{}` |
-| 6 | `education` | Add/edit entries | `add_entry` | `{degree, institution, year, ...}` |
-| | | Confirm & proceed | `continue` | `{}` |
-| | | Skip | `skip` | `{}` |
-| 7 | `skills` | Select/add skills | `submit` | `{technical: [], tools: [], soft: []}` |
-| | | Confirm & proceed | `continue` | `{}` |
-| 8 | `certifications` | Add entries | `add_entry` | `{name, issuer, year}` |
-| | | Skip | `skip` | `{}` |
-| 9 | `projects` | Add entries | `add_entry` | `{name, description, technologies, url}` |
-| | | Skip | `skip` | `{}` |
-| 10 | `review` | Preview & polish | `polish` | `{}` (triggers LLM call) |
-| | | Finalize | Use `POST .../finalize/` endpoint |
-| 11 | `done` | Session complete | — | |
-
-**Universal actions** (work on any step):
-- `back` — Go to previous step (payload: `{}`)
-
-### 29.9 UI Spec Types
-
-Each assistant message includes a `ui_spec` JSON object that tells the frontend what component to render. The `type` field determines the component:
-
-| Type | Description | Key Fields |
-|------|-------------|------------|
-| `editable_card` | Pre-filled card with editable fields | `fields: [{key, label, value, type}]`, `actions: [{id, label}]` |
-| `text_input` | Single-line text input | `placeholder`, `key`, `value` |
-| `textarea` | Multi-line text area | `placeholder`, `key`, `value`, `hint` |
-| `buttons` | Action buttons | `options: [{id, label, description?, icon?}]` |
-| `single_select` | Radio-style selection | `options: [{id, label, description?}]`, `value` |
-| `multi_select_chips` | Chip/tag multi-select | `options: [{id, label}]`, `selected: []`, `allow_custom: bool` |
-| `form_group` | Multiple fields in a form | `fields: [{key, label, type, value, required?}]` |
-| `card_list` | List of editable cards | `cards: [{index, title, subtitle, fields}]` |
-| `preview` | Read-only resume preview | `sections: [{title, content}]` |
-| `template_picker` | Template selection grid | Uses template data from `GET /api/v1/templates/` |
-
-**Example `ui_spec` for an editable card (contact step):**
-
-```json
-{
-  "type": "editable_card",
-  "fields": [
-    { "key": "name", "label": "Full Name", "value": "John Doe", "type": "text" },
-    { "key": "email", "label": "Email", "value": "john@example.com", "type": "email" },
-    { "key": "phone", "label": "Phone", "value": "", "type": "tel" },
-    { "key": "location", "label": "Location", "value": "", "type": "text" },
-    { "key": "linkedin", "label": "LinkedIn URL", "value": "", "type": "url" },
-    { "key": "portfolio", "label": "Portfolio URL", "value": "", "type": "url" }
-  ],
-  "actions": [
-    { "id": "update_card", "label": "Save Changes" },
-    { "id": "continue", "label": "Looks Good →" }
-  ]
-}
-```
-
-**Example `ui_spec` for buttons (experience level):**
-
-```json
-{
-  "type": "buttons",
-  "options": [
-    { "id": "entry", "label": "Entry Level", "description": "0-2 years" },
-    { "id": "mid", "label": "Mid Level", "description": "3-5 years" },
-    { "id": "senior", "label": "Senior", "description": "6-10 years" },
-    { "id": "lead", "label": "Lead / Principal", "description": "10+ years" },
-    { "id": "executive", "label": "Executive", "description": "C-level / VP" }
-  ]
-}
-```
-
-### 29.10 TypeScript Types
+### 29.8 TypeScript Types
 
 ```typescript
 type ChatSource = 'scratch' | 'profile' | 'previous';
 type ChatStatus = 'active' | 'completed' | 'abandoned';
-type ChatStep =
-  | 'start' | 'contact' | 'target_role'
-  | 'experience_input' | 'experience_review'
-  | 'education' | 'skills' | 'certifications'
-  | 'projects' | 'review' | 'done';
 type MessageRole = 'user' | 'assistant' | 'system';
-
-type UISpecType =
-  | 'editable_card' | 'text_input' | 'textarea'
-  | 'buttons' | 'single_select' | 'multi_select_chips'
-  | 'form_group' | 'card_list' | 'preview' | 'template_picker';
-
-interface UISpecField {
-  key: string;
-  label: string;
-  value: string;
-  type?: string;       // 'text' | 'email' | 'tel' | 'url' | 'textarea'
-  required?: boolean;
-}
-
-interface UISpecOption {
-  id: string;
-  label: string;
-  description?: string;
-  icon?: string;
-}
-
-interface UISpec {
-  type: UISpecType;
-  fields?: UISpecField[];
-  options?: UISpecOption[];
-  actions?: UISpecOption[];
-  cards?: Array<{ index: number; title: string; subtitle?: string; fields: UISpecField[] }>;
-  sections?: Array<{ title: string; content: any }>;
-  placeholder?: string;
-  key?: string;
-  value?: string;
-  hint?: string;
-  selected?: string[];
-  allow_custom?: boolean;
-}
 
 interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
-  ui_spec: UISpec | null;
-  extracted_data: Record<string, any> | null;
-  step: ChatStep;
+  ui_spec: null;                                // always null in text mode
+  extracted_data: Record<string, any> | null;   // data extracted from this turn
+  step: string;
   created_at: string;
 }
 
 interface ResumeChat {
   id: string;
+  mode: 'text';
   source: ChatSource;
-  current_step: ChatStep;
+  current_step: string;
   status: ChatStatus;
   target_role: string;
   target_company: string;
   target_industry: string;
   experience_level: string;
-  resume_data: Record<string, any>;
+  resume_data: ResumeData;
   step_number: number;
   total_steps: number;
   generated_resume_url: string | null;
@@ -6019,8 +5943,9 @@ interface ResumeChat {
 
 interface ResumeChatListItem {
   id: string;
+  mode: 'text';
   source: ChatSource;
-  current_step: ChatStep;
+  current_step: string;
   status: ChatStatus;
   target_role: string;
   step_number: number;
@@ -6030,12 +5955,28 @@ interface ResumeChatListItem {
   updated_at: string;
 }
 
-interface SubmitResponse {
-  messages: ChatMessage[];
-  current_step: ChatStep;
-  step_number: number;
-  total_steps: number;
-  status: ChatStatus;
+interface ResumeData {
+  contact: { name: string; email: string; phone: string; location: string; linkedin: string; portfolio: string };
+  summary: string;
+  experience: Array<{ title: string; company: string; location: string; start_date: string; end_date: string; bullets: string[] }>;
+  education: Array<{ degree: string; institution: string; location: string; year: string; gpa: string }>;
+  skills: { technical: string[]; tools: string[]; soft: string[] };
+  certifications: Array<{ name: string; issuer: string; year: string }>;
+  projects: Array<{ name: string; description: string; technologies: string[]; url: string }>;
+}
+
+interface ChatProgress {
+  sections_with_data: string[];
+  total_sections: number;
+  ready_to_finalize: boolean;
+  current_focus: string;
+}
+
+interface TextMessageResponse {
+  user_message: ChatMessage;
+  assistant_message: ChatMessage;
+  resume_data: ResumeData;
+  progress: ChatProgress;
 }
 
 interface FinalizeResponse {
@@ -6049,77 +5990,100 @@ interface FinalizeResponse {
 
 interface BaseResume {
   id: string;
-  filename: string;
-  uploaded_at: string;
+  type: string;
+  label: string;
+  date: string;
 }
 ```
 
-### 29.11 Frontend Integration Recipe
+### 29.9 Frontend Integration (Complete)
 
 ```typescript
-// 1. Start a new builder session
+// ── The entire resume builder frontend ──
+
+// 1. Choose how to start
+//    Option A: scratch
 const { data: chat } = await api.post<ResumeChat>('/resume-chat/start/', {
-  source: 'profile',  // pre-fill from user profile
+  source: 'scratch',
 });
 
-// 2. Render the chat UI
-// - Show chat.messages in a chat bubble layout
-// - For each assistant message, render the ui_spec component
-// - Show a progress bar: step_number / total_steps
-
-// 3. When user interacts with a ui_spec component:
-const { data: result } = await api.post<SubmitResponse>(
-  `/resume-chat/${chat.id}/submit/`,
-  {
-    action: 'update_card',
-    payload: { name: 'Jane Smith', email: 'jane@example.com' },
-  }
+//    Option B: from existing resume
+const { data: { resumes } } = await api.get<{ resumes: BaseResume[] }>(
+  '/resume-chat/resumes/'
 );
-// Append result.messages to the chat
-// Update progress: result.step_number / result.total_steps
-
-// 4. Navigate back
-await api.post(`/resume-chat/${chat.id}/submit/`, {
-  action: 'back',
-  payload: {},
+// Show picker → user selects one
+const { data: chat } = await api.post<ResumeChat>('/resume-chat/start/', {
+  source: 'previous',
+  base_resume_id: resumes[0].id,
 });
 
-// 5. Finalize — generate PDF
-const { data: finalized } = await api.post<FinalizeResponse>(
-  `/resume-chat/${chat.id}/finalize/`,
-  { template: 'modern', format: 'pdf' }
-);
-// finalized.id is a GeneratedResume UUID
-// Poll GET /generated-resumes/ or use existing resume download flow
+//    Option C: from profile
+const { data: chat } = await api.post<ResumeChat>('/resume-chat/start/', {
+  source: 'profile',
+});
 
-// 6. Handle errors
-if (response.status === 402) {
-  showInsufficientCreditsModal(response.data.balance, response.data.cost);
+// 2. Chat loop — state
+let messages: ChatMessage[] = chat.messages;
+let resumeData = chat.resume_data;
+let progress: ChatProgress | null = null;
+
+// 3. Send message
+async function sendMessage(text: string) {
+  const { data } = await api.post<TextMessageResponse>(
+    `/resume-chat/${chat.id}/message/`,
+    { text }
+  );
+  messages.push(data.user_message, data.assistant_message);
+  resumeData = data.resume_data;
+  progress = data.progress;
 }
-if (response.status === 403 && response.data.is_premium) {
-  showUpgradeModal('Upgrade for premium templates');
+
+// 4. Render — THIS IS ALL THE FRONTEND NEEDS:
+//
+//   <ChatMessages messages={messages} />
+//   <ProgressBar sections={progress?.sections_with_data} total={6} />
+//   {progress?.ready_to_finalize && <FinalizeButton />}
+//   <TextInput onSubmit={sendMessage} placeholder="Type a message..." />
+
+// 5. Finalize
+async function finalize(template = 'ats_classic', format = 'pdf') {
+  const { data } = await api.post<FinalizeResponse>(
+    `/resume-chat/${chat.id}/finalize/`,
+    { template, format }
+  );
+  // data.id = GeneratedResume UUID → poll for download
+}
+
+// 6. Restore session on page reload
+async function loadSession(chatId: string) {
+  const { data } = await api.get<ResumeChat>(`/resume-chat/${chatId}/`);
+  messages = data.messages;
+  resumeData = data.resume_data;
 }
 ```
 
-### 29.12 Key Implementation Notes
+### 29.10 Key Notes
 
-- **One question at a time** — Each assistant message presents exactly one question or action. The frontend should render the latest `ui_spec` as the active input.
-- **Chat history** — All previous messages are included in `GET /resume-chat/<id>/` for rebuilding the conversation on page reload.
-- **Pre-fill** — `source=profile` pre-fills contact info from the user's name/email. `source=previous` copies all resume sections from a prior resume.
-- **LLM calls** — Only 1-2 LLM calls per session: one in experience structuring (if user pastes free text), one in the review/polish step. All other steps are pure frontend.
-- **Credits** — 2 credits charged on finalize only. If rendering fails, credits are automatically refunded.
-- **Max 5 active sessions** — Users can have at most 5 active (non-completed, non-abandoned) sessions.
-- **`resume_data` schema** — Same as `GeneratedResume.resume_content`: `{contact, summary, experience, education, skills, certifications, projects}`. All template renderers work unchanged.
+- **Frontend = 1 component.** A text input + scrolling message list + optional progress bar. No forms, no `ui_spec` rendering.
+- **LLM per message.** Every user message triggers an LLM call (1-3 sec). Show a typing indicator.
+- **Multi-section extraction.** If the user dumps everything in one message, the AI extracts all of it at once.
+- **50 message limit** per session to prevent abuse.
+- **Session reload.** `GET /resume-chat/<id>/` returns full message history.
+- **`resume_data` schema** is identical to `GeneratedResume.resume_content` — all template renderers work unchanged.
+- **Finalize trigger.** When the user says "done" / "finish" / "I'm ready", `progress.ready_to_finalize` becomes `true`.
+- **Editing.** Users can say "change my email to X" or "remove the second job" — the AI handles it naturally.
+- **Credits.** 2 credits charged on finalize only. If rendering fails, credits are automatically refunded.
+- **Max 5 active sessions** per user.
 
 ---
 
-## 31. Database Table Reference — Job & Company Models
+## 30. Database Table Reference — Job & Company Models
 
 Complete column-level reference for all Job Alert and Company Intelligence tables. All primary keys are UUIDv4 unless noted. Timestamps use ISO 8601 (UTC). Admin-only models (CrawlSource, SentAlert) are included for completeness but have no user-facing API.
 
 ---
 
-### 31.1 `Company`
+### 30.1 `Company`
 
 Top-level brand / parent company (e.g., Google, Stripe). Managed via Django Admin.
 
@@ -6151,7 +6115,7 @@ Top-level brand / parent company (e.g., Google, Stripe). Managed via Django Admi
 
 ---
 
-### 31.2 `CompanyEntity`
+### 30.2 `CompanyEntity`
 
 A legal / operating entity of a Company in a specific country. One Company can have multiple entities (e.g., "Stripe Inc" US + "Stripe India Pvt Ltd" IN).
 
@@ -6183,7 +6147,7 @@ A legal / operating entity of a Company in a specific country. One Company can h
 
 ---
 
-### 31.3 `CompanyCareerPage`
+### 30.3 `CompanyCareerPage`
 
 A career page URL belonging to a CompanyEntity. One entity can have multiple career pages (engineering vs general, region-specific sub-pages).
 
@@ -6209,7 +6173,7 @@ A career page URL belonging to a CompanyEntity. One entity can have multiple car
 
 ---
 
-### 31.4 `CrawlSource` _(admin-only)_
+### 30.4 `CrawlSource` _(admin-only)_
 
 Admin-managed crawl source. Each entry defines a job board or company career page for the daily crawl. No user-facing API.
 
@@ -6231,7 +6195,7 @@ Admin-managed crawl source. Each entry defines a job board or company career pag
 
 ---
 
-### 31.5 `JobSearchProfile`
+### 30.5 `JobSearchProfile`
 
 LLM-extracted job search criteria from a resume. One profile per resume — auto-generated when a job alert is created.
 
@@ -6259,7 +6223,7 @@ LLM-extracted job search criteria from a resume. One profile per resume — auto
 
 ---
 
-### 31.6 `JobAlert`
+### 30.6 `JobAlert`
 
 A user's job alert subscription linked to a specific resume. The system periodically discovers and matches jobs.
 
@@ -6301,7 +6265,7 @@ A user's job alert subscription linked to a specific resume. The system periodic
 
 ---
 
-### 31.7 `DiscoveredJob`
+### 30.7 `DiscoveredJob`
 
 A job posting discovered from an external source (Firecrawl). Global — not per-user. Deduplicated by `(source, external_id)`.
 
@@ -6356,7 +6320,7 @@ A job posting discovered from an external source (Firecrawl). Global — not per
 
 ---
 
-### 31.8 `JobMatch`
+### 30.8 `JobMatch`
 
 Junction between a JobAlert and a DiscoveredJob. Stores the relevance score and user feedback.
 
@@ -6385,7 +6349,7 @@ Junction between a JobAlert and a DiscoveredJob. Stores the relevance score and 
 
 ---
 
-### 31.9 `JobAlertRun`
+### 30.9 `JobAlertRun`
 
 Audit log for each discovery + matching pipeline run. One row per crawl execution per alert.
 
@@ -6411,7 +6375,7 @@ Audit log for each discovery + matching pipeline run. One row per crawl executio
 
 ---
 
-### 31.10 `SentAlert` _(internal)_
+### 30.10 `SentAlert` _(internal)_
 
 Deduplication log — prevents resending the same job to the same user on the same notification channel. No user-facing API.
 
@@ -6429,7 +6393,7 @@ Deduplication log — prevents resending the same job to the same user on the sa
 
 ---
 
-### 31.11 Entity Relationship Diagram
+### 30.11 Entity Relationship Diagram
 
 ```
 Company (1) ──┤ has many ├── CompanyEntity (N)
@@ -6459,7 +6423,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 
 ---
 
-## 30. Quick Reference — All Endpoints
+## 31. Quick Reference — All Endpoints
 
 | Method | URL | Auth | Throttle | Description |
 |--------|-----|------|----------|-------------|

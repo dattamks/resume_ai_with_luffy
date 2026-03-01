@@ -213,7 +213,7 @@ class CrawlSourceAdmin(admin.ModelAdmin):
 
 # ── Phase 12: Notifications & Dedup ──────────────────────────────────────────
 
-from .models import SentAlert, Notification  # noqa: E402
+from .models import SentAlert, Notification, UserCompanyFollow  # noqa: E402
 
 
 @admin.register(SentAlert)
@@ -222,6 +222,16 @@ class SentAlertAdmin(admin.ModelAdmin):
     list_filter = ('channel',)
     search_fields = ('user__username',)
     readonly_fields = ('id', 'sent_at')
+    list_per_page = 50
+
+
+@admin.register(UserCompanyFollow)
+class UserCompanyFollowAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'company', 'relation', 'created_at')
+    list_filter = ('relation',)
+    search_fields = ('user__username', 'company__name')
+    readonly_fields = ('id', 'created_at')
+    raw_id_fields = ('user', 'company')
     list_per_page = 50
 
 

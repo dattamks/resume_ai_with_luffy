@@ -682,3 +682,20 @@ EMAIL_HOST_PASSWORD=<zoho-password>
 DEFAULT_FROM_EMAIL=<zoho-email>
 FRONTEND_URL=https://<frontend>.up.railway.app
 ```
+
+---
+
+## Feed Page (Home) — Backend Tasks
+
+> API endpoints & models needed to power the in-app feed/home page.
+
+- [ ] 🔵 **Personalized Job Opportunities** — `GET /api/v1/feed/jobs/` endpoint returning top matching `DiscoveredJob` records ranked by `JobSearchProfile` embedding similarity; paginated, filterable by remote/location/seniority
+- [ ] 🔵 **Career Insights & Market Intelligence** — `GET /api/v1/feed/insights/` endpoint aggregating trending skills, top hiring companies, avg salary by role/location from `DiscoveredJob` data; cache daily
+- [ ] 🔵 **Trending vs Your Profile** — `GET /api/v1/feed/trending-skills/` endpoint comparing user's `JobSearchProfile.skills` against trending skills from recent `DiscoveredJob.skills_required`; returns matches, gaps, and growth %
+- [ ] 🔵 **Job Alert & Interview Prep Hub** — `GET /api/v1/feed/hub/` composite endpoint returning active `JobAlert` summary + pending `InterviewPrep` + recent `CoverLetter` in one call
+- [ ] 🔵 **Active Job Alerts Summary** — included in hub endpoint; per-alert stats: match count this week, last run status, health indicator (0 matches = suggest broadening)
+- [ ] 🔵 **Upcoming Interview Preps** — included in hub endpoint; list `InterviewPrep` with status=done linked to recent `JobMatch` entries with feedback=applied
+- [ ] 🔵 **Applied Jobs Tracker** — new `JobApplication` model (FK to `DiscoveredJob` + User, status enum: applied/interviewing/offered/rejected/withdrawn, notes, applied_at); `GET/POST /api/v1/applications/`
+- [ ] 🔵 **Personalized Recommendations** — `GET /api/v1/feed/recommendations/` endpoint; AI-suggested next actions based on resume gaps, missing trending skills, unused features (no interview prep yet, etc.)
+- [ ] ⚪ **Referral & Connections** — `ReferralCode` model (user, code, uses, max_uses, bonus_credits); `GET/POST /api/v1/referrals/`; credit reward on referred user's first analysis
+- [ ] ⚪ **Onboarding / Empty States** — `GET /api/v1/feed/onboarding/` endpoint returning user completion checklist (has_resume, has_analysis, has_alert, has_interview_prep, has_cover_letter) + suggested next step
