@@ -1596,7 +1596,7 @@ try {
 
 ### GET `/api/v1/dashboard/stats/` — User Dashboard Analytics
 
-🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail, plus resume generation counts, interview prep, cover letter, chat builder, job alert, LLM usage, credit usage, plan usage, and activity streak data.
 
 **Response (200):**
 ```json
@@ -1605,6 +1605,8 @@ try {
   "active_analyses": 42,
   "deleted_analyses": 5,
   "average_ats_score": 76.3,
+  "best_ats_score": 95,
+  "worst_ats_score": 38,
   "score_trend": [
     {
       "ats_score": 85,
@@ -1657,13 +1659,54 @@ try {
     { "keyword": "docker", "count": 6 },
     { "keyword": "ci/cd", "count": 5 }
   ],
-  "credit_usage": [
-    { "month": "2026-01", "type": "debit", "total": 12 },
-    { "month": "2026-01", "type": "credit", "total": 50 },
-    { "month": "2026-02", "type": "debit", "total": 5 }
+  "keyword_match_trend": [
+    {
+      "jd_role": "Senior Developer",
+      "keyword_match_percent": 72,
+      "created_at": "2026-02-23T14:00:00Z"
+    },
+    {
+      "jd_role": "Backend Engineer",
+      "keyword_match_percent": 58,
+      "created_at": "2026-02-22T10:00:00Z"
+    }
   ],
+  "credit_usage": [
+    { "month": "2026-01", "type": "debit", "subtype": "analysis", "count": 12, "total": 12 },
+    { "month": "2026-01", "type": "credit", "subtype": "plan", "count": 1, "total": 50 },
+    { "month": "2026-02", "type": "debit", "subtype": "analysis", "count": 5, "total": 5 },
+    { "month": "2026-02", "type": "credit", "subtype": "topup", "count": 1, "total": 20 }
+  ],
+  "resume_count": 3,
+  "generated_resumes_total": 18,
+  "generated_resumes_done": 15,
+  "interview_preps_total": 6,
+  "interview_preps_done": 5,
+  "cover_letters_total": 8,
+  "cover_letters_done": 7,
+  "chat_sessions_active": 1,
+  "chat_sessions_completed": 4,
+  "job_alerts_count": 3,
+  "active_job_alerts": 2,
   "weekly_job_matches": 14,
-  "industry_benchmark_percentile": 72.5
+  "total_job_matches": 87,
+  "matches_applied": 5,
+  "matches_relevant": 22,
+  "matches_irrelevant": 8,
+  "llm_calls": 142,
+  "llm_tokens_used": 1843200,
+  "llm_cost_usd": 3.24,
+  "plan_usage": {
+    "plan_name": "Pro",
+    "analyses_this_month": 7,
+    "analyses_limit": 30,
+    "usage_percent": 23.3
+  },
+  "industry_benchmark_percentile": 72.5,
+  "activity_streak": {
+    "streak_days": 5,
+    "actions_this_month": 23
+  }
 }
 ```
 
@@ -1674,16 +1717,39 @@ try {
 | `total_analyses`     | int            | All analyses ever created (including soft-deleted)           |
 | `active_analyses`    | int            | Non-deleted analyses                                        |
 | `deleted_analyses`   | int            | Soft-deleted analyses                                       |
-| `average_ats_score`  | float \| null  | Average ATS score across all **completed** analyses; `null` if no completed analyses |
+| `average_ats_score`  | float \| null  | Average ATS score across all **completed** analyses; `null` if none |
+| `best_ats_score`     | int \| null    | Highest ATS score across all completed analyses              |
+| `worst_ats_score`    | int \| null    | Lowest ATS score across all completed analyses               |
 | `score_trend`        | array          | Last **10** completed analyses with score, role, and date (newest first) |
 | `grade_distribution` | object         | Count of completed analyses per overall grade (e.g., `{"A": 5, "B": 18}`) |
 | `top_roles`          | array          | Top **5** most-analyzed job roles with count                 |
 | `top_industries`     | array          | Top **5** most-analyzed industries with count                |
 | `analyses_per_month` | array          | Monthly analysis count for the last **6 months** (oldest first) |
 | `top_missing_keywords` | array        | Top **10** missing keywords across the user's last 20 analyses (descending by count) |
-| `credit_usage`       | array          | Wallet transactions grouped by month and type (`debit`/`credit`), each with `{month, type, total}` |
-| `weekly_job_matches` | int            | Count of job matches created in the last 7 days |
+| `keyword_match_trend` | array         | Keyword match % from last 10 completed analyses (newest first, parallel to `score_trend`) |
+| `credit_usage`       | array          | Wallet transactions grouped by month and transaction type, each with `{month, type, subtype, count, total}` |
+| `resume_count`       | int            | Total uploaded resumes                                       |
+| `generated_resumes_total` | int       | Total generated resume jobs                                  |
+| `generated_resumes_done`  | int       | Completed generated resumes                                  |
+| `interview_preps_total` | int         | Total interview prep jobs                                    |
+| `interview_preps_done`  | int         | Completed interview preps                                    |
+| `cover_letters_total` | int           | Total cover letter jobs                                      |
+| `cover_letters_done`  | int           | Completed cover letters                                      |
+| `chat_sessions_active` | int          | Active resume chat builder sessions                          |
+| `chat_sessions_completed` | int       | Completed resume chat builder sessions                       |
+| `job_alerts_count`   | int            | Total job alerts created                                     |
+| `active_job_alerts`  | int            | Currently active job alerts                                  |
+| `weekly_job_matches` | int            | Job matches created in the last 7 days                       |
+| `total_job_matches`  | int            | All-time job matches across all alerts                       |
+| `matches_applied`    | int            | Job matches user marked as "applied"                         |
+| `matches_relevant`   | int            | Job matches user marked as "relevant"                        |
+| `matches_irrelevant` | int            | Job matches user marked as "irrelevant"                      |
+| `llm_calls`          | int            | Total completed LLM API calls                                |
+| `llm_tokens_used`    | int            | Total tokens consumed across all LLM calls                   |
+| `llm_cost_usd`       | float          | Estimated total LLM cost in USD                              |
+| `plan_usage`         | object \| null | Current plan usage breakdown; `null` if no plan or unlimited  |
 | `industry_benchmark_percentile` | float \| null | User's ATS score percentile rank vs all platform users (0–100); `null` if no completed analyses |
+| `activity_streak`    | object         | User's daily activity streak and current-month action count   |
 
 **`score_trend` item:**
 
@@ -1696,6 +1762,42 @@ try {
 | `keyword_match_percent` | int \| null | Keyword match percentage from `scores` JSON |
 | `jd_role`        | string       | Job role analyzed                             |
 | `created_at`     | datetime     | When analysis was submitted                   |
+
+**`keyword_match_trend` item:**
+
+| Field                  | Type     | Description                                   |
+|------------------------|----------|-----------------------------------------------|
+| `jd_role`              | string   | Job role analyzed                             |
+| `keyword_match_percent`| int      | Keyword match percentage (0-100)              |
+| `created_at`           | datetime | When analysis was submitted                   |
+
+**`credit_usage` item (v0.29.0 — fixed data contract):**
+
+| Field     | Type   | Description                                                        |
+|-----------|--------|--------------------------------------------------------------------|
+| `month`   | string | Month in `"YYYY-MM"` format (e.g., `"2026-01"`)                   |
+| `type`    | string | `"debit"` or `"credit"` — direction of the transaction             |
+| `subtype` | string | Specific kind: `"analysis"`, `"topup"`, `"plan"`, `"refund"`, `"upgrade_bonus"`, `"admin"` |
+| `count`   | int    | Number of transactions in this group                               |
+| `total`   | int    | Absolute sum of amounts (always positive)                          |
+
+> **⚠ Breaking change (v0.29.0):** `credit_usage` items now include `subtype` and `count` fields. The `type` field maps from raw `transaction_type` (e.g., `analysis_debit` → `"debit"`, `topup` → `"credit"`). See migration notes below.
+
+**`plan_usage` object:**
+
+| Field               | Type   | Description                                    |
+|----------------------|--------|------------------------------------------------|
+| `plan_name`          | string | Name of the user's current plan                |
+| `analyses_this_month`| int    | Analyses submitted this calendar month          |
+| `analyses_limit`     | int    | Monthly analysis limit from plan                |
+| `usage_percent`      | float  | `(analyses_this_month / analyses_limit) * 100`  |
+
+**`activity_streak` object:**
+
+| Field              | Type | Description                                           |
+|--------------------|------|-------------------------------------------------------|
+| `streak_days`      | int  | Consecutive days with at least one recorded action     |
+| `actions_this_month` | int | Total actions recorded in the current calendar month |
 
 **`top_roles` / `top_industries` item:**
 
@@ -1713,13 +1815,20 @@ try {
 
 **Frontend usage suggestions:**
 
-| Data Field          | UI Component          | Library Suggestion     |
-|--------------------|-----------------------|------------------------|
-| `total/active/deleted` | Summary stat cards | Simple `<div>` cards   |
-| `average_ats_score`    | Large gauge/number | `ScoreGauge` component |
-| `score_trend`          | Line chart          | Chart.js, Recharts     |
-| `top_roles`            | Horizontal bar chart | Chart.js, Recharts     |
-| `analyses_per_month`   | Bar/area chart       | Chart.js, Recharts     |
+| Data Field               | UI Component             | Library Suggestion     |
+|--------------------------|--------------------------|------------------------|
+| `total/active/deleted`   | Summary stat cards       | Simple `<div>` cards   |
+| `average_ats_score`      | Large gauge/number       | `ScoreGauge` component |
+| `best/worst_ats_score`   | Min/max badges           | Simple `<span>` badges |
+| `score_trend`            | Line chart               | Chart.js, Recharts     |
+| `keyword_match_trend`    | Line chart (overlay)     | Chart.js, Recharts     |
+| `top_roles`              | Horizontal bar chart     | Chart.js, Recharts     |
+| `analyses_per_month`     | Bar/area chart           | Chart.js, Recharts     |
+| `credit_usage`           | Stacked bar (by subtype) | Chart.js, Recharts     |
+| `plan_usage`             | Progress bar / ring      | Custom component       |
+| `activity_streak`        | Streak counter + fire 🔥 | Custom component       |
+| `llm_calls/tokens/cost`  | Stats row                | Simple `<div>` cards   |
+| Job match counters       | Summary cards / pie      | Chart.js, Recharts     |
 
 ---
 
@@ -3110,14 +3219,90 @@ interface MonthlyCountItem {
   count: number;
 }
 
+interface CreditUsageItem {
+  month: string;            // "YYYY-MM"
+  type: 'debit' | 'credit';
+  subtype: 'analysis' | 'topup' | 'plan' | 'refund' | 'upgrade_bonus' | 'admin';
+  count: number;
+  total: number;            // absolute sum (always positive)
+}
+
+interface KeywordMatchTrendItem {
+  jd_role: string;
+  keyword_match_percent: number;
+  created_at: string;
+}
+
+interface PlanUsage {
+  plan_name: string;
+  analyses_this_month: number;
+  analyses_limit: number;
+  usage_percent: number;
+}
+
+interface ActivityStreak {
+  streak_days: number;
+  actions_this_month: number;
+}
+
 interface DashboardStats {
+  // Analyses
   total_analyses: number;
   active_analyses: number;
   deleted_analyses: number;
   average_ats_score: number | null;
+  best_ats_score: number | null;
+  worst_ats_score: number | null;
   score_trend: ScoreTrendItem[];
+  grade_distribution: Record<string, number>;
   top_roles: TopRoleItem[];
+  top_industries: { jd_industry: string; count: number }[];
   analyses_per_month: MonthlyCountItem[];
+  top_missing_keywords: { keyword: string; count: number }[];
+  keyword_match_trend: KeywordMatchTrendItem[];
+
+  // Credits
+  credit_usage: CreditUsageItem[];
+
+  // Resumes
+  resume_count: number;
+
+  // Generated resumes
+  generated_resumes_total: number;
+  generated_resumes_done: number;
+
+  // Interview preps
+  interview_preps_total: number;
+  interview_preps_done: number;
+
+  // Cover letters
+  cover_letters_total: number;
+  cover_letters_done: number;
+
+  // Chat builder
+  chat_sessions_active: number;
+  chat_sessions_completed: number;
+
+  // Job alerts
+  job_alerts_count: number;
+  active_job_alerts: number;
+  weekly_job_matches: number;
+  total_job_matches: number;
+  matches_applied: number;
+  matches_relevant: number;
+  matches_irrelevant: number;
+
+  // LLM usage
+  llm_calls: number;
+  llm_tokens_used: number;
+  llm_cost_usd: number;
+
+  // Plan & benchmark
+  plan_usage: PlanUsage | null;
+  industry_benchmark_percentile: number | null;
+
+  // Activity
+  activity_streak: ActivityStreak;
 }
 ```
 
@@ -6104,6 +6289,22 @@ if (response.status === 403 && response.data.is_premium) {
 - **ContactSubmission model**: `name`, `email`, `subject`, `message`, `created_at` — viewable in Django Admin (read-only)
 - **Auto-sync plans to Razorpay**: New paid plans are automatically synced via `post_save` signal. Admin also shows sync feedback on save. Existing "Sync with Razorpay" action available as manual fallback.
 - **PostgreSQL fix**: Migration 0014 sets server-side `DEFAULT ''` on `razorpay_plan_id` column to prevent `IntegrityError` when creating plans via Admin
+
+### v0.29.0 — Dashboard Stats Expansion & Activity Tracking
+
+#### ⚠ Breaking Changes
+- **`credit_usage` data contract fixed**: Items now include `subtype` and `count` fields. `type` maps from raw `transaction_type` to `"debit"`/`"credit"`. `total` is now the absolute sum of amounts (always positive). Old format: `{month, type, total}`. New format: `{month, type, subtype, count, total}`.
+
+#### Features
+- **25+ new dashboard stats fields**: `best_ats_score`, `worst_ats_score`, `keyword_match_trend`, `resume_count`, `generated_resumes_total/done`, `interview_preps_total/done`, `cover_letters_total/done`, `chat_sessions_active/completed`, `job_alerts_count`, `active_job_alerts`, `total_job_matches`, `matches_applied/relevant/irrelevant`, `llm_calls`, `llm_tokens_used`, `llm_cost_usd`, `plan_usage`, `activity_streak`.
+- **`UserActivity` model**: Tracks daily user actions (analysis, resume gen, interview prep, cover letter, job alert run, builder finalize, login). Powers the `activity_streak` field in dashboard stats.
+- **Activity streak**: `streak_days` (consecutive days with ≥1 action) and `actions_this_month` (total actions in current calendar month).
+- **Plan usage breakdown**: `plan_usage` object with `plan_name`, `analyses_this_month`, `analyses_limit`, `usage_percent`.
+- **LLM usage stats**: `llm_calls`, `llm_tokens_used`, `llm_cost_usd` aggregated from `LLMResponse` model.
+
+#### TypeScript Changes
+- `DashboardStats` interface expanded from 7 fields to 35+ fields.
+- New interfaces: `CreditUsageItem`, `KeywordMatchTrendItem`, `PlanUsage`, `ActivityStreak`.
 
 ### v0.28.0 — Company Intelligence & Enriched Job Crawl
 

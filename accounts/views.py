@@ -234,6 +234,21 @@ class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
     throttle_classes = [AuthEndpointThrottle]
 
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            try:
+                from analyzer.models import UserActivity
+                # Serializer validates credentials; extract user from the token
+                from rest_framework_simplejwt.tokens import AccessToken
+                token = AccessToken(response.data['access'])
+                from django.contrib.auth.models import User
+                user = User.objects.get(id=token['user_id'])
+                UserActivity.record(user, UserActivity.ACTION_LOGIN)
+            except Exception:
+                pass  # Non-critical — don't block login
+        return response
+
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
@@ -755,6 +770,13 @@ class GoogleLoginView(APIView):
             refresh = RefreshToken.for_user(user)
             logger.info('Google login: existing user=%s synced_fields=%s',
                         user.username, profile_updates + user_updates or 'none')
+
+            try:
+                from analyzer.models import UserActivity
+                UserActivity.record(user, UserActivity.ACTION_LOGIN)
+            except Exception:
+                pass
+
             return Response({
                 'user': UserSerializer(user).data,
                 'refresh': str(refresh),

@@ -1676,3 +1676,119 @@ class ResumeChatMessage(models.Model):
     def __str__(self):
         preview = self.content[:50] if self.content else '(no text)'
         return f"[{self.role}] {preview}"
+
+
+class UserActivity(models.Model):
+    """
+    Tracks one row per user per calendar day.
+    Used to compute activity streaks and monthly action counts
+    for the dashboard Activity Streak widget.
+
+    A new row is upserted via ``UserActivity.record(user, action)``
+    whenever the user performs a trackable action (analysis, resume gen,
+    interview prep, cover letter, job alert run, builder finalize, login).
+    """
+    ACTION_ANALYSIS = 'analysis'
+    ACTION_RESUME_GEN = 'resume_gen'
+    ACTION_INTERVIEW_PREP = 'interview_prep'
+    ACTION_COVER_LETTER = 'cover_letter'
+    ACTION_JOB_ALERT_RUN = 'job_alert_run'
+    ACTION_BUILDER_FINALIZE = 'builder_finalize'
+    ACTION_LOGIN = 'login'
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='activities')
+    date = models.DateField(
+        help_text='Calendar date (UTC) of the activity.',
+    )
+    action_count = models.PositiveIntegerField(
+        default=1,
+        help_text='Total actions performed on this date.',
+    )
+    actions = models.JSONField(
+        default=dict,
+        help_text='Breakdown by action type, e.g. {"analysis": 2, "login": 1}.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('user', 'date')]
+        ordering = ['-date']
+        verbose_name = 'User Activity'
+        verbose_name_plural = 'User Activities'
+        indexes = [
+            models.Index(fields=['user', '-date']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} — {self.date} ({self.action_count} actions)"
+
+    @classmethod
+    def record(cls, user, action: str):
+        """
+        Upsert today's activity row for the user.
+        Increments global ``action_count`` and per-action counters.
+        Thread-safe via ``update_or_create`` + F-expressions.
+        """
+        from django.db.models import F
+        today = timezone.now().date()
+
+        obj, created = cls.objects.get_or_create(
+            user=user,
+            date=today,
+            defaults={'action_count': 1, 'actions': {action: 1}},
+        )
+        if not created:
+            obj.action_count = F('action_count') + 1
+            obj.save(update_fields=['action_count', 'updated_at'])
+            # Refresh to get actual value, then update actions dict
+            obj.refresh_from_db()
+            actions = obj.actions or {}
+            actions[action] = actions.get(action, 0) + 1
+            obj.actions = actions
+            obj.save(update_fields=['actions'])
+
+    @classmethod
+    def get_streak(cls, user):
+        """
+        Returns ``(streak_days, actions_this_month)`` for the user.
+
+        streak_days: consecutive calendar days of activity ending today
+                     (or yesterday if no activity yet today).
+        actions_this_month: total action_count in the current calendar month.
+        """
+        today = timezone.now().date()
+        first_of_month = today.replace(day=1)
+
+        # Monthly total
+        from django.db.models import Sum as _Sum
+        monthly = cls.objects.filter(
+            user=user,
+            date__gte=first_of_month,
+        ).aggregate(total=_Sum('action_count'))['total'] or 0
+
+        # Streak — walk backwards from today
+        dates = list(
+            cls.objects.filter(user=user, date__lte=today)
+            .order_by('-date')
+            .values_list('date', flat=True)[:90]
+        )
+        if not dates:
+            return 0, monthly
+
+        streak = 0
+        expected = today
+        # If no activity today, start counting from yesterday
+        if dates[0] != today:
+            expected = today - timezone.timedelta(days=1)
+            if not dates or dates[0] != expected:
+                return 0, monthly
+
+        for d in dates:
+            if d == expected:
+                streak += 1
+                expected -= timezone.timedelta(days=1)
+            else:
+                break
+
+        return streak, monthly

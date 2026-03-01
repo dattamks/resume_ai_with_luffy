@@ -314,3 +314,17 @@ class ResumeChatMessageAdmin(admin.ModelAdmin):
     def chat_short(self, obj):
         return str(obj.chat_id)[:8]
 
+
+# ── Phase 18: User Activity ─────────────────────────────────────────────────
+from .models import UserActivity  # noqa: E402
+
+
+@admin.register(UserActivity)
+class UserActivityAdmin(admin.ModelAdmin):
+    list_display = ('user', 'date', 'action_count', 'actions', 'updated_at')
+    list_filter = ('date',)
+    search_fields = ('user__username', 'user__email')
+    readonly_fields = ('user', 'date', 'action_count', 'actions', 'created_at', 'updated_at')
+    list_per_page = 50
+    ordering = ('-date',)
+

@@ -2,6 +2,7 @@ import logging
 import uuid
 
 from django.core.cache import cache
+from django.db import models
 from django.db.models import Avg, Count, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
@@ -152,6 +153,10 @@ class AnalyzeResumeView(APIView):
             run_analysis_task.delay(analysis.id, request.user.id)
 
             logger.info('Celery task dispatched for analysis id=%s', analysis.id)
+
+            # Track activity for streak
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_ANALYSIS)
 
             # Build response — include duplicate resume warning if applicable
             response_data = {
@@ -503,6 +508,8 @@ class DashboardStatsView(APIView):
     """
     GET /api/v1/dashboard/stats/
     User-level analytics computed from all analyses (including soft-deleted).
+    Enriched with data from resumes, generations, job alerts, interview preps,
+    cover letters, chat sessions, credit usage, and activity streak.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -516,7 +523,11 @@ class DashboardStatsView(APIView):
         if cached:
             return Response(cached)
 
-        # Use all_objects to include soft-deleted rows for analytics
+        from accounts.models import WalletTransaction
+        from .models import UserActivity, ResumeChat, LLMResponse
+        from collections import Counter
+
+        # ───── Analyses ─────────────────────────────────────────────────
         all_qs = ResumeAnalysis.all_objects.filter(user=user)
         active_qs = all_qs.filter(deleted_at__isnull=True)
 
@@ -524,18 +535,20 @@ class DashboardStatsView(APIView):
         active = active_qs.count()
         deleted = total - active
 
-        # Average ATS score (all time, only completed analyses)
-        avg_ats = all_qs.filter(
-            status=ResumeAnalysis.STATUS_DONE,
-            ats_score__isnull=False,
-        ).aggregate(avg=Avg('ats_score'))['avg']
-
-        # Score trend — last 10 completed analyses (newest first)
-        # Includes per-ATS breakdown (generic, workday, greenhouse)
         done_qs = all_qs.filter(
             status=ResumeAnalysis.STATUS_DONE,
             ats_score__isnull=False,
         )
+
+        avg_ats = done_qs.aggregate(avg=Avg('ats_score'))['avg']
+
+        # Best & worst scores
+        score_extremes = done_qs.aggregate(
+            best=models.Max('ats_score'),
+            worst=models.Min('ats_score'),
+        )
+
+        # Score trend — last 10 completed analyses (newest first)
         score_trend_raw = list(
             done_qs.order_by('-created_at')[:10]
             .values('ats_score', 'scores', 'jd_role', 'created_at')
@@ -554,7 +567,7 @@ class DashboardStatsView(APIView):
             item['keyword_match_percent'] = scores.get('keyword_match_percent')
             score_trend.append(item)
 
-        # Grade distribution (count per overall_grade)
+        # Grade distribution
         grade_distribution = {
             item['overall_grade']: item['count']
             for item in done_qs
@@ -564,7 +577,7 @@ class DashboardStatsView(APIView):
             .order_by('-count')
         }
 
-        # Top roles analyzed (all time)
+        # Top roles (all time, top 5)
         top_roles = list(
             all_qs.filter(jd_role__gt='')
             .values('jd_role')
@@ -572,7 +585,7 @@ class DashboardStatsView(APIView):
             .order_by('-count')[:5]
         )
 
-        # Top industries analyzed (all time)
+        # Top industries (all time, top 5)
         top_industries = list(
             all_qs.filter(jd_industry__gt='')
             .values('jd_industry')
@@ -590,8 +603,7 @@ class DashboardStatsView(APIView):
             .order_by('month')
         )
 
-        # ── Top missing keywords (aggregated across recent analyses) ──
-        from collections import Counter
+        # Top missing keywords (from last 20 done analyses)
         recent_done = done_qs.order_by('-created_at')[:20]
         keyword_counter = Counter()
         for analysis in recent_done:
@@ -604,32 +616,136 @@ class DashboardStatsView(APIView):
             for kw, cnt in keyword_counter.most_common(10)
         ]
 
-        # ── Credit usage per month (last 6 months) ──
-        from accounts.models import WalletTransaction
-        credit_usage = list(
+        # Keyword match trend (last 10, newest first — parallel to score_trend)
+        keyword_match_trend = []
+        for entry in score_trend_raw:
+            scores = entry.get('scores') or {}
+            km = scores.get('keyword_match_percent')
+            if km is not None:
+                keyword_match_trend.append({
+                    'jd_role': entry['jd_role'],
+                    'keyword_match_percent': km,
+                    'created_at': entry['created_at'],
+                })
+
+        # ───── Credit usage (FIXED data contract) ──────────────────────
+        # Map transaction_type → (type, subtype) for frontend
+        TYPE_MAP = {
+            'analysis_debit': ('debit', 'analysis'),
+            'topup':          ('credit', 'topup'),
+            'plan_credit':    ('credit', 'plan'),
+            'refund':         ('credit', 'refund'),
+            'upgrade_bonus':  ('credit', 'upgrade_bonus'),
+            'admin_adjustment': ('credit', 'admin'),
+        }
+        credit_usage_raw = list(
             WalletTransaction.objects.filter(
                 wallet__user=user,
-                transaction_type__in=['analysis_debit', 'topup', 'plan_credit', 'refund'],
                 created_at__gte=six_months_ago,
             )
             .annotate(month=TruncMonth('created_at'))
             .values('month', 'transaction_type')
-            .annotate(total=Count('id'), amount_sum=Sum('amount'))
+            .annotate(
+                count=Count('id'),
+                amount_sum=Sum('amount'),
+            )
             .order_by('month')
         )
+        credit_usage = []
+        for row in credit_usage_raw:
+            tt = row['transaction_type']
+            type_label, subtype = TYPE_MAP.get(tt, ('debit', tt))
+            credit_usage.append({
+                'month': row['month'].strftime('%Y-%m') if row['month'] else None,
+                'type': type_label,
+                'subtype': subtype,
+                'count': row['count'],
+                'total': abs(row['amount_sum'] or 0),
+            })
 
-        # ── Weekly job match count ──
+        # ───── Resume counts ───────────────────────────────────────────
+        resume_count = Resume.objects.filter(user=user).count()
+
+        # ───── Generated resumes ───────────────────────────────────────
+        gen_total = GeneratedResume.objects.filter(user=user).count()
+        gen_done = GeneratedResume.objects.filter(
+            user=user, status=GeneratedResume.STATUS_DONE,
+        ).count()
+
+        # ───── Interview preps ─────────────────────────────────────────
+        prep_total = InterviewPrep.objects.filter(user=user).count()
+        prep_done = InterviewPrep.objects.filter(
+            user=user, status=InterviewPrep.STATUS_DONE,
+        ).count()
+
+        # ───── Cover letters ──────────────────────────────────────────
+        cl_total = CoverLetter.objects.filter(user=user).count()
+        cl_done = CoverLetter.objects.filter(
+            user=user, status=CoverLetter.STATUS_DONE,
+        ).count()
+
+        # ───── Resume chat sessions ───────────────────────────────────
+        chat_active = ResumeChat.objects.filter(
+            user=user, status=ResumeChat.STATUS_ACTIVE,
+        ).count()
+        chat_completed = ResumeChat.objects.filter(
+            user=user, status=ResumeChat.STATUS_COMPLETED,
+        ).count()
+
+        # ───── Job alerts ─────────────────────────────────────────────
         seven_days_ago = timezone.now() - timezone.timedelta(days=7)
+        alert_count = JobAlert.objects.filter(user=user).count()
+        active_alerts = JobAlert.objects.filter(user=user, is_active=True).count()
         weekly_job_matches = JobMatch.objects.filter(
             job_alert__user=user,
             created_at__gte=seven_days_ago,
         ).count()
+        total_matches = JobMatch.objects.filter(job_alert__user=user).count()
+        matches_applied = JobMatch.objects.filter(
+            job_alert__user=user, user_feedback='applied',
+        ).count()
+        matches_relevant = JobMatch.objects.filter(
+            job_alert__user=user, user_feedback='relevant',
+        ).count()
+        matches_irrelevant = JobMatch.objects.filter(
+            job_alert__user=user, user_feedback='irrelevant',
+        ).count()
 
-        # ── Industry benchmark (percentile rank among all users) ──
+        # ───── LLM usage (token + cost totals) ────────────────────────
+        llm_agg = LLMResponse.objects.filter(
+            user=user, status=LLMResponse.STATUS_DONE,
+        ).aggregate(
+            total_tokens=Sum('total_tokens'),
+            total_cost=Sum('estimated_cost_usd'),
+            call_count=Count('id'),
+        )
+
+        # ───── Plan usage ─────────────────────────────────────────────
+        plan_usage = None
+        try:
+            profile = user.profile
+            plan = profile.plan
+            if plan and plan.analyses_per_month > 0:
+                start_of_month = timezone.now().replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0,
+                )
+                analyses_this_month = all_qs.filter(
+                    created_at__gte=start_of_month,
+                ).count()
+                plan_usage = {
+                    'plan_name': plan.name,
+                    'analyses_this_month': analyses_this_month,
+                    'analyses_limit': plan.analyses_per_month,
+                    'usage_percent': round(
+                        (analyses_this_month / plan.analyses_per_month) * 100, 1,
+                    ),
+                }
+        except Exception:
+            pass
+
+        # ───── Industry benchmark (percentile rank) ───────────────────
         industry_benchmark = None
         if avg_ats is not None:
-            # Count how many users have a lower average ATS score
-            from django.db.models import Subquery, OuterRef
             all_user_avgs = (
                 ResumeAnalysis.all_objects
                 .filter(status=ResumeAnalysis.STATUS_DONE, ats_score__isnull=False)
@@ -643,22 +759,75 @@ class DashboardStatsView(APIView):
                 )
                 industry_benchmark = round((users_below / total_users) * 100)
             else:
-                industry_benchmark = 50  # Only user — default to 50th percentile
+                industry_benchmark = 50
 
+        # ───── Activity streak ────────────────────────────────────────
+        streak_days, actions_this_month = UserActivity.get_streak(user)
+
+        # ───── Assemble response ──────────────────────────────────────
         data = {
+            # Analyses
             'total_analyses': total,
             'active_analyses': active,
             'deleted_analyses': deleted,
             'average_ats_score': round(avg_ats, 1) if avg_ats is not None else None,
-            'industry_benchmark_percentile': industry_benchmark,
+            'best_ats_score': score_extremes['best'],
+            'worst_ats_score': score_extremes['worst'],
             'score_trend': score_trend,
             'grade_distribution': grade_distribution,
             'top_roles': top_roles,
             'top_industries': top_industries,
             'analyses_per_month': monthly,
             'top_missing_keywords': top_missing_keywords,
+            'keyword_match_trend': keyword_match_trend,
+
+            # Credits (fixed type/subtype contract)
             'credit_usage': credit_usage,
+
+            # Resumes
+            'resume_count': resume_count,
+
+            # Generated resumes
+            'generated_resumes_total': gen_total,
+            'generated_resumes_done': gen_done,
+
+            # Interview preps
+            'interview_preps_total': prep_total,
+            'interview_preps_done': prep_done,
+
+            # Cover letters
+            'cover_letters_total': cl_total,
+            'cover_letters_done': cl_done,
+
+            # Chat builder
+            'chat_sessions_active': chat_active,
+            'chat_sessions_completed': chat_completed,
+
+            # Job alerts
+            'job_alerts_count': alert_count,
+            'active_job_alerts': active_alerts,
             'weekly_job_matches': weekly_job_matches,
+            'total_job_matches': total_matches,
+            'matches_applied': matches_applied,
+            'matches_relevant': matches_relevant,
+            'matches_irrelevant': matches_irrelevant,
+
+            # LLM usage
+            'llm_calls': llm_agg['call_count'] or 0,
+            'llm_tokens_used': llm_agg['total_tokens'] or 0,
+            'llm_cost_usd': float(llm_agg['total_cost'] or 0),
+
+            # Plan usage
+            'plan_usage': plan_usage,
+
+            # Benchmark
+            'industry_benchmark_percentile': industry_benchmark,
+
+            # Activity streak
+            'activity_streak': {
+                'streak_days': streak_days,
+                'actions_this_month': actions_this_month,
+            },
         }
 
         cache.set(cache_key, data, timeout=300)  # 5-minute TTL
@@ -837,6 +1006,9 @@ class GenerateResumeView(APIView):
                 'Resume generation dispatched: gen_id=%s analysis_id=%s template=%s format=%s',
                 gen.id, analysis.id, template, fmt,
             )
+
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_RESUME_GEN)
 
             return Response(
                 {
@@ -1150,6 +1322,9 @@ class JobAlertManualRunView(APIView):
         crawl_jobs_for_alert_task.delay(str(alert.id))
 
         logger.info('Manual job alert run triggered: alert=%s user=%s', alert.id, request.user.id)
+
+        from .models import UserActivity
+        UserActivity.record(request.user, UserActivity.ACTION_JOB_ALERT_RUN)
 
         return Response(
             {
@@ -1900,6 +2075,9 @@ class InterviewPrepView(APIView):
 
         generate_interview_prep_task.delay(str(prep.id), request.user.id)
 
+        from .models import UserActivity
+        UserActivity.record(request.user, UserActivity.ACTION_INTERVIEW_PREP)
+
         return Response({
             'id': str(prep.id),
             'status': prep.status,
@@ -2028,6 +2206,9 @@ class CoverLetterView(APIView):
         )
 
         generate_cover_letter_task.delay(str(cover_letter.id), request.user.id)
+
+        from .models import UserActivity
+        UserActivity.record(request.user, UserActivity.ACTION_COVER_LETTER)
 
         return Response({
             'id': str(cover_letter.id),

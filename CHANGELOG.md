@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.29.0] — 2026-03-02
+
+### ⚠ Breaking Changes
+- **`credit_usage` data contract fixed** — Dashboard stats `credit_usage` items now use `{month, type, subtype, count, total}` format instead of `{month, type, total}`. The `type` field maps from raw `transaction_type` to `"debit"`/`"credit"`. New `subtype` field indicates the specific kind (`"analysis"`, `"topup"`, `"plan"`, `"refund"`, `"upgrade_bonus"`, `"admin"`). `total` is now the absolute sum of amounts (always positive).
+
+### Features — Dashboard Stats Expansion & Activity Tracking
+
+#### Added — `UserActivity` Model (`analyzer/models.py`)
+- Tracks daily user actions with `user`, `date`, `action_count`, and `actions` (JSON breakdown by action type).
+- Seven action constants: `ACTION_ANALYSIS`, `ACTION_RESUME_GEN`, `ACTION_INTERVIEW_PREP`, `ACTION_COVER_LETTER`, `ACTION_JOB_ALERT_RUN`, `ACTION_BUILDER_FINALIZE`, `ACTION_LOGIN`.
+- `record(cls, user, action)` classmethod — thread-safe upsert using `F()` expressions.
+- `get_streak(cls, user)` classmethod — returns `(streak_days, actions_this_month)` by walking backwards through consecutive dates.
+- Unique constraint on `(user, date)`.
+
+#### Changed — `DashboardStatsView` Expanded (~25 new fields)
+- **Best/worst scores**: `best_ats_score`, `worst_ats_score` from `Max`/`Min` aggregates.
+- **Keyword match trend**: `keyword_match_trend` array (parallel to `score_trend`) with `{jd_role, keyword_match_percent, created_at}`.
+- **Resume counts**: `resume_count` (uploaded resumes).
+- **Generation counts**: `generated_resumes_total/done`, `interview_preps_total/done`, `cover_letters_total/done`.
+- **Chat builder**: `chat_sessions_active`, `chat_sessions_completed`.
+- **Job alerts**: `job_alerts_count`, `active_job_alerts`, `total_job_matches`, `matches_applied`, `matches_relevant`, `matches_irrelevant`.
+- **LLM usage**: `llm_calls`, `llm_tokens_used`, `llm_cost_usd` aggregated from `LLMResponse`.
+- **Plan usage**: `plan_usage` object with `plan_name`, `analyses_this_month`, `analyses_limit`, `usage_percent`. `null` if no plan or unlimited.
+- **Activity streak**: `activity_streak` object with `streak_days` and `actions_this_month`.
+
+#### Changed — `UserActivity.record()` Wired into 8 Locations
+- `AnalyzeResumeView.post` → `ACTION_ANALYSIS`
+- `GenerateResumeView.post` → `ACTION_RESUME_GEN`
+- `InterviewPrepView.post` → `ACTION_INTERVIEW_PREP`
+- `CoverLetterView.post` → `ACTION_COVER_LETTER`
+- `JobAlertManualRunView.post` → `ACTION_JOB_ALERT_RUN`
+- `ResumeChatFinalizeView.post` → `ACTION_BUILDER_FINALIZE`
+- `LoginView.post` → `ACTION_LOGIN`
+- `GoogleLoginView.post` → `ACTION_LOGIN`
+
+#### Migrations
+- `analyzer/0023_add_user_activity_model` — Creates `UserActivity` table with unique `(user, date)` constraint.
+
+---
+
 ## [0.28.0] — 2026-03-02
 
 ### Features — Company Intelligence & Enriched Job Crawl

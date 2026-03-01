@@ -251,6 +251,9 @@ class ResumeChatFinalizeView(APIView):
                 chat.id, gen.id, template, fmt,
             )
 
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_BUILDER_FINALIZE)
+
             return Response(
                 {
                     'id': str(gen.id),
