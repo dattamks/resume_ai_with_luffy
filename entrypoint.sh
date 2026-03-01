@@ -16,6 +16,7 @@ case "${SERVICE_TYPE}" in
     flock -w 120 /tmp/migrate.lock python manage.py migrate --noinput || true
     python manage.py seed_email_templates
     python manage.py seed_plans
+    python manage.py seed_credit_costs
     exec gunicorn resume_ai.wsgi:application \
       --bind "0.0.0.0:${PORT:-8000}" \
       --workers "${GUNICORN_WORKERS:-2}" \

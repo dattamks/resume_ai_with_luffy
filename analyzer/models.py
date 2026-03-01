@@ -3,6 +3,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from django.contrib.auth.models import User
 from django.utils import timezone
 
@@ -35,6 +36,10 @@ class Resume(models.Model):
     )
     original_filename = models.CharField(max_length=255)
     file_size_bytes = models.PositiveIntegerField(default=0)
+    is_default = models.BooleanField(
+        default=False,
+        help_text='The single default resume used for dashboard, feed, and personalisation.',
+    )
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -44,6 +49,12 @@ class Resume(models.Model):
                 fields=['user', 'file_hash'],
                 name='unique_resume_per_user',
             ),
+            # Ensure at most one default resume per user (partial unique index).
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=Q(is_default=True),
+                name='unique_default_resume_per_user',
+            ),
         ]
         indexes = [
             models.Index(fields=['user', '-uploaded_at']),
@@ -51,6 +62,22 @@ class Resume(models.Model):
 
     def __str__(self):
         return f"{self.original_filename} ({self.user.username})"
+
+    # ── Default resume helpers ────────────────────────────────────────
+    def set_as_default(self):
+        """
+        Mark *this* resume as the user's default.
+        Clears the flag on any other resume for the same user first.
+        """
+        Resume.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
+        if not self.is_default:
+            self.is_default = True
+            self.save(update_fields=['is_default'])
+
+    @classmethod
+    def get_default_for_user(cls, user):
+        """Return the user's current default resume, or None."""
+        return cls.objects.filter(user=user, is_default=True).first()
 
     @staticmethod
     def compute_hash(file_obj) -> str:
@@ -127,6 +154,11 @@ class Resume(models.Model):
                     resume=resume,
                     version_number=1,
                 )
+
+            # Auto-set as default if the user has no default resume yet
+            if not cls.objects.filter(user=user, is_default=True).exists():
+                resume.is_default = True
+                resume.save(update_fields=['is_default'])
 
             return resume, True
 

@@ -31,10 +31,12 @@ from .serializers import (
     ResumeChatSubmitSerializer,
     ResumeChatFinalizeSerializer,
     ResumeChatMessageSerializer,
+    ResumeChatTextMessageSerializer,
 )
 from .services.resume_chat_service import (
     start_session,
     process_step,
+    process_text_message,
     finalize_resume,
     get_user_resumes_for_selection,
 )

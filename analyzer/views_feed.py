@@ -28,6 +28,7 @@ from .models import (
     JobAlert,
     JobMatch,
     JobSearchProfile,
+    Resume,
     ResumeAnalysis,
 )
 from .serializers_feed import (
@@ -48,8 +49,17 @@ logger = logging.getLogger('analyzer')
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _get_user_skills(user) -> list[str]:
-    """Return deduplicated lowercase skill list from user's JobSearchProfiles."""
-    profiles = JobSearchProfile.objects.filter(resume__user=user)
+    """
+    Return deduplicated lowercase skill list from the user's **default**
+    resume's JobSearchProfile.  Falls back to ALL profiles if no default
+    resume is set.
+    """
+    default_resume = Resume.get_default_for_user(user)
+    if default_resume:
+        profiles = JobSearchProfile.objects.filter(resume=default_resume)
+    else:
+        profiles = JobSearchProfile.objects.filter(resume__user=user)
+
     skills: set[str] = set()
     for p in profiles:
         for s in (p.skills or []):
@@ -222,7 +232,21 @@ class FeedJobsView(APIView):
 
     @staticmethod
     def _get_user_embedding(user):
-        """Return the newest JobSearchProfile embedding for this user (or None)."""
+        """
+        Return the embedding from the user's **default** resume's
+        JobSearchProfile.  Falls back to the newest JSP embedding
+        if no default resume is set.
+        """
+        default_resume = Resume.get_default_for_user(user)
+        if default_resume:
+            try:
+                jsp = JobSearchProfile.objects.get(resume=default_resume)
+                if hasattr(jsp, 'embedding') and jsp.embedding is not None:
+                    return jsp.embedding
+            except JobSearchProfile.DoesNotExist:
+                pass
+
+        # Fallback — newest embedding across all resumes
         profiles = JobSearchProfile.objects.filter(resume__user=user).order_by('-updated_at')
         for p in profiles:
             if hasattr(p, 'embedding') and p.embedding is not None:

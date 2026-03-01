@@ -3,7 +3,7 @@ from django.urls import path
 from .views import (
     AnalyzeResumeView, AnalysisListView, AnalysisDetailView,
     RetryAnalysisView, AnalysisDeleteView, AnalysisPDFExportView,
-    AnalysisStatusView, ResumeListView, ResumeDeleteView,
+    AnalysisStatusView, ResumeListView, ResumeDeleteView, SetDefaultResumeView,
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
     GenerateResumeView, GeneratedResumeStatusView,
     GeneratedResumeDownloadView, GeneratedResumeListView,
@@ -51,6 +51,7 @@ urlpatterns = [
     path('shared/<uuid:token>/', SharedAnalysisView.as_view(), name='shared-analysis'),
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
+    path('resumes/<uuid:pk>/set-default/', SetDefaultResumeView.as_view(), name='resume-set-default'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     # Bulk operations
     path('analyses/bulk-delete/', AnalysisBulkDeleteView.as_view(), name='analysis-bulk-delete'),

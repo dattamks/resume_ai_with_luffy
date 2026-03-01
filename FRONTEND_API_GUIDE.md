@@ -1433,6 +1433,25 @@ All prefixed with `/api/v1/`.
 
 Resume files are **deduplicated by SHA-256 hash per user** — uploading the same PDF for multiple analyses stores the file only once. Each unique file gets a `Resume` row with a UUID primary key.
 
+### Default Resume Concept
+
+Each user has exactly **one** default resume at a time. The default resume is the source of truth for all personalised surfaces:
+
+- **Dashboard analytics** — score trend, grade distribution, keyword gaps, avg ATS score, industry benchmark percentile
+- **Feed job matching** — pgvector embedding similarity uses the default resume's `JobSearchProfile`
+- **Skill-gap & market-insights widgets** — skills comparison uses the default resume's extracted skills
+- **Recommendations engine** — action cards like "Close your skill gaps" use the default resume's profile
+
+**Behaviour rules:**
+1. The **first resume uploaded** is automatically set as the default.
+2. Subsequent uploads do **not** change the default — the user must explicitly switch.
+3. Call `POST /api/v1/resumes/<uuid>/set-default/` to change the default.
+4. If the default resume is **deleted**, the most recently uploaded remaining resume is auto-promoted.
+5. If the last resume is deleted, `default_resume_id` becomes `null` in dashboard responses.
+6. Only one resume can be default at a time (DB-enforced unique constraint).
+
+---
+
 ### GET `/api/v1/resumes/` — List Resumes (Paginated)
 
 🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns **paginated** list of the user's deduplicated resume files, newest first.
@@ -1460,6 +1479,9 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
       "active_analysis_count": 3,
       "file_url": "https://r2.example.com/resumes/my_resume_2026.pdf",
       "days_since_upload": 4,
+      "last_analyzed_at": "2026-02-25T14:00:00Z",
+      "is_default": true
+      "days_since_upload": 4,
       "last_analyzed_at": "2026-02-25T14:00:00Z"
     }
   ]
@@ -1478,6 +1500,7 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 | `file_url`             | string ǀ null | Full URL to download the resume PDF (from R2/storage)  |
 | `days_since_upload`    | int      | Number of days since the resume was uploaded. Use for staleness indicators (e.g., "Resume not updated in 30 days") |
 | `last_analyzed_at`     | datetime ǀ null | Timestamp of the most recent completed analysis using this resume; `null` if never analyzed |
+| `is_default`           | bool     | `true` if this is the user's default resume powering dashboard/feed/skill-gap. Exactly one resume is `true` at a time. |
 
 **Frontend usage:** Use `active_analysis_count` to show how many analyses reference each resume, and to determine whether the delete button should show a warning.
 
@@ -1490,6 +1513,8 @@ Resume files are **deduplicated by SHA-256 hash per user** — uploading the sam
 **Blocked if active analyses exist.** Only allowed when `active_analysis_count === 0` (no active, non-soft-deleted analyses reference this resume). If active analyses exist, returns **409 Conflict**.
 
 **Response (204):** No content — resume and file permanently deleted.
+
+**Default resume fallback:** If the deleted resume was the default, the most recently uploaded remaining resume is automatically promoted to default. If no resumes remain, `default_resume_id` becomes `null`.
 
 **Errors:**
 
@@ -1516,6 +1541,42 @@ try {
     alert(err.response.data.detail);
   }
 }
+```
+
+---
+
+### POST `/api/v1/resumes/<uuid:id>/set-default/` — Set Default Resume
+
+🔒 Requires auth. **Throttled:** `write` scope (60/hour). Sets the specified resume as the user's default resume.
+
+The default resume powers all personalised surfaces (dashboard analytics, feed job matching, skill-gap, recommendations). Changing the default immediately busts the cached dashboard stats so the next dashboard request reflects the new resume.
+
+**Request:** No body required — the resume is identified by the URL parameter.
+
+**Response (200):**
+```json
+{
+  "detail": "Default resume updated.",
+  "resume_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "original_filename": "my_resume_2026.pdf"
+}
+```
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 404  | Not found / not owner | `{ "detail": "Not found." }` |
+| 401  | Not authenticated | Standard 401 response |
+
+**Frontend recommendation:**
+```jsx
+// "Set as default" button on resume list
+const setDefault = async (resumeId) => {
+  await api.post(`/resumes/${resumeId}/set-default/`);
+  // Refresh resume list to update is_default flags
+  // Invalidate dashboard cache on client side
+};
 ```
 
 ---
@@ -1605,11 +1666,12 @@ try {
 
 ### GET `/api/v1/dashboard/stats/` — User Dashboard Analytics
 
-🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns aggregated analytics from **all** analyses (including soft-deleted) for a complete audit trail, plus resume generation counts, interview prep, cover letter, chat builder, job alert, LLM usage, credit usage, plan usage, and activity streak data.
+🔒 Requires auth. **Throttled:** `readonly` scope (120/hour). Returns aggregated analytics. Overview counts (`total_analyses`, `resume_count`, etc.) cover **all** analyses. Personalised analytics (`average_ats_score`, `score_trend`, `grade_distribution`, `top_missing_keywords`, `keyword_match_trend`, `industry_benchmark_percentile`) are scoped to the **default resume's** analyses only (falls back to all analyses if no default is set).
 
 **Response (200):**
 ```json
 {
+  "default_resume_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "total_analyses": 47,
   "active_analyses": 42,
   "deleted_analyses": 5,
@@ -1723,14 +1785,15 @@ try {
 
 | Field                | Type           | Description                                                 |
 |----------------------|----------------|-------------------------------------------------------------|
-| `total_analyses`     | int            | All analyses ever created (including soft-deleted)           |
-| `active_analyses`    | int            | Non-deleted analyses                                        |
-| `deleted_analyses`   | int            | Soft-deleted analyses                                       |
-| `average_ats_score`  | float \| null  | Average ATS score across all **completed** analyses; `null` if none |
-| `best_ats_score`     | int \| null    | Highest ATS score across all completed analyses              |
-| `worst_ats_score`    | int \| null    | Lowest ATS score across all completed analyses               |
-| `score_trend`        | array          | Last **10** completed analyses with score, role, and date (newest first) |
-| `grade_distribution` | object         | Count of completed analyses per overall grade (e.g., `{"A": 5, "B": 18}`) |
+| `default_resume_id`  | UUID \| null   | ID of the resume powering personalised analytics; `null` if no default is set |
+| `total_analyses`     | int            | All analyses ever created (including soft-deleted) — **user-wide** |
+| `active_analyses`    | int            | Non-deleted analyses — **user-wide**                        |
+| `deleted_analyses`   | int            | Soft-deleted analyses — **user-wide**                       |
+| `average_ats_score`  | float \| null  | Average ATS score — **scoped to default resume** (fallback: all) |
+| `best_ats_score`     | int \| null    | Highest ATS score — **scoped to default resume**             |
+| `worst_ats_score`    | int \| null    | Lowest ATS score — **scoped to default resume**              |
+| `score_trend`        | array          | Last **10** completed analyses — **scoped to default resume** (newest first) |
+| `grade_distribution` | object         | Per-grade counts — **scoped to default resume** (e.g., `{"A": 5, "B": 18}`) |
 | `top_roles`          | array          | Top **5** most-analyzed job roles with count                 |
 | `top_industries`     | array          | Top **5** most-analyzed industries with count                |
 | `analyses_per_month` | array          | Monthly analysis count for the last **6 months** (oldest first) |
@@ -7198,3 +7261,16 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 - **Account deletion requires password** (`DELETE /api/v1/auth/profile/`)
 - **`celery_task_id` removed** from analysis responses
 - **`payment` throttle scope** added (30/hour) for all payment endpoints
+
+---
+
+### v0.33.0 — Default Resume System
+
+- **`is_default` field** added to `Resume` model and all resume list responses (`GET /api/v1/resumes/`).
+- **`POST /api/v1/resumes/<uuid>/set-default/`** — new endpoint to change the user's default resume.
+- **Auto-default on first upload:** The first resume uploaded by a user is automatically set as the default.
+- **Delete fallback:** Deleting the default resume auto-promotes the most recently uploaded remaining resume.
+- **Dashboard scoping:** `average_ats_score`, `score_trend`, `grade_distribution`, `top_missing_keywords`, `keyword_match_trend`, `industry_benchmark_percentile` are now scoped to the **default resume's analyses** only. Overview counts (`total_analyses`, `resume_count`, etc.) remain user-wide. Falls back to all analyses if no default is set.
+- **`default_resume_id`** field added to `GET /api/v1/dashboard/stats/` response.
+- **Feed scoping:** `_get_user_skills()` and `_get_user_embedding()` now use the default resume's `JobSearchProfile`. Affects `feed/jobs/`, `feed/insights/`, `feed/trending-skills/`, `feed/recommendations/`, `dashboard/skill-gap/`.
+- **Database constraint:** Partial unique index ensures at most one default resume per user (`unique_default_resume_per_user`).

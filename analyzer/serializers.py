@@ -16,7 +16,7 @@ class ResumeSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'original_filename', 'file_size_bytes',
             'uploaded_at', 'active_analysis_count', 'file_url',
-            'days_since_upload', 'last_analyzed_at',
+            'days_since_upload', 'last_analyzed_at', 'is_default',
         )
         read_only_fields = fields
 

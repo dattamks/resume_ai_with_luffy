@@ -499,7 +499,49 @@ class ResumeDeleteView(APIView):
 
         logger.info('Deleting resume id=%s file=%s user=%s', pk, resume.file.name, request.user.id)
         resume.delete()  # post_delete signal cleans up R2 file
+
+        # If the deleted resume was the default, promote the most recent remaining resume
+        if not Resume.objects.filter(user=request.user, is_default=True).exists():
+            next_resume = Resume.objects.filter(user=request.user).order_by('-uploaded_at').first()
+            if next_resume:
+                next_resume.set_as_default()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SetDefaultResumeView(APIView):
+    """
+    POST /api/v1/resumes/<uuid:pk>/set-default/
+    Set the specified resume as the user's default resume.
+
+    The default resume is the source of truth for:
+    - Dashboard analytics (score trend, grades, keywords)
+    - Feed personalisation (job matching via embedding)
+    - Skill-gap and market-insights widgets
+    - Recommendations engine
+
+    Only one resume can be default at a time. The previous default
+    is automatically cleared.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def post(self, request, pk):
+        try:
+            resume = Resume.objects.get(pk=pk, user=request.user)
+        except Resume.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        resume.set_as_default()
+
+        # Bust cached dashboard & feed data so they pick up the new default
+        cache.delete(f'dashboard_stats:{request.user.id}')
+
+        return Response({
+            'detail': 'Default resume updated.',
+            'resume_id': str(resume.id),
+            'original_filename': resume.original_filename,
+        })
 
 
 # ── Dashboard stats endpoint ──────────────────────────────────────────────
@@ -527,7 +569,11 @@ class DashboardStatsView(APIView):
         from .models import UserActivity, ResumeChat, LLMResponse
         from collections import Counter
 
+        # ───── Default resume scoping ──────────────────────────────────
+        default_resume = Resume.get_default_for_user(user)
+
         # ───── Analyses ─────────────────────────────────────────────────
+        # User-wide totals (overview counts)
         all_qs = ResumeAnalysis.all_objects.filter(user=user)
         active_qs = all_qs.filter(deleted_at__isnull=True)
 
@@ -535,7 +581,13 @@ class DashboardStatsView(APIView):
         active = active_qs.count()
         deleted = total - active
 
-        done_qs = all_qs.filter(
+        # Personalised analytics scope: default resume only when set
+        if default_resume:
+            analytics_qs = ResumeAnalysis.all_objects.filter(user=user, resume=default_resume)
+        else:
+            analytics_qs = all_qs
+
+        done_qs = analytics_qs.filter(
             status=ResumeAnalysis.STATUS_DONE,
             ats_score__isnull=False,
         )
@@ -766,6 +818,9 @@ class DashboardStatsView(APIView):
 
         # ───── Assemble response ──────────────────────────────────────
         data = {
+            # Default resume powering personalised analytics
+            'default_resume_id': str(default_resume.id) if default_resume else None,
+
             # Analyses
             'total_analyses': total,
             'active_analyses': active,
