@@ -21,6 +21,7 @@ _DEFAULT_COSTS = {
     'job_alert_run': 1,
     'interview_prep': 1,
     'cover_letter': 1,
+    'resume_builder': 2,
 }
 
 

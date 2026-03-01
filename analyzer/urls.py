@@ -28,6 +28,10 @@ from .views_celery import (
     CeleryWorkersView, CeleryActiveTasksView, CeleryTaskStatusView,
     CeleryQueueLengthView,
 )
+from .views_chat import (
+    ResumeChatStartView, ResumeChatListView, ResumeChatDetailView,
+    ResumeChatSubmitView, ResumeChatFinalizeView, ResumeChatResumesView,
+)
 
 urlpatterns = [
     path('analyze/', AnalyzeResumeView.as_view(), name='analyze'),
@@ -87,4 +91,11 @@ urlpatterns = [
     path('admin/celery/queues/', CeleryQueueLengthView.as_view(), name='celery-queues'),
     # Phase 14 — Resume Templates
     path('templates/', TemplateListView.as_view(), name='template-list'),
+    # Phase 15 — Conversational Resume Builder
+    path('resume-chat/start/', ResumeChatStartView.as_view(), name='resume-chat-start'),
+    path('resume-chat/', ResumeChatListView.as_view(), name='resume-chat-list'),
+    path('resume-chat/resumes/', ResumeChatResumesView.as_view(), name='resume-chat-resumes'),
+    path('resume-chat/<uuid:pk>/', ResumeChatDetailView.as_view(), name='resume-chat-detail'),
+    path('resume-chat/<uuid:pk>/submit/', ResumeChatSubmitView.as_view(), name='resume-chat-submit'),
+    path('resume-chat/<uuid:pk>/finalize/', ResumeChatFinalizeView.as_view(), name='resume-chat-finalize'),
 ]

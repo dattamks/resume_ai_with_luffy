@@ -459,6 +459,99 @@ def _refund_generation_credits(gen):
         logger.exception('Failed to refund credits for resume generation id=%s', gen.id)
 
 
+# ── Resume builder (chat) rendering task ─────────────────────────────────
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    acks_late=True,
+)
+def render_builder_resume_task(self, generated_resume_id):
+    """
+    Render a resume created via the conversational builder.
+
+    Unlike generate_improved_resume_task, resume_content is already set
+    by the builder service — this task only renders and uploads the file.
+    """
+    from .models import GeneratedResume
+    from .services.template_registry import get_renderer
+
+    logger.info('Builder render task started: id=%s', generated_resume_id)
+
+    try:
+        gen = GeneratedResume.objects.select_related('user').get(
+            id=generated_resume_id,
+        )
+    except GeneratedResume.DoesNotExist:
+        logger.error('GeneratedResume %s not found — aborting', generated_resume_id)
+        return
+
+    gen.status = GeneratedResume.STATUS_PROCESSING
+    gen.celery_task_id = self.request.id or ''
+    gen.save(update_fields=['status', 'celery_task_id'])
+
+    try:
+        renderer = get_renderer(gen.template, gen.format)
+        file_bytes = renderer(gen.resume_content)
+
+        if gen.format == GeneratedResume.FORMAT_DOCX:
+            ext = 'docx'
+        else:
+            ext = 'pdf'
+
+        name = gen.resume_content.get('contact', {}).get('name', 'resume')
+        name_slug = name.replace(' ', '_')[:30]
+        filename = f'generated_resumes/{name_slug}_builder_{gen.pk}.{ext}'
+
+        gen.file.save(filename, ContentFile(file_bytes), save=False)
+        gen.status = GeneratedResume.STATUS_DONE
+        gen.save(update_fields=['file', 'status'])
+
+        logger.info(
+            'Builder resume rendered: id=%s format=%s file=%s',
+            gen.id, gen.format, filename,
+        )
+
+    except Exception as exc:
+        logger.exception('Builder render failed: id=%s', gen.id)
+        gen.status = GeneratedResume.STATUS_FAILED
+        gen.error_message = str(exc)
+        gen.save(update_fields=['status', 'error_message'])
+
+        # Refund credits
+        _refund_builder_credits(gen)
+
+        if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+
+
+def _refund_builder_credits(gen):
+    """Refund credits for a failed builder resume render."""
+    try:
+        gen.refresh_from_db()
+        if not gen.credits_deducted:
+            return
+
+        from accounts.services import refund_credits
+        from django.contrib.auth.models import User
+
+        user = User.objects.get(id=gen.user_id)
+        refund_credits(
+            user,
+            'resume_builder',
+            description=f'Refund: builder resume #{gen.id} render failed',
+            reference_id=str(gen.id),
+        )
+
+        gen.credits_deducted = False
+        gen.save(update_fields=['credits_deducted'])
+        logger.info('Credits refunded for failed builder render id=%s', gen.id)
+    except Exception:
+        logger.exception('Failed to refund credits for builder render id=%s', gen.id)
+
+
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
 
 
@@ -874,6 +967,18 @@ def crawl_jobs_daily_task():
                 'description_snippet': listing.description_snippet,
                 'posted_at': posted_at,
                 'raw_data': listing.raw_data,
+                'source_page_url': getattr(listing, 'source_page_url', ''),
+                'skills_required': getattr(listing, 'skills_required', []),
+                'skills_nice_to_have': getattr(listing, 'skills_nice_to_have', []),
+                'experience_years_min': getattr(listing, 'experience_years_min', None),
+                'experience_years_max': getattr(listing, 'experience_years_max', None),
+                'employment_type': getattr(listing, 'employment_type', ''),
+                'remote_policy': getattr(listing, 'remote_policy', ''),
+                'seniority_level': getattr(listing, 'seniority_level', ''),
+                'industry': getattr(listing, 'industry', ''),
+                'education_required': getattr(listing, 'education_required', ''),
+                'salary_min_usd': getattr(listing, 'salary_min_usd', None),
+                'salary_max_usd': getattr(listing, 'salary_max_usd', None),
             },
         )
         if created:
@@ -1024,6 +1129,18 @@ def crawl_jobs_for_alert_task(alert_id):
                     'description_snippet': listing.description_snippet,
                     'posted_at': posted_at,
                     'raw_data': listing.raw_data,
+                    'source_page_url': getattr(listing, 'source_page_url', ''),
+                    'skills_required': getattr(listing, 'skills_required', []),
+                    'skills_nice_to_have': getattr(listing, 'skills_nice_to_have', []),
+                    'experience_years_min': getattr(listing, 'experience_years_min', None),
+                    'experience_years_max': getattr(listing, 'experience_years_max', None),
+                    'employment_type': getattr(listing, 'employment_type', ''),
+                    'remote_policy': getattr(listing, 'remote_policy', ''),
+                    'seniority_level': getattr(listing, 'seniority_level', ''),
+                    'industry': getattr(listing, 'industry', ''),
+                    'education_required': getattr(listing, 'education_required', ''),
+                    'salary_min_usd': getattr(listing, 'salary_min_usd', None),
+                    'salary_max_usd': getattr(listing, 'salary_max_usd', None),
                 },
             )
             if created:

@@ -268,6 +268,7 @@ class ResumeAnalysis(models.Model):
     STEP_JD_SCRAPE = 'jd_scrape'
     STEP_LLM_CALL = 'llm_call'
     STEP_PARSE_RESULT = 'parse_result'
+    STEP_RESUME_PARSE = 'resume_parse'
     STEP_DONE = 'done'
     STEP_FAILED = 'failed'
     STEP_CHOICES = [
@@ -276,6 +277,7 @@ class ResumeAnalysis(models.Model):
         (STEP_JD_SCRAPE, 'Scraping JD'),
         (STEP_LLM_CALL, 'Calling LLM'),
         (STEP_PARSE_RESULT, 'Parsing Result'),
+        (STEP_RESUME_PARSE, 'Parsing Resume Data'),
         (STEP_DONE, 'Done'),
         (STEP_FAILED, 'Failed'),
     ]
@@ -333,6 +335,12 @@ class ResumeAnalysis(models.Model):
     quick_wins = models.JSONField(null=True, blank=True, help_text='Array of priority/action objects')
     summary = models.TextField(blank=True, help_text='2-3 sentence overall summary')
 
+    # Structured resume data extracted from resume_text by LLM
+    parsed_content = models.JSONField(
+        null=True, blank=True,
+        help_text='Structured resume data (contact, experience, education, skills, etc.) extracted from resume_text',
+    )
+
     # Kept for backward compat in dashboard stats (generic_ats score is copied here)
     ats_score = models.PositiveSmallIntegerField(null=True, blank=True)
 
@@ -381,6 +389,7 @@ class ResumeAnalysis(models.Model):
         self.resume_text = ''
         self.resolved_jd = ''
         self.jd_text = ''
+        self.parsed_content = None
 
         # Delete report PDF from storage (R2)
         if self.report_pdf:
@@ -405,7 +414,7 @@ class ResumeAnalysis(models.Model):
 
         self.save(update_fields=[
             'deleted_at', 'resume_text', 'resolved_jd', 'jd_text',
-            'report_pdf', 'scrape_result', 'llm_response',
+            'parsed_content', 'report_pdf', 'scrape_result', 'llm_response',
         ])
 
 
@@ -439,8 +448,9 @@ class GeneratedResume(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     analysis = models.ForeignKey(
         ResumeAnalysis, on_delete=models.CASCADE,
+        null=True, blank=True,
         related_name='generated_resumes',
-        help_text='The analysis whose findings drive the resume rewrite',
+        help_text='The analysis whose findings drive the resume rewrite (NULL for builder-created resumes)',
     )
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='generated_resumes')
     template = models.SlugField(
@@ -479,6 +489,193 @@ class GeneratedResume(models.Model):
 
     def __str__(self):
         return f"Generated resume for analysis #{self.analysis_id} ({self.template}, {self.format})"
+
+
+# ── Company Intelligence ─────────────────────────────────────────────────────
+
+
+class Company(models.Model):
+    """
+    A top-level brand / parent company (e.g., Google, Infosys, Stripe).
+
+    This is the umbrella identity. Actual legal entities that operate in
+    specific countries are stored as CompanyEntity records linked here.
+    A company with no separate country entities still gets one CompanyEntity
+    (the HQ itself).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=255, unique=True,
+        help_text='Brand / common name (e.g. "Google", "TCS", "Stripe")',
+    )
+    slug = models.SlugField(
+        max_length=255, unique=True,
+        help_text='URL-safe identifier, auto-generated from name',
+    )
+    description = models.TextField(
+        blank=True,
+        help_text='Brief company description for display',
+    )
+    logo = models.URLField(
+        max_length=2048, blank=True,
+        help_text='URL to company logo image',
+    )
+    industry = models.CharField(max_length=100, blank=True)
+    founded_year = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    SIZE_STARTUP = 'startup'
+    SIZE_SMALL = 'small'
+    SIZE_MID = 'mid'
+    SIZE_LARGE = 'large'
+    SIZE_ENTERPRISE = 'enterprise'
+    SIZE_CHOICES = [
+        (SIZE_STARTUP, 'Startup (1-50)'),
+        (SIZE_SMALL, 'Small (51-200)'),
+        (SIZE_MID, 'Mid-size (201-1000)'),
+        (SIZE_LARGE, 'Large (1001-10000)'),
+        (SIZE_ENTERPRISE, 'Enterprise (10000+)'),
+    ]
+    company_size = models.CharField(
+        max_length=12, blank=True, choices=SIZE_CHOICES,
+    )
+    headquarters_country = models.CharField(max_length=100, blank=True)
+    headquarters_city = models.CharField(max_length=100, blank=True)
+    linkedin_url = models.URLField(max_length=2048, blank=True)
+    glassdoor_url = models.URLField(max_length=2048, blank=True)
+    tech_stack = models.JSONField(
+        default=list, blank=True,
+        help_text='Known tech stack ["Python", "Kubernetes", ...]',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Inactive companies are hidden from suggestions',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Company'
+        verbose_name_plural = 'Companies'
+
+    def __str__(self):
+        return self.name
+
+
+class CompanyEntity(models.Model):
+    """
+    A legal / operating entity of a Company in a specific country.
+
+    Examples:
+      Company "Stripe"  → CompanyEntity "Stripe Inc" (US)
+                         → CompanyEntity "Stripe India Pvt Ltd" (India)
+      Company "SAP"     → CompanyEntity "SAP SE" (Germany)
+                         → CompanyEntity "SAP Labs India" (India)
+
+    Each entity can have its own career pages, websites, and is treated
+    independently for crawling and matching purposes.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name='entities',
+        help_text='Parent brand / company',
+    )
+    legal_name = models.CharField(
+        max_length=500, blank=True,
+        help_text='Registered legal name (e.g. "Google India Pvt Ltd")',
+    )
+    display_name = models.CharField(
+        max_length=255,
+        help_text='Short display name (e.g. "Google India", "Stripe US")',
+    )
+    operating_country = models.CharField(
+        max_length=100,
+        help_text='Country this entity operates in (e.g. "India", "United States")',
+    )
+    operating_city = models.CharField(max_length=100, blank=True)
+    is_headquarters = models.BooleanField(
+        default=False,
+        help_text='Whether this entity is the global HQ',
+    )
+    is_indian_entity = models.BooleanField(
+        default=False, db_index=True,
+        help_text='Quick filter for Indian entities',
+    )
+    website = models.URLField(
+        max_length=2048, blank=True,
+        help_text='Corporate website for this entity (not brand site)',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['company', 'operating_country']
+        verbose_name = 'Company Entity'
+        verbose_name_plural = 'Company Entities'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'operating_country', 'display_name'],
+                name='unique_entity_per_country',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['company', 'operating_country']),
+            models.Index(fields=['is_indian_entity']),
+        ]
+
+    def __str__(self):
+        hq = ' (HQ)' if self.is_headquarters else ''
+        return f"{self.display_name} — {self.operating_country}{hq}"
+
+
+class CompanyCareerPage(models.Model):
+    """
+    A career page URL belonging to a CompanyEntity.
+
+    One entity can have multiple career pages (e.g. engineering vs general,
+    or region-specific sub-pages). Each active page becomes a CrawlSource
+    automatically during crawl.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        CompanyEntity, on_delete=models.CASCADE, related_name='career_pages',
+        help_text='The entity this career page belongs to',
+    )
+    url = models.URLField(
+        max_length=2048,
+        help_text='Career page URL (e.g. "https://careers.google.com/jobs/")',
+    )
+    label = models.CharField(
+        max_length=100, blank=True,
+        help_text='Label (e.g. "Engineering", "All Roles", "Campus")',
+    )
+    country = models.CharField(
+        max_length=100, blank=True,
+        help_text='Country this page targets (may differ from entity country)',
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    last_crawled_at = models.DateTimeField(null=True, blank=True)
+    crawl_frequency = models.CharField(
+        max_length=10,
+        choices=[('daily', 'Daily'), ('weekly', 'Weekly')],
+        default='weekly',
+        help_text='How often to crawl this page',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['entity', 'label']
+        verbose_name = 'Career Page'
+        verbose_name_plural = 'Career Pages'
+
+    def __str__(self):
+        label = f' ({self.label})' if self.label else ''
+        return f"{self.entity.display_name}{label} — {self.url[:60]}"
 
 
 # ── Smart Job Alerts ─────────────────────────────────────────────────────────
@@ -669,12 +866,103 @@ class DiscoveredJob(models.Model):
         max_length=255,
         help_text='Unique job ID from the source API',
     )
-    url = models.URLField(max_length=2048)
+    source_page_url = models.URLField(
+        max_length=2048, blank=True,
+        help_text='The search/career page URL we crawled to discover this job',
+    )
+    url = models.URLField(
+        max_length=2048,
+        help_text='Direct link to the actual job posting / apply page',
+    )
     title = models.CharField(max_length=500, blank=True)
     company = models.CharField(max_length=255, blank=True)
+    company_entity = models.ForeignKey(
+        CompanyEntity, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='discovered_jobs',
+        help_text='Matched CompanyEntity record (linked post-crawl or via career page)',
+    )
     location = models.CharField(max_length=255, blank=True)
     salary_range = models.CharField(max_length=255, blank=True)
     description_snippet = models.TextField(blank=True, help_text='Short job description excerpt')
+
+    # ── Enriched fields (extracted by LLM during crawl) ──
+    skills_required = models.JSONField(
+        default=list, blank=True,
+        help_text='Required skills extracted from listing ["Python", "AWS", ...]',
+    )
+    skills_nice_to_have = models.JSONField(
+        default=list, blank=True,
+        help_text='Nice-to-have / preferred skills ["Go", "Terraform", ...]',
+    )
+    experience_years_min = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Minimum years of experience required',
+    )
+    experience_years_max = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Maximum years of experience required',
+    )
+    EMPLOYMENT_FULL_TIME = 'full_time'
+    EMPLOYMENT_PART_TIME = 'part_time'
+    EMPLOYMENT_CONTRACT = 'contract'
+    EMPLOYMENT_INTERNSHIP = 'internship'
+    EMPLOYMENT_FREELANCE = 'freelance'
+    EMPLOYMENT_CHOICES = [
+        (EMPLOYMENT_FULL_TIME, 'Full Time'),
+        (EMPLOYMENT_PART_TIME, 'Part Time'),
+        (EMPLOYMENT_CONTRACT, 'Contract'),
+        (EMPLOYMENT_INTERNSHIP, 'Internship'),
+        (EMPLOYMENT_FREELANCE, 'Freelance'),
+    ]
+    employment_type = models.CharField(
+        max_length=15, blank=True, choices=EMPLOYMENT_CHOICES,
+    )
+    REMOTE_ONSITE = 'onsite'
+    REMOTE_HYBRID = 'hybrid'
+    REMOTE_REMOTE = 'remote'
+    REMOTE_CHOICES = [
+        (REMOTE_ONSITE, 'On-site'),
+        (REMOTE_HYBRID, 'Hybrid'),
+        (REMOTE_REMOTE, 'Remote'),
+    ]
+    remote_policy = models.CharField(
+        max_length=10, blank=True, choices=REMOTE_CHOICES,
+    )
+    SENIORITY_INTERN = 'intern'
+    SENIORITY_JUNIOR = 'junior'
+    SENIORITY_MID = 'mid'
+    SENIORITY_SENIOR = 'senior'
+    SENIORITY_LEAD = 'lead'
+    SENIORITY_MANAGER = 'manager'
+    SENIORITY_DIRECTOR = 'director'
+    SENIORITY_EXECUTIVE = 'executive'
+    SENIORITY_CHOICES = [
+        (SENIORITY_INTERN, 'Intern'),
+        (SENIORITY_JUNIOR, 'Junior'),
+        (SENIORITY_MID, 'Mid-level'),
+        (SENIORITY_SENIOR, 'Senior'),
+        (SENIORITY_LEAD, 'Lead'),
+        (SENIORITY_MANAGER, 'Manager'),
+        (SENIORITY_DIRECTOR, 'Director'),
+        (SENIORITY_EXECUTIVE, 'Executive'),
+    ]
+    seniority_level = models.CharField(
+        max_length=12, blank=True, choices=SENIORITY_CHOICES,
+    )
+    industry = models.CharField(max_length=100, blank=True, db_index=True)
+    education_required = models.CharField(
+        max_length=50, blank=True,
+        help_text='Minimum education (e.g. "bachelor", "master", "none")',
+    )
+    salary_min_usd = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='LLM-normalised annual salary lower bound in USD',
+    )
+    salary_max_usd = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='LLM-normalised annual salary upper bound in USD',
+    )
+
     posted_at = models.DateTimeField(null=True, blank=True)
     raw_data = models.JSONField(null=True, blank=True, help_text='Full raw API response for this job')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1158,3 +1446,233 @@ class ResumeTemplate(models.Model):
     def __str__(self):
         premium_tag = ' [PREMIUM]' if self.is_premium else ''
         return f"{self.name}{premium_tag}"
+
+
+# ── Conversational Resume Builder ────────────────────────────────────────────
+
+
+class ResumeChat(models.Model):
+    """
+    Guided conversational session for building a resume from scratch.
+
+    The user proceeds through a sequence of steps (contact → experience →
+    education → skills → certifications → projects → review → done).
+    Each step produces structured data that accumulates in ``resume_data``.
+
+    The final ``resume_data`` JSON follows the same schema as
+    ``GeneratedResume.resume_content`` so all existing template renderers
+    work unchanged.
+    """
+
+    # ── Source (how the session was initialised) ─────────────────────────
+    SOURCE_SCRATCH = 'scratch'
+    SOURCE_PROFILE = 'profile'
+    SOURCE_PREVIOUS = 'previous'
+    SOURCE_CHOICES = [
+        (SOURCE_SCRATCH, 'Start Fresh'),
+        (SOURCE_PROFILE, 'From Profile Data'),
+        (SOURCE_PREVIOUS, 'From Previous Resume'),
+    ]
+
+    # ── Wizard steps ────────────────────────────────────────────────────
+    STEP_START = 'start'
+    STEP_CONTACT = 'contact'
+    STEP_TARGET_ROLE = 'target_role'
+    STEP_EXPERIENCE_INPUT = 'experience_input'
+    STEP_EXPERIENCE_REVIEW = 'experience_review'
+    STEP_EDUCATION = 'education'
+    STEP_SKILLS = 'skills'
+    STEP_CERTIFICATIONS = 'certifications'
+    STEP_PROJECTS = 'projects'
+    STEP_REVIEW = 'review'
+    STEP_DONE = 'done'
+    STEP_CHOICES = [
+        (STEP_START, 'Start'),
+        (STEP_CONTACT, 'Contact Info'),
+        (STEP_TARGET_ROLE, 'Target Role'),
+        (STEP_EXPERIENCE_INPUT, 'Experience Input'),
+        (STEP_EXPERIENCE_REVIEW, 'Experience Review'),
+        (STEP_EDUCATION, 'Education'),
+        (STEP_SKILLS, 'Skills'),
+        (STEP_CERTIFICATIONS, 'Certifications'),
+        (STEP_PROJECTS, 'Projects'),
+        (STEP_REVIEW, 'Review & Polish'),
+        (STEP_DONE, 'Done'),
+    ]
+
+    # Ordered list of steps for navigation
+    STEP_ORDER = [
+        STEP_START, STEP_CONTACT, STEP_TARGET_ROLE,
+        STEP_EXPERIENCE_INPUT, STEP_EXPERIENCE_REVIEW,
+        STEP_EDUCATION, STEP_SKILLS, STEP_CERTIFICATIONS,
+        STEP_PROJECTS, STEP_REVIEW, STEP_DONE,
+    ]
+
+    # ── Status ──────────────────────────────────────────────────────────
+    STATUS_ACTIVE = 'active'
+    STATUS_COMPLETED = 'completed'
+    STATUS_ABANDONED = 'abandoned'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_ABANDONED, 'Abandoned'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='resume_chats',
+    )
+    source = models.CharField(
+        max_length=20, choices=SOURCE_CHOICES, default=SOURCE_SCRATCH,
+    )
+
+    # If source == 'previous', which resume was used as base
+    base_resume = models.ForeignKey(
+        Resume, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='builder_chats',
+        help_text='Resume used as base data (for source=previous)',
+    )
+
+    # Progressive resume data — same schema as GeneratedResume.resume_content
+    resume_data = models.JSONField(
+        default=dict,
+        help_text='Accumulated structured resume JSON (contact, experience, education, skills, etc.)',
+    )
+
+    # Target role context (optional, used for AI polish)
+    target_role = models.CharField(max_length=255, blank=True)
+    target_company = models.CharField(max_length=255, blank=True)
+    target_industry = models.CharField(max_length=100, blank=True)
+    experience_level = models.CharField(max_length=30, blank=True)
+
+    # Step tracking
+    current_step = models.CharField(
+        max_length=30, choices=STEP_CHOICES, default=STEP_START,
+    )
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE,
+    )
+
+    # Final output link
+    generated_resume = models.ForeignKey(
+        GeneratedResume, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='builder_chat',
+        help_text='Final generated resume file after finalize step',
+    )
+
+    credits_deducted = models.BooleanField(
+        default=False,
+        help_text='Whether credits were deducted for PDF/DOCX generation.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = 'Resume Chat Session'
+        verbose_name_plural = 'Resume Chat Sessions'
+        indexes = [
+            models.Index(fields=['user', '-updated_at']),
+            models.Index(fields=['user', 'status']),
+        ]
+
+    def __str__(self):
+        name = (self.resume_data or {}).get('contact', {}).get('name', 'Untitled')
+        return f"ResumeChat {name} ({self.status}, step={self.current_step})"
+
+    @property
+    def step_number(self):
+        """1-based index of current step in the wizard."""
+        try:
+            return self.STEP_ORDER.index(self.current_step) + 1
+        except ValueError:
+            return 0
+
+    @property
+    def total_steps(self):
+        return len(self.STEP_ORDER)
+
+    def advance_step(self):
+        """Move to the next step in the wizard. Returns the new step name."""
+        try:
+            idx = self.STEP_ORDER.index(self.current_step)
+        except ValueError:
+            return self.current_step
+        if idx + 1 < len(self.STEP_ORDER):
+            self.current_step = self.STEP_ORDER[idx + 1]
+        return self.current_step
+
+    def go_back(self):
+        """Move to the previous step. Returns the new step name."""
+        try:
+            idx = self.STEP_ORDER.index(self.current_step)
+        except ValueError:
+            return self.current_step
+        if idx > 0:
+            self.current_step = self.STEP_ORDER[idx - 1]
+        return self.current_step
+
+
+class ResumeChatMessage(models.Model):
+    """
+    Individual message in a resume chat session.
+
+    Each assistant message includes a ``ui_spec`` JSON that tells the
+    frontend what interactive component to render (buttons, chips,
+    editable cards, etc.).
+    """
+
+    ROLE_USER = 'user'
+    ROLE_ASSISTANT = 'assistant'
+    ROLE_SYSTEM = 'system'
+    ROLE_CHOICES = [
+        (ROLE_USER, 'User'),
+        (ROLE_ASSISTANT, 'Assistant'),
+        (ROLE_SYSTEM, 'System'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    chat = models.ForeignKey(
+        ResumeChat, on_delete=models.CASCADE, related_name='messages',
+    )
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    content = models.TextField(
+        blank=True,
+        help_text='Display text for the message bubble',
+    )
+    ui_spec = models.JSONField(
+        null=True, blank=True,
+        help_text='Structured UI specification for the frontend to render (type, fields, actions, etc.)',
+    )
+    extracted_data = models.JSONField(
+        null=True, blank=True,
+        help_text='Partial resume_data extracted/updated in this turn',
+    )
+    step = models.CharField(
+        max_length=30, blank=True,
+        help_text='Which wizard step this message belongs to',
+    )
+
+    # Link to LLM response for cost tracking (only for assistant messages that used AI)
+    llm_response = models.ForeignKey(
+        LLMResponse, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='chat_messages',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+        verbose_name = 'Resume Chat Message'
+        verbose_name_plural = 'Resume Chat Messages'
+        indexes = [
+            models.Index(fields=['chat', 'created_at']),
+        ]
+
+    def __str__(self):
+        preview = self.content[:50] if self.content else '(no text)'
+        return f"[{self.role}] {preview}"

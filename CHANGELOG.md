@@ -5,6 +5,124 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.28.0] — 2026-03-02
+
+### Features — Company Intelligence & Enriched Job Crawl
+
+#### Added — Company Models (`analyzer/models.py`)
+- **`Company`** — Brand-level umbrella (UUID PK, slug, logo_url, website, industry, employee_size_range, headquarters, tech_stack JSON, is_active). Represents a single employer brand (e.g. "Stripe").
+- **`CompanyEntity`** — Per-country legal entity (FK → Company, display_name, country ISO-3166, registration_id, is_indian_entity flag, is_active). Unique constraint on `(company, country, display_name)`. Handles multi-country employers (e.g. "Stripe Inc." US vs "Stripe India Pvt Ltd" IN).
+- **`CompanyCareerPage`** — Career page URLs tied to an entity (FK → CompanyEntity, url, label, country, crawl_frequency choice `daily`/`weekly`/`monthly`, is_active, last_crawled_at). Supports multiple pages per entity (intern vs experienced, different departments).
+
+#### Added — Enriched DiscoveredJob Fields (15 new columns)
+- **`source_page_url`** (URL) — The search/career page URL we crawled (vs `url` which is the actual job posting link).
+- **`company_entity`** (FK → CompanyEntity, nullable) — Links a discovered job to a known company entity.
+- **`skills_required`** (JSONField) — LLM-extracted list of required skills, e.g. `["Python", "AWS", "Kubernetes"]`.
+- **`skills_nice_to_have`** (JSONField) — LLM-extracted nice-to-have skills.
+- **`experience_years_min`** / **`experience_years_max`** (PositiveSmallIntegerField, nullable) — Experience range.
+- **`employment_type`** (CharField choices) — `full_time`, `part_time`, `contract`, `internship`, `freelance`, or blank.
+- **`remote_policy`** (CharField choices) — `onsite`, `hybrid`, `remote`, or blank.
+- **`seniority_level`** (CharField choices) — `intern`, `junior`, `mid`, `senior`, `lead`, `manager`, `director`, `executive`, or blank.
+- **`industry`** (CharField) — Industry sector extracted by LLM.
+- **`education_required`** (CharField) — Education requirement (e.g. `bachelor`, `master`, `none`).
+- **`salary_min_usd`** / **`salary_max_usd`** (DecimalField, nullable) — LLM-normalised annual USD salary range.
+
+#### Changed — LLM Job Extraction Prompt (`analyzer/services/job_sources/firecrawl_source.py`)
+- Expanded from 7-field to 17-field schema per job listing. Same LLM call, ~$0.002 marginal cost per page.
+- New extraction fields: `skills_required`, `skills_nice_to_have`, `experience_years_min`, `experience_years_max`, `employment_type`, `remote_policy`, `seniority_level`, `industry`, `education_required`, `salary_min_usd`, `salary_max_usd`.
+- Added `_safe_int()` helper for robust integer parsing from LLM output.
+
+#### Changed — `RawJobListing` Dataclass (`analyzer/services/job_sources/base.py`)
+- Expanded from 10 to 21 fields to carry enriched data through the pipeline.
+
+#### Changed — Crawl Tasks (`analyzer/tasks.py`)
+- Both `crawl_jobs_daily_task` and `crawl_jobs_for_alert_task` updated to persist all enriched fields into `DiscoveredJob.objects.get_or_create()` defaults.
+
+#### Changed — Serializers & Admin
+- `DiscoveredJobSerializer` now exposes all 23 fields (10 original + 13 enriched).
+- `CompanyAdmin` with `CompanyEntityInline` and `CompanyCareerPageInline`.
+- `CompanyEntityAdmin` with `CompanyCareerPageInline` and `career_page_count` column.
+- `CompanyCareerPageAdmin` with autocomplete and field filters.
+- `DiscoveredJobAdmin` updated with enriched field display, expanded fieldsets, and new filters (`employment_type`, `remote_policy`, `seniority_level`).
+
+#### Migrations
+- `analyzer/0022_add_company_models_enrich_discovered_job` — Creates Company, CompanyEntity, CompanyCareerPage tables and adds 15 columns to DiscoveredJob.
+
+---
+
+## [0.27.0] — 2026-03-01
+
+### Features — Resume Data Extraction (Parsed Content)
+
+#### Added — Resume Parser Service (`analyzer/services/resume_parser.py`)
+- **`parse_resume_text(resume_text)`** — LLM-based extraction of structured personal data (contact, summary, experience, education, skills, certifications, projects) from raw resume text. Lightweight prompt focused on faithful extraction (no rewriting). Uses same JSON schema as `GeneratedResume.resume_content` for consistency. Low temperature (0.1) for deterministic output.
+
+#### Added — `parsed_content` Field on `ResumeAnalysis`
+- **`parsed_content` JSONField** — Stores structured resume data extracted during analysis pipeline. Nullable (null until extraction completes or if extraction fails). Cleared on soft-delete.
+
+#### Added — Pipeline Step `resume_parse`
+- **`STEP_RESUME_PARSE`** — New pipeline step after `parse_result`. Calls `parse_resume_text()` to extract structured data from `resume_text`. **Non-fatal**: if extraction fails, the analysis still completes successfully with `parsed_content = null`.
+- Pipeline order: `pending` → `pdf_extract` → `jd_scrape` → `llm_call` → `parse_result` → `resume_parse` → `done`.
+
+#### Changed — Chat Builder Pre-fill (`_prefill_from_resume`)
+- Now falls back to `ResumeAnalysis.parsed_content` when no `GeneratedResume` exists. Priority: `GeneratedResume.resume_content` → `ResumeAnalysis.parsed_content` → `UserProfile` data. This means users who upload + analyze a resume can now use it as a base in the chat builder without needing to run the full resume generation flow first.
+
+#### Changed — Serializers & Admin
+- `ResumeAnalysisDetailSerializer` now includes `parsed_content` in the response.
+- `ResumeAnalysisAdmin.readonly_fields` includes `parsed_content`.
+
+#### Migrations
+- `analyzer/0021_add_parsed_content_to_analysis` — Adds `parsed_content` JSONField to `ResumeAnalysis` and `resume_parse` to `pipeline_step` choices.
+
+#### Tests
+- 24 new tests across 5 test classes: `parse_resume_text()` (success, code fences, empty text, no API key, schema validation), `_step_resume_parse` pipeline integration (populate, skip-if-parsed, skip-if-no-text, non-fatal failure, step ordering), model (nullable, stores JSON, soft-delete clears, step choice valid), chat builder fallback (uses parsed, prefers generated, falls back to any analysis, falls to profile, ensures all keys), serializer (includes parsed_content, null case).
+
+---
+
+## [0.26.0] — 2026-03-01
+
+### Features — Conversational Resume Builder
+
+#### Added — Resume Chat Models
+- **`ResumeChat` model** — UUID PK, 11-step wizard (`start` → `contact` → `target_role` → `experience_input` → `experience_review` → `education` → `skills` → `certifications` → `projects` → `review` → `done`). Sources: `scratch`, `profile`, `previous`. Status: `active`, `completed`, `abandoned`. Progressive `resume_data` JSONField follows `GeneratedResume.resume_content` schema. Navigation: `advance_step()`, `go_back()`, `step_number`, `total_steps`.
+- **`ResumeChatMessage` model** — UUID PK. Roles: `user`, `assistant`, `system`. `ui_spec` JSONField for frontend rendering instructions. `extracted_data` for partial resume updates. Linked to `LLMResponse` for cost tracking.
+
+#### Added — Service Layer (`analyzer/services/resume_chat_service.py`)
+- **`start_session(user, source, base_resume_id)`** — Creates session, pre-fills from profile or previous resume.
+- **`process_step(chat, action, payload)`** — Dispatches to per-step handlers, records messages, advances wizard.
+- **`finalize_resume(chat, template, format)`** — Creates `GeneratedResume` record from `resume_data`.
+- **10 UI spec types**: `editable_card`, `buttons`, `single_select`, `multi_select_chips`, `text_input`, `textarea`, `form_group`, `card_list`, `preview`, `template_picker`.
+- **Pre-fill sources**: `_prefill_from_profile()` uses `User` + `UserProfile` + `JobSearchProfile`; `_prefill_from_resume()` clones `GeneratedResume.resume_content`.
+- **LLM calls**: `_llm_structure_experience()` (free-text → structured JSON), `_llm_polish_resume()` (summary + ATS optimization). Only 1-2 calls per session.
+
+#### Added — API Endpoints
+- **`POST /api/v1/resume-chat/start/`** — Start new session (scratch/profile/previous). Max 5 active sessions per user.
+- **`GET /api/v1/resume-chat/`** — List sessions (optional `?status=` filter). Returns up to 20, newest first.
+- **`GET /api/v1/resume-chat/<uuid>/`** — Session detail with all messages and UI specs.
+- **`POST /api/v1/resume-chat/<uuid>/submit/`** — Submit step action (`continue`, `back`, `update_card`, `submit`, `skip`, etc.). Returns new messages + progress.
+- **`POST /api/v1/resume-chat/<uuid>/finalize/`** — Generate PDF/DOCX. Deducts 2 credits. Returns `GeneratedResume` UUID for polling. Premium template gating applied. Auto-refund on failure.
+- **`DELETE /api/v1/resume-chat/<uuid>/`** — Delete session and all messages.
+- **`GET /api/v1/resume-chat/resumes/`** — List user's resumes available as base for `source=previous`.
+
+#### Added — Celery Task
+- **`render_builder_resume_task`** — Renders `resume_content` to PDF/DOCX via template registry. Retries on transient errors. Refunds credits on failure.
+
+#### Added — Credit Cost
+- **`resume_builder = 2`** credits in `_DEFAULT_COSTS` fallback and `seed_credit_costs` management command.
+
+#### Added — Admin
+- **`ResumeChatAdmin`** — List display: ID, user, source, step, status, timestamps. Filters: status, source, step.
+- **`ResumeChatMessageAdmin`** — List display: ID, chat, role, step, timestamp. Filters: role, step.
+
+#### Migrations
+- `analyzer/0019_add_resume_chat_models` — Creates `ResumeChat` and `ResumeChatMessage` tables with indexes.
+- `analyzer/0020_make_generated_resume_analysis_nullable` — Makes `GeneratedResume.analysis` nullable for builder-created resumes.
+
+#### Tests
+- 36 new tests across 10 test classes: model CRUD, step navigation, service (start/process/finalize), API (start/list/detail/submit/finalize/delete/resumes), Celery task (render/failure/refund), credit deduction, session limits.
+
+---
+
 ## [0.25.1] — 2026-02-28
 
 ### Email Template Branding

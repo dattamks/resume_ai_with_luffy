@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
+from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate, ResumeChat, ResumeChatMessage
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -213,6 +213,7 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             'formatting_flags',
             'quick_wins',
             'summary',
+            'parsed_content',
             'ai_provider_used',
             'ai_response_time_seconds',
             'report_pdf_url',
@@ -412,8 +413,15 @@ class DiscoveredJobSerializer(serializers.ModelSerializer):
     class Meta:
         model = DiscoveredJob
         fields = (
-            'id', 'source', 'title', 'company', 'location',
-            'salary_range', 'description_snippet', 'url', 'posted_at', 'created_at',
+            'id', 'source', 'title', 'company', 'company_entity', 'location',
+            'salary_range', 'description_snippet', 'url', 'source_page_url',
+            'posted_at', 'created_at',
+            # Enriched fields
+            'skills_required', 'skills_nice_to_have',
+            'experience_years_min', 'experience_years_max',
+            'employment_type', 'remote_policy', 'seniority_level',
+            'industry', 'education_required',
+            'salary_min_usd', 'salary_max_usd',
         )
         read_only_fields = fields
 
@@ -698,3 +706,115 @@ class BulkAnalysisCreateSerializer(serializers.Serializer):
 
         return attrs
 
+
+# ── Resume Chat (Conversational Builder) ──────────────────────────────────────
+
+
+class ResumeChatMessageSerializer(serializers.ModelSerializer):
+    """Read-only serializer for individual chat messages."""
+
+    class Meta:
+        model = ResumeChatMessage
+        fields = (
+            'id', 'role', 'content', 'ui_spec',
+            'extracted_data', 'step', 'created_at',
+        )
+        read_only_fields = fields
+
+
+class ResumeChatSerializer(serializers.ModelSerializer):
+    """Read-only serializer for a chat session with messages."""
+    messages = ResumeChatMessageSerializer(many=True, read_only=True)
+    step_number = serializers.IntegerField(read_only=True)
+    total_steps = serializers.IntegerField(read_only=True)
+    generated_resume_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeChat
+        fields = (
+            'id', 'source', 'current_step', 'status',
+            'target_role', 'target_company', 'target_industry',
+            'experience_level', 'resume_data',
+            'step_number', 'total_steps',
+            'generated_resume_url', 'credits_deducted',
+            'created_at', 'updated_at', 'messages',
+        )
+        read_only_fields = fields
+
+    def get_generated_resume_url(self, obj):
+        if obj.generated_resume and obj.generated_resume.file:
+            return obj.generated_resume.file.url
+        return None
+
+
+class ResumeChatListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing chat sessions (no messages)."""
+    step_number = serializers.IntegerField(read_only=True)
+    total_steps = serializers.IntegerField(read_only=True)
+    name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeChat
+        fields = (
+            'id', 'source', 'current_step', 'status',
+            'target_role', 'step_number', 'total_steps',
+            'name', 'created_at', 'updated_at',
+        )
+        read_only_fields = fields
+
+    def get_name(self, obj):
+        contact = (obj.resume_data or {}).get('contact', {})
+        return contact.get('name', '') or 'Untitled Resume'
+
+
+class ResumeChatStartSerializer(serializers.Serializer):
+    """Input serializer for starting a new chat session."""
+    source = serializers.ChoiceField(
+        choices=[
+            ('scratch', 'Start Fresh'),
+            ('profile', 'From Profile Data'),
+            ('previous', 'From Previous Resume'),
+        ],
+        default='scratch',
+    )
+    base_resume_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        source = attrs.get('source')
+        base_resume_id = attrs.get('base_resume_id')
+        if source == 'previous' and not base_resume_id:
+            raise serializers.ValidationError(
+                {'base_resume_id': 'Required when source is "previous".'}
+            )
+        return attrs
+
+
+class ResumeChatSubmitSerializer(serializers.Serializer):
+    """Input serializer for submitting an action in a chat step."""
+    action = serializers.CharField(max_length=50)
+    payload = serializers.DictField(required=False, default=dict)
+
+
+class ResumeChatFinalizeSerializer(serializers.Serializer):
+    """Input serializer for finalizing a chat session (generate PDF/DOCX)."""
+    template = serializers.SlugField(max_length=50, default='ats_classic')
+    format = serializers.ChoiceField(
+        choices=[('pdf', 'PDF'), ('docx', 'DOCX')],
+        default='pdf',
+    )
+
+    def validate_template(self, value):
+        """Validate template exists and is active."""
+        try:
+            template_obj = ResumeTemplate.objects.get(slug=value, is_active=True)
+        except ResumeTemplate.DoesNotExist:
+            active_slugs = list(
+                ResumeTemplate.objects.filter(is_active=True)
+                .values_list('slug', flat=True)
+            )
+            raise serializers.ValidationError(
+                f'Template "{value}" is not available. '
+                f'Available: {", ".join(active_slugs) or "none"}'
+            )
+        self._template_obj = template_obj
+        return value

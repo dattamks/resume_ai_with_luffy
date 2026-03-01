@@ -28,6 +28,16 @@ logger = logging.getLogger('analyzer')
 
 _MD_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)\n?\s*```$', re.DOTALL)
 
+
+def _safe_int(value) -> int | None:
+    """Convert a value to int, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
 # Default job board search URL templates
 _DEFAULT_SOURCES = [
     {
@@ -64,16 +74,30 @@ Return ONLY a JSON array following this exact schema:
     "location": "<job location>",
     "url": "<direct link to the job posting, or empty string if not found>",
     "salary": "<salary range if shown, or empty string>",
-    "snippet": "<first 200 chars of job description/requirements>",
-    "posted": "<posting date if shown, e.g. '2 days ago', 'Jan 15', or empty string>"
+    "snippet": "<first 300 chars of job description/requirements>",
+    "posted": "<posting date if shown, e.g. '2 days ago', 'Jan 15', or empty string>",
+    "skills_required": ["<skill1>", "<skill2>"],
+    "skills_nice_to_have": ["<skill1>"],
+    "experience_years_min": <int or null>,
+    "experience_years_max": <int or null>,
+    "employment_type": "<full_time|part_time|contract|internship|freelance or empty>",
+    "remote_policy": "<onsite|hybrid|remote or empty>",
+    "seniority_level": "<intern|junior|mid|senior|lead|manager|director|executive or empty>",
+    "industry": "<industry name or empty>",
+    "education_required": "<none|diploma|bachelor|master|phd or empty>",
+    "salary_min_usd": <annual salary lower bound normalised to USD int, or null>,
+    "salary_max_usd": <annual salary upper bound normalised to USD int, or null>
   }}
 ]
 
 Rules:
 - Extract ONLY actual job listings, not ads or site navigation
-- If a field is not available, use an empty string
+- If a field is not available, use an empty string (or null for int fields)
 - Include ALL distinct job listings on the page
 - Do not fabricate or invent job data — only extract what is on the page
+- For skills: extract specific technical and professional skills mentioned
+- For salary normalisation: convert any currency to approximate annual USD (e.g. ₹15 LPA → 18000, €60K → 65000)
+- For seniority: infer from title and requirements if not explicitly stated
 - Limit to 30 listings maximum per page
 """
 
@@ -262,6 +286,18 @@ class FirecrawlJobSource(BaseJobSource):
                 description_snippet=str(job.get('snippet', '')).strip()[:500],
                 posted_at=None,  # Relative dates not reliably parseable; embedding handles recency
                 raw_data=job,
+                source_page_url=url,
+                skills_required=job.get('skills_required') or [],
+                skills_nice_to_have=job.get('skills_nice_to_have') or [],
+                experience_years_min=_safe_int(job.get('experience_years_min')),
+                experience_years_max=_safe_int(job.get('experience_years_max')),
+                employment_type=str(job.get('employment_type', '')).strip(),
+                remote_policy=str(job.get('remote_policy', '')).strip(),
+                seniority_level=str(job.get('seniority_level', '')).strip(),
+                industry=str(job.get('industry', '')).strip(),
+                education_required=str(job.get('education_required', '')).strip(),
+                salary_min_usd=_safe_int(job.get('salary_min_usd')),
+                salary_max_usd=_safe_int(job.get('salary_max_usd')),
             ))
 
         return listings

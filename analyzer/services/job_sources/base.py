@@ -28,6 +28,20 @@ class RawJobListing:
     description_snippet: str = ''
     posted_at: Optional[str] = None            # ISO-8601 string or None
     raw_data: dict = field(default_factory=dict)
+    source_page_url: str = ''                  # The search/career page URL we crawled
+
+    # Enriched fields (extracted by LLM during crawl)
+    skills_required: List[str] = field(default_factory=list)
+    skills_nice_to_have: List[str] = field(default_factory=list)
+    experience_years_min: Optional[int] = None
+    experience_years_max: Optional[int] = None
+    employment_type: str = ''                  # full_time, part_time, contract, internship, freelance
+    remote_policy: str = ''                    # onsite, hybrid, remote
+    seniority_level: str = ''                  # intern, junior, mid, senior, lead, manager, director, executive
+    industry: str = ''                         # e.g. 'FinTech', 'Healthcare'
+    education_required: str = ''               # e.g. 'bachelor', 'master', 'none'
+    salary_min_usd: Optional[int] = None       # LLM-normalised annual USD
+    salary_max_usd: Optional[int] = None       # LLM-normalised annual USD
 
 
 class BaseJobSource(ABC):

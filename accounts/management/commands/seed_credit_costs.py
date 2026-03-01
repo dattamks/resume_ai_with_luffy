@@ -35,6 +35,11 @@ CREDIT_COSTS = [
         'cost': 1,
         'description': 'Cost per AI-generated cover letter from analysis.',
     },
+    {
+        'action': 'resume_builder',
+        'cost': 2,
+        'description': 'Cost per resume created via the conversational resume builder.',
+    },
 ]
 
 

@@ -6,6 +6,7 @@ from ..models import ResumeAnalysis, LLMResponse
 from .pdf_extractor import PDFExtractor
 from .jd_fetcher import JDFetcher
 from .ai_providers.factory import get_ai_provider
+from .resume_parser import parse_resume_text
 
 logger = logging.getLogger('analyzer')
 
@@ -58,6 +59,7 @@ class ResumeAnalyzer:
         (ResumeAnalysis.STEP_JD_SCRAPE, '_step_jd_scrape'),
         (ResumeAnalysis.STEP_LLM_CALL, '_step_llm_call'),
         (ResumeAnalysis.STEP_PARSE_RESULT, '_step_parse_result'),
+        (ResumeAnalysis.STEP_RESUME_PARSE, '_step_resume_parse'),
     ]
 
     # Steps that are considered "done" and should be skipped on resume
@@ -269,6 +271,41 @@ class ResumeAnalyzer:
         analysis.save(update_fields=update_fields)
         logger.debug('✅ Results saved (grade=%s, ats=%s, role=%s, company=%s)',
                      analysis.overall_grade, analysis.ats_score, analysis.jd_role, analysis.jd_company)
+
+    # ── Step 5: Parse resume into structured data ──────────────────────────
+
+    def _step_resume_parse(self, analysis: ResumeAnalysis, step_name: str):
+        """
+        Extract structured personal data (contact, experience, education, etc.)
+        from the raw resume text using an LLM call.
+        Stored in analysis.parsed_content for use by downstream features.
+        Non-fatal: if parsing fails, the analysis still completes successfully.
+        """
+        if analysis.parsed_content:
+            logger.debug('Skipping resume parse — already have parsed_content')
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['pipeline_step'])
+            return
+
+        if not analysis.resume_text:
+            logger.warning('Skipping resume parse — no resume_text available')
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['pipeline_step'])
+            return
+
+        try:
+            result = parse_resume_text(analysis.resume_text)
+            analysis.parsed_content = result['parsed']
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['parsed_content', 'pipeline_step'])
+            logger.debug('✅ Resume parsed — contact=%s, %d experience entries',
+                         analysis.parsed_content.get('contact', {}).get('name', '?'),
+                         len(analysis.parsed_content.get('experience', [])))
+        except Exception as exc:
+            # Non-fatal — log and continue. The analysis is still valid without parsed_content.
+            logger.warning('Resume parse failed (non-fatal): %s', exc)
+            analysis.pipeline_step = step_name
+            analysis.save(update_fields=['pipeline_step'])
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

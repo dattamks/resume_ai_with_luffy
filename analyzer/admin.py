@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
+from .models import Company, CompanyEntity, CompanyCareerPage
 
 
 @admin.register(Resume)
@@ -16,7 +17,7 @@ class ResumeAnalysisAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'jd_role', 'jd_company', 'status', 'overall_grade', 'ats_score', 'is_deleted', 'created_at')
     list_filter = ('status', 'jd_input_type', 'ai_provider_used', 'deleted_at')
     search_fields = ('user__username', 'jd_role', 'jd_company')
-    readonly_fields = ('resume_text', 'resolved_jd', 'created_at', 'updated_at', 'deleted_at')
+    readonly_fields = ('resume_text', 'resolved_jd', 'parsed_content', 'created_at', 'updated_at', 'deleted_at')
     raw_id_fields = ('user', 'resume')
 
     def get_queryset(self, request):
@@ -52,6 +53,82 @@ class GeneratedResumeAdmin(admin.ModelAdmin):
     raw_id_fields = ('user', 'analysis')
 
 
+# ── Company Intelligence ──────────────────────────────────────────────────────
+
+
+class CompanyEntityInline(admin.TabularInline):
+    model = CompanyEntity
+    extra = 0
+    fields = ('display_name', 'legal_name', 'operating_country', 'operating_city', 'is_headquarters', 'is_indian_entity', 'website', 'is_active')
+    readonly_fields = ('id',)
+
+
+class CompanyCareerPageInline(admin.TabularInline):
+    model = CompanyCareerPage
+    extra = 0
+    fields = ('url', 'label', 'country', 'crawl_frequency', 'is_active', 'last_crawled_at')
+    readonly_fields = ('id', 'last_crawled_at')
+
+
+@admin.register(Company)
+class CompanyAdmin(admin.ModelAdmin):
+    list_display = ('name', 'industry', 'company_size', 'headquarters_country', 'headquarters_city', 'is_active', 'entity_count', 'updated_at')
+    list_filter = ('is_active', 'company_size', 'industry')
+    search_fields = ('name', 'slug')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    prepopulated_fields = {'slug': ('name',)}
+    inlines = [CompanyEntityInline]
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'slug', 'description', 'logo', 'industry', 'company_size', 'founded_year', 'is_active'),
+        }),
+        ('Headquarters', {
+            'fields': ('headquarters_country', 'headquarters_city'),
+        }),
+        ('Links', {
+            'fields': ('linkedin_url', 'glassdoor_url'),
+        }),
+        ('Technical', {
+            'fields': ('tech_stack',),
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    @admin.display(description='Entities')
+    def entity_count(self, obj):
+        return obj.entities.count()
+
+
+@admin.register(CompanyEntity)
+class CompanyEntityAdmin(admin.ModelAdmin):
+    list_display = ('display_name', 'company', 'operating_country', 'is_headquarters', 'is_indian_entity', 'is_active', 'career_page_count')
+    list_filter = ('is_headquarters', 'is_indian_entity', 'is_active', 'operating_country')
+    search_fields = ('display_name', 'legal_name', 'company__name')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    raw_id_fields = ('company',)
+    inlines = [CompanyCareerPageInline]
+
+    @admin.display(description='Career Pages')
+    def career_page_count(self, obj):
+        return obj.career_pages.count()
+
+
+@admin.register(CompanyCareerPage)
+class CompanyCareerPageAdmin(admin.ModelAdmin):
+    list_display = ('entity', 'label', 'url_short', 'country', 'crawl_frequency', 'is_active', 'last_crawled_at')
+    list_filter = ('is_active', 'crawl_frequency', 'country')
+    search_fields = ('entity__display_name', 'entity__company__name', 'url')
+    readonly_fields = ('id', 'last_crawled_at', 'created_at', 'updated_at')
+    raw_id_fields = ('entity',)
+
+    @admin.display(description='URL')
+    def url_short(self, obj):
+        return obj.url[:80]
+
+
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
 
 from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun, CrawlSource  # noqa: E402
@@ -76,11 +153,29 @@ class JobAlertAdmin(admin.ModelAdmin):
 
 @admin.register(DiscoveredJob)
 class DiscoveredJobAdmin(admin.ModelAdmin):
-    list_display = ('id', 'source', 'title', 'company', 'location', 'posted_at', 'created_at')
-    list_filter = ('source',)
-    search_fields = ('title', 'company', 'location')
+    list_display = ('id', 'source', 'title', 'company', 'location', 'seniority_level', 'remote_policy', 'industry', 'posted_at', 'created_at')
+    list_filter = ('source', 'seniority_level', 'employment_type', 'remote_policy', 'industry')
+    search_fields = ('title', 'company', 'location', 'skills_required')
     readonly_fields = ('id', 'raw_data', 'created_at')
+    raw_id_fields = ('company_entity',)
     list_per_page = 50
+    fieldsets = (
+        (None, {
+            'fields': ('source', 'external_id', 'source_page_url', 'url', 'title', 'company', 'company_entity', 'location'),
+        }),
+        ('Enriched Data', {
+            'fields': ('skills_required', 'skills_nice_to_have', 'experience_years_min', 'experience_years_max',
+                       'employment_type', 'remote_policy', 'seniority_level', 'industry', 'education_required',
+                       'salary_range', 'salary_min_usd', 'salary_max_usd'),
+        }),
+        ('Content', {
+            'fields': ('description_snippet', 'raw_data'),
+            'classes': ('collapse',),
+        }),
+        ('Metadata', {
+            'fields': ('id', 'posted_at', 'created_at'),
+        }),
+    )
 
 
 @admin.register(JobMatch)
@@ -185,4 +280,37 @@ class ResumeTemplateAdmin(admin.ModelAdmin):
     readonly_fields = ('id', 'created_at', 'updated_at')
     prepopulated_fields = {'slug': ('name',)}
     ordering = ('sort_order', 'name')
+
+
+# ── Phase 15: Conversational Resume Builder ──────────────────────────────────
+
+from .models import ResumeChat, ResumeChatMessage  # noqa: E402
+
+
+@admin.register(ResumeChat)
+class ResumeChatAdmin(admin.ModelAdmin):
+    list_display = ('id_short', 'user', 'source', 'current_step', 'status', 'created_at', 'updated_at')
+    list_filter = ('status', 'source', 'current_step')
+    search_fields = ('user__username', 'id')
+    readonly_fields = ('id', 'resume_data', 'created_at', 'updated_at')
+    raw_id_fields = ('user', 'base_resume', 'generated_resume')
+    list_per_page = 50
+
+    @admin.display(description='ID')
+    def id_short(self, obj):
+        return str(obj.id)[:8]
+
+
+@admin.register(ResumeChatMessage)
+class ResumeChatMessageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'chat_short', 'role', 'step', 'created_at')
+    list_filter = ('role', 'step')
+    search_fields = ('chat__user__username',)
+    readonly_fields = ('id', 'content', 'ui_spec', 'extracted_data', 'created_at')
+    raw_id_fields = ('chat',)
+    list_per_page = 50
+
+    @admin.display(description='Chat')
+    def chat_short(self, obj):
+        return str(obj.chat_id)[:8]
 
