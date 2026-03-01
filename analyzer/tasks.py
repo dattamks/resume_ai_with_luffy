@@ -1238,6 +1238,148 @@ def crawl_jobs_for_alert_task(alert_id):
                 logger.exception('Failed to refund credits for run %s', run.id)
 
 
+# ── Ingest Pipeline: Embed + Match ───────────────────────────────────────────
+
+# Max jobs to embed in a single API call (OpenAI batch limit)
+_EMBED_BATCH_SIZE = 100
+# Lock TTL for match_all_alerts_task dedup (seconds)
+_MATCH_LOCK_TTL = 300  # 5 minutes
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    acks_late=True,
+    ignore_result=True,
+)
+def process_ingested_jobs_task(self, job_ids):
+    """
+    Process newly ingested jobs from the Crawler Bot ingest API.
+
+    Triggered by ``JobIngestView`` and ``JobBulkIngestView`` when new
+    ``DiscoveredJob`` records are created (not on updates).
+
+    Args:
+        job_ids: List of DiscoveredJob UUID strings, OR ``None`` to
+                 drain the Redis queue populated by single-job ingests.
+
+    Pipeline:
+    1. Compute pgvector embeddings for new jobs **in batches**
+       (single API call per batch of 100 — not one call per job)
+    2. Chain ``match_all_alerts_task`` with a Redis dedup lock to
+       prevent concurrent matching storms when the bot sends many
+       bulk requests in quick succession
+
+    This closes the gap where bot-ingested jobs were saved to the DB
+    but never embedded or matched against user profiles.
+    """
+    import time as _time
+    from .models import DiscoveredJob
+
+    # If job_ids is None, drain the Redis queue (debounced single-job ingests)
+    if job_ids is None:
+        queue_key = 'ingest:pending_job_ids'
+        raw = cache.get(queue_key, '')
+        cache.delete(queue_key)
+        cache.delete('ingest:pending_job_ids:scheduled')
+        job_ids = [jid.strip() for jid in raw.split(',') if jid.strip()]
+
+    if not job_ids:
+        return
+
+    start = _time.monotonic()
+    logger.info('process_ingested_jobs_task: processing %d new jobs', len(job_ids))
+
+    # Step 1: Compute embeddings in batches (if pgvector is available)
+    embedded_count = 0
+    if hasattr(DiscoveredJob, 'embedding'):
+        # Load all jobs at once
+        jobs = list(
+            DiscoveredJob.objects.filter(id__in=job_ids)
+            .values_list('id', 'title', 'company', 'description_snippet')
+        )
+
+        # Process in batches of _EMBED_BATCH_SIZE
+        for batch_start in range(0, len(jobs), _EMBED_BATCH_SIZE):
+            batch = jobs[batch_start:batch_start + _EMBED_BATCH_SIZE]
+
+            # Build text representations for the batch
+            texts = []
+            batch_ids = []
+            for job_id, title, company, snippet in batch:
+                parts = [title or '']
+                if company:
+                    parts.append(f'at {company}')
+                if snippet:
+                    parts.append((snippet or '')[:500])
+                text = ' | '.join(parts)
+                if text.strip():
+                    texts.append(text)
+                    batch_ids.append(job_id)
+
+            if not texts:
+                continue
+
+            try:
+                from .services.embedding_service import compute_embeddings_batch
+                embeddings = compute_embeddings_batch(texts)
+
+                # Bulk-update embeddings
+                for job_id, embedding in zip(batch_ids, embeddings):
+                    if embedding is not None:
+                        try:
+                            DiscoveredJob.objects.filter(id=job_id).update(
+                                embedding=embedding,
+                            )
+                            embedded_count += 1
+                        except Exception as exc:
+                            logger.warning(
+                                'process_ingested_jobs_task: failed to save embedding for job %s: %s',
+                                job_id, exc,
+                            )
+            except Exception as exc:
+                logger.warning(
+                    'process_ingested_jobs_task: batch embedding failed (batch starting at %d): %s',
+                    batch_start, exc,
+                )
+                # Fall back to single embeddings for this batch
+                from .services.embedding_service import compute_job_embedding
+                for job_id, title, company, snippet in batch:
+                    try:
+                        embedding = compute_job_embedding(
+                            title=title or '',
+                            company=company or '',
+                            description=snippet or '',
+                        )
+                        DiscoveredJob.objects.filter(id=job_id).update(embedding=embedding)
+                        embedded_count += 1
+                    except Exception:
+                        pass  # Already logged at batch level
+    else:
+        logger.info('process_ingested_jobs_task: pgvector not available — skipping embeddings')
+
+    duration = _time.monotonic() - start
+    logger.info(
+        'process_ingested_jobs_task: embedded %d/%d jobs in %.2fs',
+        embedded_count, len(job_ids), duration,
+    )
+
+    # Step 2: Chain matching — use Redis lock to prevent concurrent storms
+    # If another process_ingested_jobs_task already scheduled matching,
+    # the lock prevents a redundant run. The first match run will pick up
+    # all newly embedded jobs anyway.
+    lock_key = 'lock:match_all_alerts_after_ingest'
+    if cache.add(lock_key, 1, timeout=_MATCH_LOCK_TTL):
+        logger.info('process_ingested_jobs_task: acquired match lock — chaining match_all_alerts_task')
+        match_all_alerts_task.delay()
+    else:
+        logger.info(
+            'process_ingested_jobs_task: match lock already held — '
+            'skipping redundant match_all_alerts_task (another run will cover these jobs)'
+        )
+
+
 @shared_task(ignore_result=True)
 def match_all_alerts_task():
     """
@@ -1358,6 +1500,9 @@ def match_all_alerts_task():
         'match_all_alerts_task: completed in %.2fs, total_matched=%d across %d alerts',
         duration, total_matched, active_alerts.count(),
     )
+
+    # Release the ingest match lock so future ingestions can trigger matching
+    cache.delete('lock:match_all_alerts_after_ingest')
 
 
 # ── Weekly Email Digest ──────────────────────────────────────────────────────

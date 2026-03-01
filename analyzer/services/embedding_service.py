@@ -74,6 +74,80 @@ def compute_embedding(text: str) -> list[float]:
         raise ValueError(f'Embedding computation failed: {exc}') from exc
 
 
+def compute_embeddings_batch(texts: list[str]) -> list[list[float]]:
+    """
+    Compute vector embeddings for multiple texts in a single API call.
+
+    The OpenAI embeddings API accepts a list of inputs and returns one
+    embedding per input — much faster than N sequential calls.
+
+    Args:
+        texts: List of input texts. Each will be truncated to MAX_TEXT_LENGTH.
+
+    Returns:
+        List of embedding vectors (same order as input texts).
+
+    Raises:
+        ValueError: If API key is not configured or API call fails.
+    """
+    if not texts:
+        return []
+
+    api_key = getattr(settings, 'OPENROUTER_API_KEY', '')
+    model = getattr(settings, 'EMBEDDING_MODEL', _DEFAULT_MODEL)
+
+    if not api_key:
+        raise ValueError('OPENROUTER_API_KEY is not configured — cannot compute embeddings.')
+
+    # Clean and truncate each text
+    clean_texts = []
+    valid_indices = []
+    for i, text in enumerate(texts):
+        clean = text.strip() if text else ''
+        if not clean:
+            continue
+        if len(clean) > _MAX_TEXT_LENGTH:
+            clean = clean[:_MAX_TEXT_LENGTH]
+        clean_texts.append(clean)
+        valid_indices.append(i)
+
+    if not clean_texts:
+        raise ValueError('All texts are empty — cannot compute embeddings.')
+
+    client = get_openai_client()
+    start = time.monotonic()
+
+    try:
+        response = client.embeddings.create(
+            model=model,
+            input=clean_texts,
+        )
+        duration = time.monotonic() - start
+        logger.info(
+            'Batch embeddings computed: model=%s count=%d duration=%.2fs',
+            model, len(clean_texts), duration,
+        )
+
+        if not response.data or len(response.data) != len(clean_texts):
+            raise ValueError(
+                f'Embedding API returned {len(response.data) if response.data else 0} '
+                f'results for {len(clean_texts)} inputs.'
+            )
+
+        # Build result list preserving input order
+        # response.data is sorted by index
+        embeddings = [None] * len(texts)
+        for j, idx in enumerate(valid_indices):
+            embeddings[idx] = response.data[j].embedding
+
+        return embeddings
+
+    except Exception as exc:
+        duration = time.monotonic() - start
+        logger.error('Batch embedding API call failed (%.2fs): %s', duration, type(exc).__name__)
+        raise ValueError(f'Batch embedding computation failed: {exc}') from exc
+
+
 def compute_resume_embedding(resume) -> list[float]:
     """
     Compute an embedding for a resume's text content.

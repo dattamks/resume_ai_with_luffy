@@ -115,6 +115,43 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
 8. **Ingests jobs** last (`POST /api/v1/ingest/jobs/` or `/jobs/bulk/`)
 9. Updates `last_crawled_at` on the crawl source (`PATCH /api/v1/ingest/crawl-sources/<id>/`)
 
+### What Happens After Job Ingest (Automatic)
+
+When new jobs are ingested (newly created, not updates to existing records), the backend **automatically** triggers a background pipeline:
+
+```
+Bot sends POST /ingest/jobs/ or /jobs/bulk/
+          │
+          ▼
+  DiscoveredJob saved to DB
+          │ (only for newly created jobs)
+          ▼
+  ┌──────────────────────────────────────┐
+  │    process_ingested_jobs_task         │  ← Celery background task
+  │    (fires automatically, no bot      │
+  │     action needed)                   │
+  │                                      │
+  │  1. Compute pgvector embedding       │
+  │     for each new job                 │
+  │     (title + company + description)  │
+  │                                      │
+  │  2. Chain match_all_alerts_task       │
+  │     → cosine similarity vs every     │
+  │       user's JobSearchProfile        │
+  │     → create JobMatch records        │
+  │       (relevance_score ≥ 60%)        │
+  │     → create in-app Notification     │
+  │     → send email digest to users     │
+  └──────────────────────────────────────┘
+```
+
+**The bot does NOT need to:**
+- Compute embeddings — the backend does it
+- Trigger matching — the backend does it automatically
+- Send notifications — the backend handles that too
+
+**Idempotent upserts:** If the bot re-sends the same `(source, external_id)`, the record is updated but the embedding/matching pipeline does **not** re-fire (only new records trigger it).
+
 ---
 
 ## 2. Base URL & Authentication

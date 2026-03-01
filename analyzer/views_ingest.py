@@ -203,6 +203,11 @@ class CareerPageIngestView(APIView):
 class JobIngestView(APIView):
     """
     POST /api/v1/ingest/jobs/  — Upsert a single discovered job.
+
+    On newly created jobs, queues the job ID for batch embedding +
+    matching via a debounced Celery task (10s countdown). This avoids
+    firing a heavy pipeline per single POST when the bot sends many
+    individual requests in quick succession.
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
@@ -216,6 +221,21 @@ class JobIngestView(APIView):
             'Job ingested: %s @ %s (id=%s, source=%s, external_id=%s)',
             job.title, job.company, job.id, job.source, job.external_id,
         )
+        # Queue for debounced batch processing
+        if getattr(job, '_was_created', False):
+            from django.core.cache import cache
+            from .tasks import process_ingested_jobs_task
+
+            # Accumulate job IDs in Redis list; a debounced task drains it
+            queue_key = 'ingest:pending_job_ids'
+            lock_key = 'ingest:pending_job_ids:scheduled'
+            cache.set(queue_key, cache.get(queue_key, '') + str(job.id) + ',', timeout=120)
+            # Schedule the processing task only once (10s countdown debounce)
+            if cache.add(lock_key, 1, timeout=15):
+                process_ingested_jobs_task.apply_async(
+                    args=[None],  # None = drain from Redis queue
+                    countdown=10,
+                )
         return Response(
             {
                 'id': str(job.id),
@@ -232,6 +252,9 @@ class JobBulkIngestView(APIView):
     POST /api/v1/ingest/jobs/bulk/  — Upsert multiple jobs at once.
 
     Accepts: ``{ "jobs": [ { ... }, { ... } ] }``
+
+    On newly created jobs, fires a background task to compute pgvector
+    embeddings and run matching against all active job alerts.
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
@@ -252,6 +275,7 @@ class JobBulkIngestView(APIView):
 
         results = []
         errors = []
+        new_job_ids = []
         for i, item in enumerate(jobs_data):
             serializer = DiscoveredJobIngestSerializer(data=item)
             if serializer.is_valid():
@@ -261,10 +285,18 @@ class JobBulkIngestView(APIView):
                     'external_id': job.external_id,
                     'title': job.title,
                 })
+                if getattr(job, '_was_created', False):
+                    new_job_ids.append(str(job.id))
             else:
                 errors.append({'index': i, 'errors': serializer.errors})
 
-        logger.info('Bulk job ingest: %d success, %d errors', len(results), len(errors))
+        logger.info('Bulk job ingest: %d success, %d errors, %d new', len(results), len(errors), len(new_job_ids))
+
+        # Trigger embedding + matching pipeline for newly created jobs
+        if new_job_ids:
+            from .tasks import process_ingested_jobs_task
+            process_ingested_jobs_task.delay(new_job_ids)
+
         return Response(
             {
                 'ingested': len(results),

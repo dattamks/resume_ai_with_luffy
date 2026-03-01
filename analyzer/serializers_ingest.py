@@ -230,6 +230,8 @@ class DiscoveredJobIngestSerializer(serializers.ModelSerializer):
             external_id=external_id,
             defaults=validated_data,
         )
+        # Expose creation flag so the view can trigger embedding/matching
+        job._was_created = _created
         return job
 
 
