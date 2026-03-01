@@ -60,6 +60,7 @@ class CompanyIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []  # No JWT — uses X-Crawler-Key
+    throttle_classes = []        # No rate limit — protected by API key
 
     def get(self, request):
         qs = Company.objects.filter(is_active=True).order_by('name')
@@ -83,6 +84,7 @@ class CompanyBulkIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def post(self, request):
         companies_data = request.data.get('companies', [])
@@ -119,6 +121,7 @@ class CompanyEntityIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def get(self, request):
         qs = CompanyEntity.objects.filter(is_active=True).select_related('company')
@@ -145,6 +148,7 @@ class CompanyEntityBulkIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def post(self, request):
         entities_data = request.data.get('entities', [])
@@ -180,6 +184,7 @@ class CareerPageIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def post(self, request):
         serializer = CompanyCareerPageIngestSerializer(data=request.data)
@@ -201,6 +206,7 @@ class JobIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def post(self, request):
         serializer = DiscoveredJobIngestSerializer(data=request.data)
@@ -229,6 +235,7 @@ class JobBulkIngestView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def post(self, request):
         jobs_data = request.data.get('jobs', [])
@@ -280,6 +287,7 @@ class CrawlSourceListView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def get(self, request):
         qs = CrawlSource.objects.filter(is_active=True).order_by('priority', 'name')
@@ -293,6 +301,7 @@ class CrawlSourceUpdateView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def patch(self, request, pk):
         try:
@@ -321,6 +330,7 @@ class IngestPingView(APIView):
     """
     permission_classes = [IsCrawlerAuthenticated]
     authentication_classes = []
+    throttle_classes = []
 
     def get(self, request):
         return Response({

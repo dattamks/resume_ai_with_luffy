@@ -5,6 +5,66 @@
 
 ---
 
+## Quick Start (TL;DR)
+
+**1. Set the shared secret** — same value in both services' `.env`:
+
+```env
+CRAWLER_API_KEY=your-strong-random-secret-here
+INGEST_BASE_URL=https://<backend>.up.railway.app/api/v1/ingest
+```
+
+Generate a key: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+
+**2. Test auth:**
+
+```bash
+curl -H "X-Crawler-Key: your-secret" https://<backend>.up.railway.app/api/v1/ingest/ping/
+# → {"status": "ok", ...}
+```
+
+**3. Ingest order** (FK dependencies):
+
+```
+Companies → Entities → Career Pages → Jobs
+                                       ↑ (jobs can skip steps 1-3)
+```
+
+**4. Minimum viable job ingest** (no company/entity needed):
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "firecrawl",
+    "external_id": "google-swe-123",
+    "url": "https://careers.google.com/jobs/123/",
+    "title": "Senior Software Engineer",
+    "company": "Google",
+    "location": "Bangalore, India",
+    "skills_required": ["Python", "Go", "Kubernetes"],
+    "seniority_level": "senior",
+    "employment_type": "full_time",
+    "remote_policy": "hybrid"
+  }'
+```
+
+**5. Bulk ingest** (up to 500 jobs per request):
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{ "jobs": [ { "source": "firecrawl", "external_id": "...", "url": "...", "title": "..." }, ... ] }'
+```
+
+**All upserts are idempotent** — calling the same endpoint with the same data just updates the existing record. No duplicates.
+
+**No rate limiting** on ingest endpoints — the X-Crawler-Key auth is sufficient.
+
+---
+
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
@@ -211,6 +271,13 @@ Quick endpoint to verify authentication is working.
 
 ### `GET /api/v1/ingest/ping/`
 
+**curl:**
+
+```bash
+curl -X GET https://<backend>.up.railway.app/api/v1/ingest/ping/ \
+  -H "X-Crawler-Key: your-strong-random-secret-here"
+```
+
 **Response `200 OK`:**
 
 ```json
@@ -238,6 +305,22 @@ Quick endpoint to verify authentication is working.
 **`POST /api/v1/ingest/companies/`**
 
 Creates or updates a company based on the unique `name` field.
+
+**curl:**
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/companies/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Google",
+    "industry": "Technology",
+    "company_size": "enterprise",
+    "headquarters_country": "United States",
+    "headquarters_city": "Mountain View",
+    "tech_stack": ["Python", "Go", "Java", "Kubernetes"]
+  }'
+```
 
 **Request Body:**
 
@@ -299,6 +382,20 @@ Creates or updates a company based on the unique `name` field.
 ### 5.2 Bulk Upsert Companies
 
 **`POST /api/v1/ingest/companies/bulk/`**
+
+**curl:**
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/companies/bulk/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "companies": [
+      { "name": "Google", "industry": "Technology", "company_size": "enterprise" },
+      { "name": "Stripe", "industry": "Fintech", "company_size": "large" }
+    ]
+  }'
+```
 
 **Request Body:**
 
@@ -573,6 +670,26 @@ Creates or updates a career page keyed on `(entity, url)`.
 
 Creates or updates a `DiscoveredJob` keyed on `(source, external_id)`.
 
+**curl:**
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "firecrawl",
+    "external_id": "google-swe-123456",
+    "url": "https://careers.google.com/jobs/123456/",
+    "title": "Senior Software Engineer",
+    "company": "Google",
+    "location": "Bangalore, India",
+    "skills_required": ["Python", "Go", "Kubernetes"],
+    "seniority_level": "senior",
+    "employment_type": "full_time",
+    "remote_policy": "hybrid"
+  }'
+```
+
 **Request Body:**
 
 ```json
@@ -647,6 +764,34 @@ Creates or updates a `DiscoveredJob` keyed on `(source, external_id)`.
 **`POST /api/v1/ingest/jobs/bulk/`**
 
 Ingest up to **500 jobs** in a single request.
+
+**curl:**
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jobs": [
+      {
+        "source": "firecrawl",
+        "external_id": "google-swe-123",
+        "url": "https://careers.google.com/123/",
+        "title": "Senior SWE",
+        "company": "Google",
+        "skills_required": ["Python"]
+      },
+      {
+        "source": "firecrawl",
+        "external_id": "stripe-be-456",
+        "url": "https://stripe.com/jobs/456",
+        "title": "Backend Engineer",
+        "company": "Stripe",
+        "skills_required": ["Ruby"]
+      }
+    ]
+  }'
+```
 
 **Request Body:**
 
@@ -899,15 +1044,15 @@ def ingest_with_retry(client, method, *args, max_retries=3, **kwargs):
 
 ## 12. Rate Limiting
 
-Ingest endpoints use DRF's default throttling. The crawler bot is identified by the `X-Crawler-Key` (not by user session), so it shares the anonymous rate limits.
+Ingest endpoints are **exempt from rate limiting** (`throttle_classes = []`). They are already protected by the `X-Crawler-Key` secret, so no additional throttling is applied.
 
-| Rate Class | Limit               |
-|------------|---------------------|
-| Anon       | 60/hour (default)   |
+The crawler bot can make unlimited requests. However, for performance, prefer bulk endpoints over many single-item requests:
 
-> **Recommendation:** Set a higher rate limit for ingest endpoints in production by adding a custom throttle class or exempting the ingest views from throttling. See `settings.py` for rate configuration.
-
-For bulk endpoints, prefer fewer large requests over many small ones.
+| Strategy | Recommendation |
+|----------|---------------|
+| Companies | Use `/companies/bulk/` for 2+ companies |
+| Entities | Use `/entities/bulk/` for 2+ entities |
+| Jobs | Use `/jobs/bulk/` (up to 500 per request) in batches of 100 |
 
 ---
 
