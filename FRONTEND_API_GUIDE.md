@@ -37,6 +37,7 @@
 28. [Resume Templates (Template Marketplace)](#28-resume-templates-template-marketplace)
 29. [Conversational Resume Builder (Chat)](#29-conversational-resume-builder-chat)
 30. [Quick Reference — All Endpoints](#30-quick-reference--all-endpoints)
+31. [Database Table Reference — Job & Company Models](#31-database-table-reference--job--company-models)
 
 ---
 
@@ -6109,6 +6110,352 @@ if (response.status === 403 && response.data.is_premium) {
 - **Credits** — 2 credits charged on finalize only. If rendering fails, credits are automatically refunded.
 - **Max 5 active sessions** — Users can have at most 5 active (non-completed, non-abandoned) sessions.
 - **`resume_data` schema** — Same as `GeneratedResume.resume_content`: `{contact, summary, experience, education, skills, certifications, projects}`. All template renderers work unchanged.
+
+---
+
+## 31. Database Table Reference — Job & Company Models
+
+Complete column-level reference for all Job Alert and Company Intelligence tables. All primary keys are UUIDv4 unless noted. Timestamps use ISO 8601 (UTC). Admin-only models (CrawlSource, SentAlert) are included for completeness but have no user-facing API.
+
+---
+
+### 31.1 `Company`
+
+Top-level brand / parent company (e.g., Google, Stripe). Managed via Django Admin.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `name` | varchar(255) | No | — | **Unique** | Brand / common name (e.g. "Google", "Stripe") |
+| `slug` | slug(255) | No | — | **Unique** | URL-safe identifier, auto-generated from `name` |
+| `description` | text | No | `''` | — | Brief company description for display |
+| `logo` | url(2048) | No | `''` | — | URL to company logo image |
+| `industry` | varchar(100) | No | `''` | — | Primary industry sector |
+| `founded_year` | smallint | Yes | `null` | — | Year the company was founded |
+| `company_size` | varchar(12) | No | `''` | Choices¹ | Employee range category |
+| `headquarters_country` | varchar(100) | No | `''` | — | HQ country name |
+| `headquarters_city` | varchar(100) | No | `''` | — | HQ city name |
+| `linkedin_url` | url(2048) | No | `''` | — | LinkedIn company page URL |
+| `glassdoor_url` | url(2048) | No | `''` | — | Glassdoor company page URL |
+| `tech_stack` | JSON | No | `[]` | — | Known technologies `["Python", "K8s", ...]` |
+| `is_active` | bool | No | `true` | Indexed | Inactive companies hidden from suggestions |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+| `updated_at` | datetime | No | auto | — | Last update timestamp |
+
+¹ **`company_size` choices:** `startup` (1-50), `small` (51-200), `mid` (201-1000), `large` (1001-10000), `enterprise` (10000+)
+
+**Ordering:** `name` ASC
+
+**Relationships:**
+- `entities` → `CompanyEntity[]` (one-to-many)
+
+---
+
+### 31.2 `CompanyEntity`
+
+A legal / operating entity of a Company in a specific country. One Company can have multiple entities (e.g., "Stripe Inc" US + "Stripe India Pvt Ltd" IN).
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `company` | UUID (FK) | No | — | **FK → Company**, CASCADE | Parent brand |
+| `legal_name` | varchar(500) | No | `''` | — | Registered legal name (e.g. "Google India Pvt Ltd") |
+| `display_name` | varchar(255) | No | — | Unique² | Short display name (e.g. "Google India") |
+| `operating_country` | varchar(100) | No | — | Unique² | Country this entity operates in |
+| `operating_city` | varchar(100) | No | `''` | — | City this entity operates in |
+| `is_headquarters` | bool | No | `false` | — | Whether this is the global HQ entity |
+| `is_indian_entity` | bool | No | `false` | Indexed | Quick filter for Indian entities |
+| `website` | url(2048) | No | `''` | — | Corporate website for this entity |
+| `is_active` | bool | No | `true` | — | Inactive entities excluded from matching |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+| `updated_at` | datetime | No | auto | — | Last update timestamp |
+
+² **Unique constraint:** `(company, operating_country, display_name)` — one display name per company per country.
+
+**Indexes:** `(company, operating_country)`, `(is_indian_entity)`
+
+**Ordering:** `company` ASC, `operating_country` ASC
+
+**Relationships:**
+- `company` → `Company` (many-to-one)
+- `career_pages` → `CompanyCareerPage[]` (one-to-many)
+- `discovered_jobs` → `DiscoveredJob[]` (one-to-many)
+
+---
+
+### 31.3 `CompanyCareerPage`
+
+A career page URL belonging to a CompanyEntity. One entity can have multiple career pages (engineering vs general, region-specific sub-pages).
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `entity` | UUID (FK) | No | — | **FK → CompanyEntity**, CASCADE | Owning entity |
+| `url` | url(2048) | No | — | — | Career page URL |
+| `label` | varchar(100) | No | `''` | — | Label (e.g. "Engineering", "Campus") |
+| `country` | varchar(100) | No | `''` | — | Country this page targets (may differ from entity) |
+| `is_active` | bool | No | `true` | Indexed | Inactive pages are not crawled |
+| `last_crawled_at` | datetime | Yes | `null` | — | When this page was last successfully crawled |
+| `crawl_frequency` | varchar(10) | No | `'weekly'` | Choices³ | How often to crawl |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+| `updated_at` | datetime | No | auto | — | Last update timestamp |
+
+³ **`crawl_frequency` choices:** `daily`, `weekly`
+
+**Ordering:** `entity` ASC, `label` ASC
+
+**Relationships:**
+- `entity` → `CompanyEntity` (many-to-one)
+
+---
+
+### 31.4 `CrawlSource` _(admin-only)_
+
+Admin-managed crawl source. Each entry defines a job board or company career page for the daily crawl. No user-facing API.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `name` | varchar(100) | No | — | **Unique** | Display name (e.g. "LinkedIn", "Google Careers") |
+| `source_type` | varchar(20) | No | `'job_board'` | Choices⁴ | Job board (templated URL) or company career page (plain URL) |
+| `url_template` | varchar(2048) | No | — | — | URL with `{query}` and `{location}` placeholders (job board) or plain URL (company) |
+| `is_active` | bool | No | `true` | Indexed | Inactive sources skipped during crawl |
+| `priority` | smallint | No | `10` | — | Lower = crawled first |
+| `last_crawled_at` | datetime | Yes | `null` | — | Timestamp of last successful crawl |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+| `updated_at` | datetime | No | auto | — | Last update timestamp |
+
+⁴ **`source_type` choices:** `job_board`, `company`
+
+**Ordering:** `priority` ASC, `name` ASC
+
+---
+
+### 31.5 `JobSearchProfile`
+
+LLM-extracted job search criteria from a resume. One profile per resume — auto-generated when a job alert is created.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | int | No | auto | **PK** | Auto-increment primary key |
+| `resume` | UUID (FK) | No | — | **FK → Resume**, CASCADE, **Unique** | Resume this profile was extracted from |
+| `titles` | JSON | No | `[]` | — | Target job titles `["Senior Python Dev", "Backend Engineer"]` |
+| `skills` | JSON | No | `[]` | — | Key skills `["Python", "Django", "PostgreSQL"]` |
+| `seniority` | varchar(20) | No | `''` | Choices⁵ | Inferred seniority level |
+| `industries` | JSON | No | `[]` | — | Target industries |
+| `locations` | JSON | No | `[]` | — | Preferred work locations |
+| `experience_years` | smallint | Yes | `null` | — | Years of experience inferred from resume |
+| `raw_extraction` | JSON | Yes | `null` | — | Full LLM output for debugging |
+| `embedding` | vector(1536) | Yes | `null` | — | pgvector embedding for similarity matching |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+| `updated_at` | datetime | No | auto | — | Last update timestamp |
+
+⁵ **`seniority` choices:** `junior`, `mid`, `senior`, `lead`, `executive`
+
+**Ordering:** `-updated_at`
+
+**Relationships:**
+- `resume` → `Resume` (one-to-one)
+
+---
+
+### 31.6 `JobAlert`
+
+A user's job alert subscription linked to a specific resume. The system periodically discovers and matches jobs.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `user` | int (FK) | No | — | **FK → User**, CASCADE | Alert owner |
+| `resume` | UUID (FK) | No | — | **FK → Resume**, PROTECT | Resume used for job matching |
+| `frequency` | varchar(10) | No | `'weekly'` | Choices⁶ | Alert frequency |
+| `is_active` | bool | No | `true` | Indexed | Whether alert is active |
+| `preferences` | JSON | No | `{}` | — | Alert preferences (see below) |
+| `last_run_at` | datetime | Yes | `null` | — | Timestamp of last crawl run |
+| `next_run_at` | datetime | Yes | `null` | Indexed | When next crawl is scheduled |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+| `updated_at` | datetime | No | auto | — | Last update timestamp |
+
+⁶ **`frequency` choices:** `daily`, `weekly`
+
+**`preferences` JSON shape:**
+```json
+{
+  "excluded_companies": ["Evil Corp"],
+  "priority_companies": ["Google", "Stripe"],
+  "remote_ok": true,
+  "location": "San Francisco",
+  "salary_min": 120000
+}
+```
+
+**Indexes:** `(user, -created_at)`, `(is_active, next_run_at)`
+
+**Ordering:** `-created_at`
+
+**Relationships:**
+- `user` → `User` (many-to-one)
+- `resume` → `Resume` (many-to-one, PROTECT)
+- `matches` → `JobMatch[]` (one-to-many)
+- `runs` → `JobAlertRun[]` (one-to-many)
+
+---
+
+### 31.7 `DiscoveredJob`
+
+A job posting discovered from an external source (Firecrawl). Global — not per-user. Deduplicated by `(source, external_id)`.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `source` | varchar(30) | No | — | Choices⁷, Indexed | Source platform (currently only `firecrawl`) |
+| `external_id` | varchar(255) | No | — | Unique⁸ | Unique job ID from the source |
+| `source_page_url` | url(2048) | No | `''` | — | The search/career page URL we crawled |
+| `url` | url(2048) | No | — | — | Direct link to the actual job posting |
+| `title` | varchar(500) | No | `''` | — | Job title |
+| `company` | varchar(255) | No | `''` | — | Company name (as displayed in listing) |
+| `company_entity` | UUID (FK) | Yes | `null` | **FK → CompanyEntity**, SET_NULL | Matched CompanyEntity record |
+| `location` | varchar(255) | No | `''` | — | Job location |
+| `salary_range` | varchar(255) | No | `''` | — | Raw salary range string from listing |
+| `description_snippet` | text | No | `''` | — | Short job description excerpt |
+| **Enriched fields** | | | | | |
+| `skills_required` | JSON | No | `[]` | — | Required skills `["Python", "AWS"]` |
+| `skills_nice_to_have` | JSON | No | `[]` | — | Nice-to-have skills `["Go", "Terraform"]` |
+| `experience_years_min` | smallint | Yes | `null` | — | Minimum years of experience |
+| `experience_years_max` | smallint | Yes | `null` | — | Maximum years of experience |
+| `employment_type` | varchar(15) | No | `''` | Choices⁹ | Employment type |
+| `remote_policy` | varchar(10) | No | `''` | Choices¹⁰ | Remote work policy |
+| `seniority_level` | varchar(12) | No | `''` | Choices¹¹ | Seniority level |
+| `industry` | varchar(100) | No | `''` | Indexed | Industry sector |
+| `education_required` | varchar(50) | No | `''` | — | Minimum education (e.g. "bachelor") |
+| `salary_min_usd` | int | Yes | `null` | — | LLM-normalised annual salary lower bound (USD) |
+| `salary_max_usd` | int | Yes | `null` | — | LLM-normalised annual salary upper bound (USD) |
+| `posted_at` | datetime | Yes | `null` | — | When the job was posted |
+| `raw_data` | JSON | Yes | `null` | — | Full raw API response (internal) |
+| `embedding` | vector(1536) | Yes | `null` | — | pgvector embedding for similarity matching |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+
+⁷ **`source` choices:** `firecrawl`
+
+⁸ **Unique constraint:** `(source, external_id)` — one record per job per source.
+
+⁹ **`employment_type` choices:** `full_time`, `part_time`, `contract`, `internship`, `freelance`
+
+¹⁰ **`remote_policy` choices:** `onsite`, `hybrid`, `remote`
+
+¹¹ **`seniority_level` choices:** `intern`, `junior`, `mid`, `senior`, `lead`, `manager`, `director`, `executive`
+
+**Indexes:** `(source, external_id)`, `(-created_at)`, `(industry)`
+
+**Ordering:** `-created_at`
+
+**Relationships:**
+- `company_entity` → `CompanyEntity` (many-to-one, nullable)
+- `matches` → `JobMatch[]` (one-to-many)
+- `sent_alerts` → `SentAlert[]` (one-to-many)
+
+---
+
+### 31.8 `JobMatch`
+
+Junction between a JobAlert and a DiscoveredJob. Stores the relevance score and user feedback.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `job_alert` | UUID (FK) | No | — | **FK → JobAlert**, CASCADE, Unique¹² | The alert this match belongs to |
+| `discovered_job` | UUID (FK) | No | — | **FK → DiscoveredJob**, CASCADE, Unique¹² | The matched job |
+| `relevance_score` | smallint | No | — | 0–100 | LLM/pgvector relevance score |
+| `match_reason` | text | No | `''` | — | LLM-generated match explanation |
+| `user_feedback` | varchar(15) | No | `'pending'` | Choices¹³, Indexed | User's feedback on this match |
+| `feedback_reason` | text | No | `''` | — | User-provided reason for feedback (feeds learning loop) |
+| `created_at` | datetime | No | auto | — | Row creation timestamp |
+
+¹² **Unique constraint:** `(job_alert, discovered_job)` — one match per job per alert.
+
+¹³ **`user_feedback` choices:** `pending`, `relevant`, `irrelevant`, `applied`, `dismissed`
+
+**Indexes:** `(job_alert, -relevance_score)`, `(job_alert, user_feedback)`
+
+**Ordering:** `-relevance_score`, `-created_at`
+
+**Relationships:**
+- `job_alert` → `JobAlert` (many-to-one)
+- `discovered_job` → `DiscoveredJob` (many-to-one)
+
+---
+
+### 31.9 `JobAlertRun`
+
+Audit log for each discovery + matching pipeline run. One row per crawl execution per alert.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `job_alert` | UUID (FK) | No | — | **FK → JobAlert**, CASCADE | The alert this run belongs to |
+| `jobs_discovered` | int | No | `0` | — | Total jobs found in this run |
+| `jobs_matched` | int | No | `0` | — | Jobs that passed relevance threshold |
+| `notification_sent` | bool | No | `false` | — | Whether user was notified |
+| `credits_used` | smallint | No | `0` | — | Credits consumed by this run |
+| `credits_deducted` | bool | No | `false` | — | Idempotent flag — prevents double-charging on retry |
+| `error_message` | text | No | `''` | — | Error details if run failed |
+| `duration_seconds` | float | Yes | `null` | — | Pipeline execution time |
+| `created_at` | datetime | No | auto | — | Run timestamp |
+
+**Indexes:** `(job_alert, -created_at)`
+
+**Ordering:** `-created_at`
+
+**Relationships:**
+- `job_alert` → `JobAlert` (many-to-one)
+
+---
+
+### 31.10 `SentAlert` _(internal)_
+
+Deduplication log — prevents resending the same job to the same user on the same notification channel. No user-facing API.
+
+| Column | Type | Nullable | Default | Constraints | Description |
+|--------|------|----------|---------|-------------|-------------|
+| `id` | UUID | No | `uuid4()` | **PK** | Primary key |
+| `user` | int (FK) | No | — | **FK → User**, CASCADE | Recipient |
+| `discovered_job` | UUID (FK) | No | — | **FK → DiscoveredJob**, CASCADE | Job that was sent |
+| `channel` | varchar(20) | No | — | Choices¹⁴ | Notification channel |
+| `sent_at` | datetime | No | auto | — | When notification was sent |
+
+¹⁴ **`channel` choices:** `email`, `in_app`
+
+**Ordering:** `-sent_at`
+
+---
+
+### 31.11 Entity Relationship Diagram
+
+```
+Company (1) ──┤ has many ├── CompanyEntity (N)
+                                  │
+                             has many
+                                  │
+                       CompanyCareerPage (N)
+
+CompanyEntity (1) ──┤ linked to ├── DiscoveredJob (N)  ← optional FK
+
+User (1) ──┤ has many ├── JobAlert (N)
+                              │
+                         has many
+                              │
+                         JobMatch (N) ──┤ links to ├── DiscoveredJob (1)
+                              │
+                         has many
+                              │
+                       JobAlertRun (N)
+
+Resume (1) ──┤ has one  ├── JobSearchProfile (1)
+Resume (1) ──┤ used by  ├── JobAlert (N)
+
+CrawlSource ── standalone admin model (drives daily crawl)
+SentAlert   ── dedup log (User × DiscoveredJob × channel)
+```
 
 ---
 
