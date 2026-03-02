@@ -5,6 +5,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.34.1] — 2026-03-03
+
+### Changed — Interview Prep, Cover Letter & Job Alerts Are Now Free
+
+#### Interview Prep — Free
+- Removed credit deduction from `InterviewPrepView.post()`.
+- Removed `_refund_interview_prep_credits()` helper from `tasks.py`.
+
+#### Cover Letter — Free
+- Removed credit deduction from `CoverLetterView.post()`.
+- Removed `_refund_cover_letter_credits()` helper from `tasks.py`.
+- Response no longer includes `credits_used`/`balance`.
+
+#### Job Alerts — Free Runs, Max 5 Active for Pro
+- Removed credit deduction from `match_jobs_task` (no per-run cost).
+- Removed credit refund logic on failed alert runs.
+- **Re-activated `max_job_alerts`** on Plan model — Pro plans limited to **5 active alerts**.
+- `JobAlertListCreateView.post()` now enforces `max_job_alerts` quota (returns 403 when exceeded).
+- Free plan: no access (`job_notifications = false`, `max_job_alerts = 0`).
+- Updated `seed_plans`: Pro/Pro-Yearly `max_job_alerts = 5`.
+
+#### Credit Costs Updated
+- `seed_credit_costs`: `job_alert_run = 0`, `interview_prep = 0`, `cover_letter = 0`.
+- `_DEFAULT_COSTS` in `accounts/services.py` updated to match.
+
+#### Documentation
+- `FRONTEND_API_GUIDE.md` updated: all affected endpoints, error tables, route summary, plan tables, TypeScript types, and changelog references.
+
+---
+
 ## [0.34.0] — 2026-03-03
 
 ### Features — Geography-Aware Feed & Analytics (India-First)

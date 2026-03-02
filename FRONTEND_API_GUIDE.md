@@ -3697,7 +3697,7 @@ POST /api/v1/analyze/ → balance ≥ 1? → NO → 402 "Insufficient credits"
 | `max_resume_size_mb` | `int` | Max resume file size in MB |
 | `max_resumes_stored` | `int` | Max resumes stored at once (`0` = unlimited) |
 | `job_notifications` | `bool` | Can receive job alert notifications |
-| `max_job_alerts` | `int` | **Deprecated** — no longer enforced. Kept for backward compatibility |
+| `max_job_alerts` | `int` | Maximum active job alerts allowed (`0` = no access). Pro = 5 |
 | `pdf_export` | `bool` | Can export analysis as PDF |
 | `share_analysis` | `bool` | Can generate public share links |
 | `job_tracking` | `bool` | Can use job tracking features |
@@ -3712,9 +3712,9 @@ Seeded via `python manage.py seed_plans` (idempotent — safe to re-run).
 
 | Name | Slug | Price | Original Price | Billing | Credits/mo | Cap | Top-up | Job Alerts | Rate | Resumes |
 |------|------|-------|---------------|---------|-----------|-----|--------|------------|------|---------|
-| **Free** | `free` | ₹0 | ₹0 | free | 2 | 10 | ❌ | ❌ | 200/hr | 5 stored, 5MB max |
-| **Pro** | `pro` | ₹399/mo | ~~₹599~~ | monthly | 25 | 100 | 5 credits/₹49 | ✅ | 500/hr | Unlimited, 10MB max |
-| **Pro Yearly** | `pro-yearly` | ₹3,999/yr | ~~₹7,188~~ | yearly | 25 | 100 | 5 credits/₹49 | ✅ | 500/hr | Unlimited, 10MB max |
+| **Free** | `free` | ₹0 | ₹0 | free | 2 | 10 | ❌ | ❌ (0) | 200/hr | 5 stored, 5MB max |
+| **Pro** | `pro` | ₹399/mo | ~~₹599~~ | monthly | 25 | 100 | 5 credits/₹49 | ✅ (max 5) | 500/hr | Unlimited, 10MB max |
+| **Pro Yearly** | `pro-yearly` | ₹3,999/yr | ~~₹7,188~~ | yearly | 25 | 100 | 5 credits/₹49 | ✅ (max 5) | 500/hr | Unlimited, 10MB max |
 
 ### Plan in User Responses
 
@@ -4418,8 +4418,8 @@ Smart Job Alerts automatically discover job opportunities that match a user's re
 ### Feature Gating
 
 - **Plan requirement**: User must be on a plan with `job_notifications = true` (e.g. Pro)
-- **Quota**: No limit on number of active job alerts (unlimited when enabled)
-- **Credits**: Each alert run costs **1 credit** (`job_alert_run` action)
+- **Quota**: Maximum **5 active job alerts** per Pro plan (enforced by `max_job_alerts` on the Plan model). Free plan has **no access** to job alerts.
+- **No credit cost**: Alert runs are free — no credits deducted per run.
 - **Crawl schedule**: Admin-configurable via `django-celery-beat` (default: daily at 20:30 UTC). Crawl sources are managed in Django Admin via the `CrawlSource` model.
 - **Matching**: Uses pgvector cosine-similarity against OpenAI embeddings, with a feedback learning loop that adjusts scores based on past user feedback.
 
@@ -4596,7 +4596,7 @@ POST /api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/
 POST /api/v1/job-alerts/<uuid:id>/run/
 ```
 
-Triggers an immediate job discovery + matching run for the alert. Costs 1 credit.
+Triggers an immediate job discovery + matching run for the alert. Free — no credit cost.
 
 > **Throttle:** `analyze` scope (10/hour per user) — same as analyze/retry.
 
@@ -4613,7 +4613,6 @@ Triggers an immediate job discovery + matching run for the alert. Costs 1 credit
 |--------|--------|
 | 400 | Alert is not active |
 | 400 | Job search profile not yet extracted |
-| 402 | Insufficient credits |
 
 ### 20.6 Search Profile (read-only)
 
@@ -5369,7 +5368,7 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 
 ### `POST /api/v1/analyses/<id>/interview-prep/` — Generate Interview Prep
 
-🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Cost:** 1 credit.
+🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Free — no credit cost.**
 
 **Request:** Empty body (analysis ID from URL).
 
@@ -5377,9 +5376,7 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 ```json
 {
   "id": "uuid",
-  "status": "processing",
-  "credits_used": 1,
-  "balance": 9
+  "status": "processing"
 }
 ```
 
@@ -5390,7 +5387,6 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 | Status | Condition | Body |
 |--------|-----------|------|
 | `400` | Analysis not `done` | `{ "detail": "Analysis must be complete before generating interview prep." }` |
-| `402` | Insufficient credits | `{ "detail", "balance", "cost" }` |
 | `404` | Analysis not found | `{ "detail": "Analysis not found." }` |
 
 ### `GET /api/v1/analyses/<id>/interview-prep/` — Get Interview Prep Status
@@ -5453,7 +5449,7 @@ Generate an AI-powered cover letter tailored to a specific resume + JD analysis.
 
 ### `POST /api/v1/analyses/<id>/cover-letter/` — Generate Cover Letter
 
-🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Cost:** 1 credit.
+🔒 Authenticated. **Throttled:** `write` scope (60/hour). **Free — no credit cost.**
 
 **Request:**
 ```json
@@ -5471,9 +5467,7 @@ Generate an AI-powered cover letter tailored to a specific resume + JD analysis.
 {
   "id": "uuid",
   "status": "processing",
-  "tone": "professional",
-  "credits_used": 1,
-  "balance": 8
+  "tone": "professional"
 }
 ```
 
@@ -5485,7 +5479,6 @@ Generate an AI-powered cover letter tailored to a specific resume + JD analysis.
 |--------|-----------|------|
 | `400` | Analysis not `done` | `{ "detail": "Analysis must be complete before generating a cover letter." }` |
 | `400` | Invalid tone | Serializer validation errors |
-| `402` | Insufficient credits | `{ "detail", "balance", "cost" }` |
 | `404` | Analysis not found | `{ "detail": "Analysis not found." }` |
 
 ### `GET /api/v1/analyses/<id>/cover-letter/` — Get Cover Letter Status
@@ -7112,11 +7105,11 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | POST | `/api/v1/analyses/<id>/share/` | ✅ | Write (60/hr) | Generate public share link |
 | DELETE | `/api/v1/analyses/<id>/share/` | ✅ | Write (60/hr) | Revoke share link |
 | **Interview Prep** |||||
-| POST | `/api/v1/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Generate interview prep (1 credit) |
+| POST | `/api/v1/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Generate interview prep (free) |
 | GET | `/api/v1/analyses/<id>/interview-prep/` | ✅ | Write (60/hr) | Get latest interview prep status |
 | GET | `/api/v1/interview-preps/` | ✅ | Readonly (120/hr) | List all interview preps |
 | **Cover Letter** |||||
-| POST | `/api/v1/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Generate cover letter (1 credit) |
+| POST | `/api/v1/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Generate cover letter (free) |
 | GET | `/api/v1/analyses/<id>/cover-letter/` | ✅ | Write (60/hr) | Get latest cover letter status |
 | GET | `/api/v1/cover-letters/` | ✅ | Readonly (120/hr) | List all cover letters |
 | **Resume** |||||
@@ -7144,7 +7137,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/resume-chat/resumes/` | ✅ | Readonly (120/hr) | List resumes for base selection |
 | **Job Alerts** |||||
 | GET | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | List user's job alerts (paginated) |
-| POST | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, 1 credit/run) |
+| POST | `/api/v1/job-alerts/` | ✅ | Readonly (120/hr) | Create job alert (Pro, max 5 active, free) |
 | GET | `/api/v1/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Job alert detail |
 | PUT | `/api/v1/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Update job alert |
 | DELETE | `/api/v1/job-alerts/<uuid:id>/` | ✅ | Readonly (120/hr) | Deactivate job alert |
@@ -7259,11 +7252,11 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 - **Email verification flow**: Registration now sends a verification email instead of a welcome email. Response includes `email_verification_required: true` and `is_email_verified: false`. New endpoints: `POST /api/v1/auth/verify-email/`, `POST /api/v1/auth/resend-verification/`. Welcome email is sent only after verification.
 - **`is_email_verified` field**: Added to user object in register, login, and `GET /api/v1/auth/me/` responses.
 - **Bulk analysis**: `POST /api/v1/analyze/bulk/` — analyze one resume against up to 10 job descriptions in a single call. Returns array of analysis IDs. Each deducts 1 credit.
-- **Interview prep generation**: `POST /api/v1/analyses/<id>/interview-prep/` (1 credit) — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers. `GET` on same URL returns status/results. `GET /api/v1/interview-preps/` lists all.
-- **Cover letter generation**: `POST /api/v1/analyses/<id>/cover-letter/` (1 credit) — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Returns `content` (plain text) and `content_html`. `GET` on same URL returns status/results. `GET /api/v1/cover-letters/` lists all.
+- **Interview prep generation**: `POST /api/v1/analyses/<id>/interview-prep/` (free, no credit cost) — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers. `GET` on same URL returns status/results. `GET /api/v1/interview-preps/` lists all.
+- **Cover letter generation**: `POST /api/v1/analyses/<id>/cover-letter/` (free, no credit cost) — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Returns `content` (plain text) and `content_html`. `GET` on same URL returns status/results. `GET /api/v1/cover-letters/` lists all.
 - **Resume version history**: `GET /api/v1/resumes/<uuid>/versions/` — tracks resume evolution with version numbers, `best_ats_score`, and `best_grade` per version. Auto-linked when re-uploading same filename.
 - **Rate limit headers on all responses**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers are now included in every API response. Use to show proactive warnings before users hit 429.
-- **New credit costs**: `interview_prep = 1`, `cover_letter = 1`.
+- **New credit costs**: `interview_prep = 0` (free), `cover_letter = 0` (free), `job_alert_run = 0` (free).
 
 #### Infrastructure
 - **Structured JSON logging** — Production logs now emit JSON format (via `python-json-logger`) for better log aggregation in Railway/Datadog. Local dev unchanged (human-readable format).
@@ -7287,7 +7280,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 
 - **3 plans seeded**: Free (₹0), Pro Monthly (₹399, was ₹599), Pro Yearly (₹3,999, was ₹7,188)
 - **`original_price` field** added to Plan model and serializer — use for strikethrough pricing display
-- **Job alert quota removed**: Unlimited alerts when `job_notifications = true` (no more 403 quota errors). `max_job_alerts` field kept but deprecated.
+- **Job alert quota re-enforced**: `max_job_alerts` field is now active again — Pro plan limited to **5 active alerts**. Free plan has no access (`job_notifications = false`, `max_job_alerts = 0`). Alert runs are **free** (no credit cost).
 - **Contact form endpoint**: `POST /api/v1/auth/contact/` — public, anon-throttled, no auth required
 - **ContactSubmission model**: `name`, `email`, `subject`, `message`, `created_at` — viewable in Django Admin (read-only)
 - **Auto-sync plans to Razorpay**: New paid plans are automatically synced via `post_save` signal. Admin also shows sync feedback on save. Existing "Sync with Razorpay" action available as manual fallback.

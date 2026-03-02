@@ -1204,6 +1204,20 @@ class JobAlertListCreateView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # ── Alert quota: enforce max_job_alerts ──
+        profile = getattr(request.user, 'profile', None)
+        max_alerts = getattr(profile.plan, 'max_job_alerts', 0) if profile and profile.plan else 0
+        current_count = JobAlert.objects.filter(user=request.user, is_active=True).count()
+        if max_alerts and current_count >= max_alerts:
+            return Response(
+                {
+                    'detail': f'You have reached the maximum of {max_alerts} active job alerts for your plan.',
+                    'max_alerts': max_alerts,
+                    'current_count': current_count,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = JobAlertCreateSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
@@ -1335,7 +1349,7 @@ class JobAlertMatchFeedbackView(APIView):
 class JobAlertManualRunView(APIView):
     """
     POST /api/v1/job-alerts/<id>/run/
-    Trigger an on-demand manual job discovery + matching run (costs 1 credit).
+    Trigger an on-demand manual job discovery + matching run (free).
     Returns 202 Accepted immediately; results appear in matches when done.
     """
     permission_classes = [IsAuthenticated]
@@ -1367,18 +1381,6 @@ class JobAlertManualRunView(APIView):
                     'Please wait a moment and try again.',
                 },
                 status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Check credits upfront so we don't waste API calls
-        credit_info = check_balance(request.user, 'job_alert_run')
-        if not credit_info['has_enough']:
-            return Response(
-                {
-                    'detail': 'Insufficient credits.',
-                    'balance': credit_info['balance'],
-                    'cost': credit_info['cost'],
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
         # Fire Firecrawl-based crawl for this single alert
@@ -2065,7 +2067,7 @@ class BulkAnalyzeView(APIView):
 
 class InterviewPrepView(APIView):
     """
-    POST /api/v1/analyses/<id>/interview-prep/  — Generate interview prep (1 credit)
+    POST /api/v1/analyses/<id>/interview-prep/  — Generate interview prep (free)
     GET  /api/v1/analyses/<id>/interview-prep/  — Get latest interview prep status
     """
     permission_classes = [IsAuthenticated]
@@ -2113,28 +2115,11 @@ class InterviewPrepView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Deduct credits
-        try:
-            credit_result = deduct_credits(
-                request.user,
-                'interview_prep',
-                description=f'Interview prep for analysis #{analysis.id}',
-            )
-        except InsufficientCreditsError as e:
-            return Response(
-                {
-                    'detail': 'Insufficient credits.',
-                    'balance': e.balance,
-                    'cost': e.cost,
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
-
         prep = InterviewPrep.objects.create(
             analysis=analysis,
             user=request.user,
             status=InterviewPrep.STATUS_PROCESSING,
-            credits_deducted=True,
+            credits_deducted=False,
         )
 
         generate_interview_prep_task.delay(str(prep.id), request.user.id)
@@ -2145,8 +2130,6 @@ class InterviewPrepView(APIView):
         return Response({
             'id': str(prep.id),
             'status': prep.status,
-            'credits_used': credit_result['cost'],
-            'balance': credit_result['balance_after'],
         }, status=status.HTTP_202_ACCEPTED)
 
 
@@ -2244,29 +2227,12 @@ class CoverLetterView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Deduct credits
-        try:
-            credit_result = deduct_credits(
-                request.user,
-                'cover_letter',
-                description=f'Cover letter for analysis #{analysis.id}',
-            )
-        except InsufficientCreditsError as e:
-            return Response(
-                {
-                    'detail': 'Insufficient credits.',
-                    'balance': e.balance,
-                    'cost': e.cost,
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
-
         cover_letter = CoverLetter.objects.create(
             analysis=analysis,
             user=request.user,
             tone=tone,
             status=CoverLetter.STATUS_PROCESSING,
-            credits_deducted=True,
+            credits_deducted=False,
         )
 
         generate_cover_letter_task.delay(str(cover_letter.id), request.user.id)
@@ -2278,8 +2244,6 @@ class CoverLetterView(APIView):
             'id': str(cover_letter.id),
             'status': cover_letter.status,
             'tone': tone,
-            'credits_used': credit_result['cost'],
-            'balance': credit_result['balance_after'],
         }, status=status.HTTP_202_ACCEPTED)
 
 

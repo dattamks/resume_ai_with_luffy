@@ -321,7 +321,7 @@ class Plan(models.Model):
     )
     max_job_alerts = models.PositiveSmallIntegerField(
         default=0,
-        help_text='Deprecated — no longer enforced. Job alerts are gated by job_notifications flag only.',
+        help_text='Maximum number of job alerts allowed. 0 = no access. Pro plan = 5.',
     )
     pdf_export = models.BooleanField(
         default=True,

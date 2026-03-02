@@ -44,7 +44,7 @@ def _ensure_plans():
         slug='pro',
         defaults={
             'name': 'Pro', 'billing_cycle': 'monthly', 'price': 499,
-            'credits_per_month': 25, 'job_notifications': True, 'max_job_alerts': 3,
+            'credits_per_month': 25, 'job_notifications': True, 'max_job_alerts': 5,
         },
     )
 
@@ -116,12 +116,12 @@ class JobAlertCRUDTests(TestCase):
         mock_task.delay.assert_called_once()
 
     @patch('analyzer.views.extract_job_search_profile_task')
-    def test_create_unlimited_alerts_when_enabled(self, mock_task):
-        """Pro users can create unlimited job alerts (no quota)."""
+    def test_create_max_5_alerts_then_blocked(self, mock_task):
+        """Pro users can create up to 5 active job alerts, then get 403."""
         _set_plan(self.user, 'pro')
         mock_task.delay.return_value = MagicMock()
 
-        # Create 5 alerts — all should succeed (no limit)
+        # Create 5 alerts — all should succeed
         for i in range(5):
             resume, _ = Resume.get_or_create_from_upload(
                 self.user, _make_pdf(f'%PDF-1.4 fake content {i}'.encode()),
@@ -131,6 +131,17 @@ class JobAlertCRUDTests(TestCase):
                 'frequency': 'daily',
             }, format='json')
             self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+        # 6th alert should be blocked
+        resume6, _ = Resume.get_or_create_from_upload(
+            self.user, _make_pdf(b'%PDF-1.4 fake content 6'),
+        )
+        resp = self.client.post('/api/v1/job-alerts/', {
+            'resume': str(resume6.id),
+            'frequency': 'daily',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('maximum', resp.data['detail'].lower())
 
     @patch('analyzer.views.extract_job_search_profile_task')
     def test_detail_and_update(self, mock_task):
@@ -591,8 +602,8 @@ class EdgeCaseTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     @patch('analyzer.tasks.crawl_jobs_for_alert_task')
-    def test_manual_run_insufficient_credits(self, mock_crawl):
-        """Manual run with 0 credits should return 402."""
+    def test_manual_run_with_zero_credits_still_works(self, mock_crawl):
+        """Manual run should succeed even with 0 credits (runs are free)."""
         from accounts.models import Wallet
         wallet = Wallet.objects.get(user=self.user)
         wallet.balance = 0
@@ -609,8 +620,8 @@ class EdgeCaseTests(TestCase):
             seniority='mid',
         )
         resp = self.client.post(f'/api/v1/job-alerts/{alert.id}/run/')
-        self.assertEqual(resp.status_code, status.HTTP_402_PAYMENT_REQUIRED)
-        mock_crawl.delay.assert_not_called()
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
+        mock_crawl.delay.assert_called_once()
 
     def test_create_alert_for_other_users_resume(self):
         """Cannot create alert for another user's resume."""

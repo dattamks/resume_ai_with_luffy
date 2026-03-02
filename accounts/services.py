@@ -18,9 +18,9 @@ logger = logging.getLogger('accounts')
 _DEFAULT_COSTS = {
     'resume_analysis': 1,
     'resume_generation': 1,
-    'job_alert_run': 1,
-    'interview_prep': 1,
-    'cover_letter': 1,
+    'job_alert_run': 0,
+    'interview_prep': 0,
+    'cover_letter': 0,
     'resume_builder': 2,
 }
 

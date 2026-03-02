@@ -773,7 +773,6 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
     from django.utils import timezone
     from .models import JobAlert, DiscoveredJob, JobMatch, JobAlertRun
     from .services.job_matcher import match_jobs, MATCH_THRESHOLD
-    from accounts.services import deduct_credits, refund_credits, InsufficientCreditsError
 
     logger.info('match_jobs_task: alert=%s jobs=%d', job_alert_id, len(discovered_job_ids))
 
@@ -787,29 +786,6 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
 
     start = _time.monotonic()
     run = JobAlertRun.objects.create(job_alert=alert)
-
-    # Only deduct credits on the first attempt (not on retries)
-    credits_used = 0
-    if self.request.retries == 0:
-        try:
-            deduct_credits(
-                alert.user,
-                'job_alert_run',
-                description=f'Job alert run #{run.id}',
-                reference_id=str(run.id),
-            )
-            credits_used = 1
-            run.credits_deducted = True
-            run.save(update_fields=['credits_deducted'])
-        except InsufficientCreditsError as e:
-            logger.warning('Insufficient credits for alert %s (balance=%d) — skipping run', job_alert_id, e.balance)
-            run.error_message = f'Insufficient credits (balance={e.balance})'
-            run.save(update_fields=['error_message'])
-            return
-    else:
-        # On retry, check if credits were already deducted for this run
-        run.refresh_from_db()
-        credits_used = 1 if run.credits_deducted else 0
 
     try:
         discovered_jobs = DiscoveredJob.objects.filter(id__in=discovered_job_ids)
@@ -840,7 +816,7 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
 
         duration = _time.monotonic() - start
         run.jobs_matched = matches_created
-        run.credits_used = credits_used
+        run.credits_used = 0
         run.duration_seconds = round(duration, 2)
         run.save(update_fields=['jobs_discovered', 'jobs_matched', 'credits_used', 'duration_seconds'])
 
@@ -858,18 +834,9 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
         run.error_message = str(exc)
         run.duration_seconds = round(duration, 2)
         run.save(update_fields=['error_message', 'duration_seconds'])
-        # Refund credits on failure
-        if run.credits_deducted:
-            try:
-                refund_credits(
-                    alert.user,
-                    'job_alert_run',
-                    description=f'Refund: job alert run #{run.id} failed',
-                    reference_id=str(run.id),
-                )
-            except Exception:
-                logger.exception('Failed to refund credits for run %s', run.id)
-        raise self.retry(exc=exc)
+        if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
 
 
 @shared_task(ignore_result=True)
@@ -1791,42 +1758,14 @@ def generate_interview_prep_task(self, prep_id, user_id):
         prep.status = InterviewPrep.STATUS_FAILED
         prep.error_message = str(exc)
         prep.save(update_fields=['status', 'error_message'])
-        _refund_interview_prep_credits(prep)
-
     except Exception as exc:
         logger.exception('Unexpected error in interview prep: id=%s', prep.id)
         prep.status = InterviewPrep.STATUS_FAILED
         prep.error_message = str(exc)
         prep.save(update_fields=['status', 'error_message'])
-        _refund_interview_prep_credits(prep)
         if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)
-
-
-def _refund_interview_prep_credits(prep):
-    """Refund credits for a failed interview prep generation."""
-    try:
-        prep.refresh_from_db()
-        if not prep.credits_deducted:
-            return
-
-        from accounts.services import refund_credits
-        from django.contrib.auth.models import User
-
-        user = User.objects.get(id=prep.user_id)
-        refund_credits(
-            user,
-            'interview_prep',
-            description=f'Refund: interview prep #{prep.id} failed',
-            reference_id=str(prep.id),
-        )
-
-        prep.credits_deducted = False
-        prep.save(update_fields=['credits_deducted'])
-        logger.info('Credits refunded for failed interview prep id=%s', prep.id)
-    except Exception:
-        logger.exception('Failed to refund credits for interview prep id=%s', prep.id)
 
 
 # ── Cover Letter Generation ─────────────────────────────────────────────────
@@ -1906,39 +1845,12 @@ def generate_cover_letter_task(self, cover_letter_id, user_id):
         cl.status = CoverLetter.STATUS_FAILED
         cl.error_message = str(exc)
         cl.save(update_fields=['status', 'error_message'])
-        _refund_cover_letter_credits(cl)
 
     except Exception as exc:
         logger.exception('Unexpected error in cover letter: id=%s', cl.id)
         cl.status = CoverLetter.STATUS_FAILED
         cl.error_message = str(exc)
         cl.save(update_fields=['status', 'error_message'])
-        _refund_cover_letter_credits(cl)
         if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)
-
-
-def _refund_cover_letter_credits(cl):
-    """Refund credits for a failed cover letter generation."""
-    try:
-        cl.refresh_from_db()
-        if not cl.credits_deducted:
-            return
-
-        from accounts.services import refund_credits
-        from django.contrib.auth.models import User
-
-        user = User.objects.get(id=cl.user_id)
-        refund_credits(
-            user,
-            'cover_letter',
-            description=f'Refund: cover letter #{cl.id} failed',
-            reference_id=str(cl.id),
-        )
-
-        cl.credits_deducted = False
-        cl.save(update_fields=['credits_deducted'])
-        logger.info('Credits refunded for failed cover letter id=%s', cl.id)
-    except Exception:
-        logger.exception('Failed to refund credits for cover letter id=%s', cl.id)

@@ -22,18 +22,18 @@ CREDIT_COSTS = [
     },
     {
         'action': 'job_alert_run',
-        'cost': 1,
-        'description': 'Cost per job alert discovery + matching run (automated or manual).',
+        'cost': 0,
+        'description': 'Job alert runs are free — limited by max_job_alerts on plan instead.',
     },
     {
         'action': 'interview_prep',
-        'cost': 1,
-        'description': 'Cost per AI-generated interview preparation from analysis.',
+        'cost': 0,
+        'description': 'Interview preparation is free — no credit cost.',
     },
     {
         'action': 'cover_letter',
-        'cost': 1,
-        'description': 'Cost per AI-generated cover letter from analysis.',
+        'cost': 0,
+        'description': 'Cover letter generation is free — no credit cost.',
     },
     {
         'action': 'resume_builder',
