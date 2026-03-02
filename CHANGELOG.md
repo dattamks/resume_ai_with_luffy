@@ -5,6 +5,100 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.34.0] — 2026-03-03
+
+### Features — Geography-Aware Feed & Analytics (India-First)
+
+#### Added — Geo Fields on `UserProfile` (`accounts/models.py`)
+- **`country`** CharField (default `"India"`) — User's country of residence, used as the base for geo-scoped feed and analytics.
+- **`state`** CharField (blank) — State / province / region.
+- **`city`** CharField (blank) — City of residence.
+- Migration: `accounts/0019_add_geo_fields_to_userprofile.py`.
+
+#### Added — `country` Field on `DiscoveredJob` (`analyzer/models.py`)
+- **`country`** CharField (blank, indexed) — Normalised country for each job posting. Populated by the crawler bot going forward.
+- Migration: `analyzer/0028_add_country_to_discoveredjob.py`.
+
+#### Changed — Profile Serializers (`accounts/serializers.py`)
+- `UserProfileSerializer`, `UserSerializer`, `UpdateUserSerializer` now include `country`, `state`, `city` as readable and writable fields.
+- `PUT /api/v1/auth/me/` accepts and persists all three geo fields.
+
+#### Changed — Feed Jobs View — India-First Geo Ordering (`analyzer/views_feed.py`)
+- `FeedJobsView` annotates results with `geo_priority` (`0` = user's country, `1` = global) using Django `Case/When`. Local jobs appear first.
+- New query parameters: `search`, `country`, `industry`, `skills`, `salary_min`.
+- `_INDIA_KEYWORDS` heuristic set (~30 Indian city names) for backward-compatible location matching on legacy data without a `country` field.
+- Response now includes top-level `country` field and per-job `country`.
+
+#### Changed — Analytics Endpoints — Geo-Scoped (`analyzer/views_feed.py`)
+- `FeedInsightsView`, `FeedTrendingSkillsView`, `DashboardSkillGapView`, `DashboardMarketInsightsView`, `FeedRecommendationsView` all accept `?country=` query param (default: user profile country, `"all"` for global).
+- Cache keys include country for per-country caching.
+- Responses include `country` field where applicable.
+
+#### Changed — Ingest Serializer (`analyzer/serializers_ingest.py`)
+- `DiscoveredJobIngestSerializer` now accepts optional `country` field from crawler bot payloads.
+
+#### Changed — Feed Serializer (`analyzer/serializers_feed.py`)
+- `FeedJobSerializer` now includes `country` in response fields.
+
+#### Changed — Admin Panels
+- `UserProfile` admin: `list_display`, `list_filter`, `search_fields` include geo fields.
+- `DiscoveredJob` admin: `list_display`, `list_filter`, `search_fields`, fieldsets include `country`.
+
+#### Documentation
+- `FRONTEND_API_GUIDE.md` updated: profile endpoints, all feed/analytics endpoints, TypeScript types, and DiscoveredJob table reference reflect geo fields.
+
+---
+
+## [0.33.0] — 2026-03-03
+
+### Features — Default Resume System
+
+#### Added — `is_default` Field on `Resume` (`analyzer/models.py`)
+- **`is_default` BooleanField** — Marks exactly one resume per user as the "default" powering all personalised surfaces (feed, dashboard analytics, skill extraction).
+- Partial unique constraint `unique_default_resume_per_user` ensures at most one default per user at the database level.
+- **`set_as_default()`** instance method — Clears all other defaults for the user, marks self, saves.
+- **`get_default_for_user(cls, user)`** classmethod — Returns the default `Resume` or `None`.
+- **Auto-default on first upload** — `get_or_create_from_upload()` automatically sets `is_default=True` when the user has no existing default.
+
+#### Added — `SetDefaultResumeView` (`analyzer/views.py`)
+- `POST /api/v1/resumes/<uuid:pk>/set-default/` — Sets a resume as the user's default. Validates ownership, calls `set_as_default()`, busts dashboard cache.
+
+#### Changed — `ResumeDeleteView` Default Fallback
+- When deleting the current default resume, the most recently uploaded remaining resume is auto-promoted to default.
+
+#### Changed — Dashboard Analytics Scoped to Default Resume
+- `DashboardStatsView` now builds `analytics_qs` scoped to the default resume for score trends, grade distributions, keyword match trends, and benchmark calculations. User-wide counts (total analyses, resumes, etc.) remain unscoped.
+- Response includes `default_resume_id` field.
+
+#### Changed — Feed Personalisation Scoped to Default Resume
+- `_get_user_skills()` and `FeedJobsView._get_user_embedding()` in `views_feed.py` now prefer the default resume's `JobSearchProfile` for skill extraction and embedding similarity. Falls back to any available JSP when no default is set.
+
+#### Changed — Serializers & URLs
+- `ResumeSerializer` now includes `is_default` in response fields.
+- New URL route `resumes/<uuid:pk>/set-default/` wired to `SetDefaultResumeView`.
+
+#### Migrations
+- `analyzer/0027_add_default_resume.py` — Adds `is_default` field and partial unique constraint.
+
+#### Tests
+- 15 new tests in `analyzer/tests/test_default_resume.py` across 4 test classes: model logic (auto-default, swap, idempotent, get_default, uniqueness constraint), API (set-default success/404/forbidden/unauth), list response (is_default flag), delete fallback (promotes next, last resume, non-default keeps original).
+
+### Bug Fixes
+
+- **Chat 500 fix** — `POST /api/v1/resume-chat/<id>/message/` returned `NameError: name 'ResumeChatTextMessageSerializer' is not defined`. Added missing imports for `ResumeChatTextMessageSerializer` and `process_text_message` in `views_chat.py`.
+- **Premium template expiry** — Pro users with expired plans could still access premium templates. Added `plan_valid_until` expiry check to the `accessible` field and plan gating logic.
+- **Credit cost seed** — Added `python manage.py seed_credit_costs` to `entrypoint.sh` so `interview_prep` and other credit cost rows are seeded on deployment.
+
+### Chat Enhancements
+
+- **Markdown in AI responses** — Updated `_TEXT_CHAT_SYSTEM_PROMPT` to instruct the LLM to use Markdown formatting (bold, bullets, headers) in conversational responses. Frontend should render the `content` field with a Markdown component.
+
+### Documentation
+
+- **FRONTEND_API_GUIDE.md** bumped to v0.33.0 with default resume concept section, `set-default` endpoint docs, updated TypeScript `Resume` interface (`is_default`, `days_since_upload`, `last_analyzed_at`), dashboard scoping docs, `default_resume_id` field, premium template expiry notes, chat markdown rendering note, and endpoint reference table updates.
+
+---
+
 ## [0.29.0] — 2026-03-02
 
 ### ⚠ Breaking Changes

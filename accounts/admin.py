@@ -12,11 +12,12 @@ from .models import (
 class UserProfileAdmin(admin.ModelAdmin):
     list_display = (
         'user', 'plan', 'plan_valid_until', 'pending_plan',
+        'country', 'state', 'city',
         'country_code', 'mobile_number',
         'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
     )
-    list_filter = ('plan', 'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in')
-    search_fields = ('user__username', 'mobile_number')
+    list_filter = ('plan', 'country', 'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in')
+    search_fields = ('user__username', 'mobile_number', 'country', 'city')
     raw_id_fields = ('user',)
 
 

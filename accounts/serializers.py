@@ -53,7 +53,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ('country_code', 'mobile_number')
+        fields = ('country_code', 'mobile_number', 'country', 'state', 'city')
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
@@ -145,12 +145,16 @@ class UserSerializer(serializers.ModelSerializer):
     website_url = serializers.URLField(source='profile.website_url', read_only=True)
     github_url = serializers.URLField(source='profile.github_url', read_only=True)
     linkedin_url = serializers.URLField(source='profile.linkedin_url', read_only=True)
+    country = serializers.CharField(source='profile.country', read_only=True)
+    state = serializers.CharField(source='profile.state', read_only=True)
+    city = serializers.CharField(source='profile.city', read_only=True)
 
     class Meta:
         model = User
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name', 'date_joined',
             'country_code', 'mobile_number',
+            'country', 'state', 'city',
             'plan', 'wallet', 'plan_valid_until', 'pending_plan',
             'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
             'auth_provider', 'avatar_url', 'is_email_verified',
@@ -216,10 +220,28 @@ class UpdateUserSerializer(serializers.ModelSerializer):
         allow_blank=True,
         help_text='Profile picture URL',
     )
+    country = serializers.CharField(
+        required=False,
+        max_length=100,
+        help_text='Country of residence (default: India)',
+    )
+    state = serializers.CharField(
+        required=False,
+        max_length=100,
+        allow_blank=True,
+        help_text='State / province / region',
+    )
+    city = serializers.CharField(
+        required=False,
+        max_length=100,
+        allow_blank=True,
+        help_text='City of residence',
+    )
 
     class Meta:
         model = User
         fields = ('username', 'email', 'first_name', 'last_name', 'country_code', 'mobile_number',
+                  'country', 'state', 'city',
                   'website_url', 'github_url', 'linkedin_url', 'avatar_url')
 
     def validate_username(self, value):
@@ -257,6 +279,9 @@ class UpdateUserSerializer(serializers.ModelSerializer):
         github_url = validated_data.pop('github_url', None)
         linkedin_url = validated_data.pop('linkedin_url', None)
         avatar_url = validated_data.pop('avatar_url', None)
+        country = validated_data.pop('country', None)
+        state = validated_data.pop('state', None)
+        city = validated_data.pop('city', None)
 
         # Update User fields (username, email, first_name, last_name)
         instance = super().update(instance, validated_data)
@@ -271,6 +296,9 @@ class UpdateUserSerializer(serializers.ModelSerializer):
             'github_url': github_url,
             'linkedin_url': linkedin_url,
             'avatar_url': avatar_url,
+            'country': country,
+            'state': state,
+            'city': city,
         }
         for field_name, value in profile_updates.items():
             if value is not None:

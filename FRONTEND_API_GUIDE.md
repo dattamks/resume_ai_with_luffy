@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.30.0
+> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.33.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -238,6 +238,9 @@ Creates a new user account and returns tokens immediately (auto-login).
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
     "mobile_number": "",
+    "country": "India",
+    "state": "",
+    "city": "",
     "auth_provider": "email",
     "avatar_url": "",
     "plan": {
@@ -325,6 +328,9 @@ Creates a new user account and returns tokens immediately (auto-login).
     "date_joined": "2026-02-22T10:00:00Z",
     "country_code": "+91",
     "mobile_number": "",
+    "country": "India",
+    "state": "",
+    "city": "",
     "auth_provider": "email",
     "avatar_url": "",
     "plan": { "id": 1, "name": "Free", "slug": "free", "...":  "..." },
@@ -368,7 +374,7 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 ### GET `/api/v1/auth/me/` — Current User Profile
 
-🔒 Requires auth. Returns the currently authenticated user's profile including phone fields and plan.
+🔒 Requires auth. Returns the currently authenticated user's profile including phone fields, geography, and plan.
 
 **Response (200):**
 ```json
@@ -379,6 +385,9 @@ Creates a new user account and returns tokens immediately (auto-login).
   "date_joined": "2026-02-22T10:00:00Z",
   "country_code": "+91",
   "mobile_number": "",
+  "country": "India",
+  "state": "",
+  "city": "",
   "plan": {
     "id": 1,
     "name": "Free",
@@ -437,6 +446,9 @@ Use this on app load to verify the stored token is still valid and hydrate user 
   "last_name": "Doe",
   "country_code": "+1",
   "mobile_number": "5551234567",
+  "country": "United States",
+  "state": "California",
+  "city": "San Francisco",
   "website_url": "https://johndoe.dev",
   "github_url": "https://github.com/johndoe",
   "linkedin_url": "https://linkedin.com/in/johndoe",
@@ -454,6 +466,9 @@ Use this on app load to verify the stored token is still valid and hydrate user 
 | `last_name`    | string | User's last name |
 | `country_code` | string | e.g. `"+1"` |
 | `mobile_number`| string | e.g. `"5551234567"` |
+| `country`      | string | Country of residence (default `"India"`). Used as base for geo-scoped feed & analytics |
+| `state`        | string | State / province / region (blank to clear) |
+| `city`         | string | City of residence (blank to clear) |
 | `website_url`  | URL    | Personal website (blank to clear) |
 | `github_url`   | URL    | GitHub profile (blank to clear) |
 | `linkedin_url` | URL    | LinkedIn profile (blank to clear) |
@@ -470,6 +485,9 @@ Use this on app load to verify the stored token is still valid and hydrate user 
   "date_joined": "2026-02-22T10:00:00Z",
   "country_code": "+1",
   "mobile_number": "5551234567",
+  "country": "United States",
+  "state": "California",
+  "city": "San Francisco",
   "website_url": "https://johndoe.dev",
   "github_url": "https://github.com/johndoe",
   "linkedin_url": "https://linkedin.com/in/johndoe",
@@ -3025,6 +3043,9 @@ interface Resume {
   uploaded_at: string;        // ISO 8601
   active_analysis_count: number;
   file_url: string | null;    // Full URL to download the resume PDF
+  days_since_upload: number;  // Days since upload (staleness)
+  last_analyzed_at: string | null; // ISO 8601, null if never analyzed
+  is_default: boolean;        // true if this is the user's default resume
 }
 
 // ── Job ──────────────────────────────────────────────────────────────────
@@ -3707,6 +3728,9 @@ The `plan`, `wallet`, `plan_valid_until`, and `pending_plan` objects are include
   "date_joined": "2026-02-26T10:00:00Z",
   "country_code": "+91",
   "mobile_number": "",
+  "country": "India",
+  "state": "",
+  "city": "",
   "plan": {
     "id": 1,
     "name": "Free",
@@ -4661,6 +4685,7 @@ interface DiscoveredJob {
   company: string;
   company_entity: string | null;  // UUID of matched CompanyEntity, if linked
   location: string;
+  country: string;       // Normalised country (may be blank for legacy data)
   url: string;           // Direct link to the actual job posting / apply page
   source_page_url: string; // The search/career page URL we crawled
   salary_range: string;
@@ -5614,7 +5639,7 @@ Returns all **active** templates, ordered by `sort_order` then `name`.
 | `is_premium` | `boolean` | Whether this template requires a premium plan |
 | `is_active` | `boolean` | Always `true` in list responses (inactive templates are filtered out) |
 | `sort_order` | `integer` | Display order (lower = first) |
-| `accessible` | `boolean` | Whether the requesting user can use this template — based on plan |
+| `accessible` | `boolean` | Whether the requesting user can use this template — based on plan **and** plan expiry (`plan_valid_until`). Expired Pro users see `false` for premium templates. |
 
 ### 28.2 Default Templates
 
@@ -5629,7 +5654,7 @@ Returns all **active** templates, ordered by `sort_order` then `name`.
 ### 28.3 Plan Gating
 
 - **Free templates** (`is_premium: false`): Available to all users.
-- **Premium templates** (`is_premium: true`): Only available when the user's plan has `premium_templates: true`.
+- **Premium templates** (`is_premium: true`): Only available when the user's plan has `premium_templates: true` **and** the plan has not expired (`plan_valid_until` is in the future).
 - When a user attempts to generate a resume with a premium template they don't have access to, the API returns **403**:
 
 ```json
@@ -5849,6 +5874,10 @@ Content-Type: application/json
   }
 }
 ```
+
+**Markdown in AI responses:**  
+The assistant's `content` field uses **Markdown formatting** (bold, bullets, headers, etc.).  
+Render it with a Markdown component (e.g. `react-markdown`) instead of plain text so the chat feels polished.
 
 **Key fields in `progress`:**
 
@@ -6170,6 +6199,8 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 
 🔒 Requires auth. Returns jobs ranked by **pgvector embedding similarity** against the user's `JobSearchProfile`. Falls back to recency ordering when no profile embedding exists.
 
+**Geography-aware:** Jobs in the user's country (from `profile.country`, default `"India"`) are shown first. Non-local jobs appear after local ones. Pass `?country=` to override with a specific country, or omit to use the profile default.
+
 **Query Parameters:**
 
 | Param | Type | Default | Description |
@@ -6177,10 +6208,17 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 | `page` | int | `1` | Page number |
 | `page_size` | int | `20` | Results per page (max 50) |
 | `days` | int | `30` | How far back to look |
+| `search` | string | — | Free-text search across title, company, location, skills, industry |
+| `country` | string | profile country | Strict country filter (overrides profile default) |
 | `remote` | string | — | Filter: `onsite`, `hybrid`, or `remote` |
 | `seniority` | string | — | Filter: `intern`, `junior`, `mid`, `senior`, `lead`, etc. |
 | `location` | string | — | Substring match on job location |
 | `employment_type` | string | — | Filter: `full_time`, `part_time`, `contract`, `internship`, `freelance` |
+| `industry` | string | — | Substring match on job industry |
+| `skills` | string | — | Comma-separated skill keywords (all must match) |
+| `salary_min` | int | — | Minimum `salary_min_usd` filter |
+
+> **India-first behaviour:** When no `country` param is passed, results are sorted with the user's country first, then global jobs. If `country` is explicitly provided, only jobs in that country are returned (strict filter).
 
 **Response (200):**
 
@@ -6189,12 +6227,14 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
   "count": 142,
   "page": 1,
   "page_size": 20,
+  "country": "India",
   "results": [
     {
       "id": "e5f6a7b8-...",
       "title": "Senior Software Engineer",
       "company": "Google",
       "location": "Bangalore, India",
+      "country": "India",
       "url": "https://careers.google.com/jobs/123/",
       "salary_range": "₹30L - ₹50L",
       "salary_min_usd": 36000,
@@ -6216,19 +6256,28 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 |-------|------|-------------|
 | `relevance` | float \| null | 0–1 cosine similarity score. `null` when pgvector is unavailable |
 | `count` | int | Total matching jobs (for pagination) |
+| `country` | string | The country filter applied (from query param or user profile) |
+| `results[].country` | string | Normalised country of the job (may be empty for legacy data) |
 
-**Frontend usage:** Main feed page job cards. Sort by relevance (default) or recency. Show `relevance` as a match percentage badge (e.g., "87% match").
+**Frontend usage:** Main feed page job cards. Sort by relevance (default) or recency. Show `relevance` as a match percentage badge (e.g., "87% match"). Provide search bar and filter dropdowns for country, remote, seniority, employment type, industry, and skills.
 
 ---
 
 ### 30.2 GET `/api/v1/feed/insights/` — Market Intelligence
 
-🔒 Requires auth. Aggregated job market data from the last 30 days. **Cached 60 minutes.**
+🔒 Requires auth. Aggregated job market data from the last 30 days. **Cached 60 minutes per country.**
+
+**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to filter for a specific country, or `?country=all` for global data.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `country` | string | profile country | Country to scope insights to, or `"all"` for global |
 
 **Response (200):**
 
 ```json
 {
+  "country": "India",
   "total_jobs_last_30d": 1523,
   "avg_salary_usd": 72000,
   "top_skills": [
@@ -6283,6 +6332,12 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 ### 30.3 GET `/api/v1/feed/trending-skills/` — Skills Gap Analysis
 
 🔒 Requires auth. Compares the user's skills against market demand. **Personalised — not cached.**
+
+**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to override, or `?country=all` for global.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `country` | string | profile country | Country to scope trending skills, or `"all"` for global |
 
 **Response (200):**
 
@@ -6448,6 +6503,12 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 
 🔒 Requires auth. Data for a radar/spider chart comparing user skills vs market demand.
 
+**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to override, or `?country=all` for global.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `country` | string | profile country | Country to scope market demand, or `"all"` for global |
+
 **Response (200):**
 
 ```json
@@ -6470,12 +6531,19 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 
 ### 30.8 GET `/api/v1/dashboard/market-insights/` — Weekly Trend Card
 
-🔒 Requires auth. Short summary of this week vs last week. **Cached 60 minutes.**
+🔒 Requires auth. Short summary of this week vs last week. **Cached 60 minutes per country.**
+
+**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to override, or `?country=all` for global.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `country` | string | profile country | Country to scope weekly trends, or `"all"` for global |
 
 **Response (200):**
 
 ```json
 {
+  "country": "India",
   "jobs_this_week": 245,
   "jobs_last_week": 198,
   "growth_pct": 23.7,
@@ -6523,6 +6591,7 @@ interface FeedJob {
   title: string;
   company: string;
   location: string;
+  country: string;
   url: string;
   salary_range: string;
   salary_min_usd: number | null;
@@ -6541,6 +6610,7 @@ interface FeedJobsResponse {
   count: number;
   page: number;
   page_size: number;
+  country: string;      // country filter applied (from param or user profile)
   results: FeedJob[];
 }
 
@@ -6566,6 +6636,7 @@ interface TrendingVsUser {
 }
 
 interface InsightsResponse {
+  country: string;              // country scope applied
   total_jobs_last_30d: number;
   avg_salary_usd: number | null;
   top_skills: TrendingSkill[];
@@ -6623,6 +6694,7 @@ interface SkillGapRadarItem {
 }
 
 interface MarketInsights {
+  country: string;              // country scope applied
   jobs_this_week: number;
   jobs_last_week: number;
   growth_pct: number;
@@ -6842,6 +6914,7 @@ A job posting discovered from an external source (Firecrawl). Global — not per
 | `company` | varchar(255) | No | `''` | — | Company name (as displayed in listing) |
 | `company_entity` | UUID (FK) | Yes | `null` | **FK → CompanyEntity**, SET_NULL | Matched CompanyEntity record |
 | `location` | varchar(255) | No | `''` | — | Job location |
+| `country` | varchar(100) | No | `''` | Indexed | Normalised country (used for geo-scoped feed) |
 | `salary_range` | varchar(255) | No | `''` | — | Raw salary range string from listing |
 | `description_snippet` | text | No | `''` | — | Short job description excerpt |
 | **Enriched fields** | | | | | |
@@ -6871,7 +6944,7 @@ A job posting discovered from an external source (Firecrawl). Global — not per
 
 ¹¹ **`seniority_level` choices:** `intern`, `junior`, `mid`, `senior`, `lead`, `manager`, `director`, `executive`
 
-**Indexes:** `(source, external_id)`, `(-created_at)`, `(industry)`
+**Indexes:** `(source, external_id)`, `(-created_at)`, `(industry)`, `(country)`
 
 **Ordering:** `-created_at`
 
@@ -7050,6 +7123,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/resumes/` | ✅ | Readonly (120/hr) | List resumes (search/sort/paginated) |
 | DELETE | `/api/v1/resumes/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete resume file (blocked if in use) |
 | POST | `/api/v1/resumes/bulk-delete/` | ✅ | Write (60/hr) | Bulk-delete up to 50 resumes |
+| POST | `/api/v1/resumes/<uuid:id>/set-default/` | ✅ | Write (60/hr) | Set resume as user's default (§5) |
 | GET | `/api/v1/resumes/<uuid:id>/versions/` | ✅ | Readonly (120/hr) | Resume version history |
 | **Resume Generation** |||||
 | POST | `/api/v1/analyses/<id>/generate-resume/` | ✅ | Analyze (10/hr) | Trigger AI resume generation (1 credit) |
@@ -7063,7 +7137,8 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | POST | `/api/v1/resume-chat/start/` | ✅ | Write (60/hr) | Start builder session (§29) |
 | GET | `/api/v1/resume-chat/` | ✅ | Readonly (120/hr) | List chat sessions |
 | GET | `/api/v1/resume-chat/<uuid:id>/` | ✅ | Readonly (120/hr) | Session detail with messages |
-| POST | `/api/v1/resume-chat/<uuid:id>/submit/` | ✅ | Write (60/hr) | Submit step action |
+| POST | `/api/v1/resume-chat/<uuid:id>/message/` | ✅ | Write (60/hr) | Send text message (text mode) |
+| POST | `/api/v1/resume-chat/<uuid:id>/submit/` | ✅ | Write (60/hr) | Submit step action (guided mode) |
 | POST | `/api/v1/resume-chat/<uuid:id>/finalize/` | ✅ | Write (60/hr) | Generate PDF/DOCX (2 credits) |
 | DELETE | `/api/v1/resume-chat/<uuid:id>/` | ✅ | Readonly (120/hr) | Delete session |
 | GET | `/api/v1/resume-chat/resumes/` | ✅ | Readonly (120/hr) | List resumes for base selection |
@@ -7097,6 +7172,27 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 ---
 
 ## Changelog
+
+### v0.33.0 — Default Resume System, Chat Fixes & Premium Template Hardening
+
+#### Features — Default Resume
+- **`is_default` field** added to `Resume` model and all resume list responses (`GET /api/v1/resumes/`).
+- **`POST /api/v1/resumes/<uuid>/set-default/`** — new endpoint to change the user's default resume. Busts dashboard cache on change.
+- **Auto-default on first upload:** The first resume uploaded by a user is automatically set as the default.
+- **Delete fallback:** Deleting the default resume auto-promotes the most recently uploaded remaining resume.
+- **Dashboard scoping:** `average_ats_score`, `score_trend`, `grade_distribution`, `top_missing_keywords`, `keyword_match_trend`, `industry_benchmark_percentile` are now scoped to the **default resume's analyses** only. Overview counts (`total_analyses`, `resume_count`, etc.) remain user-wide. Falls back to all analyses if no default is set.
+- **`default_resume_id`** field added to `GET /api/v1/dashboard/stats/` response.
+- **Feed scoping:** `_get_user_skills()` and `_get_user_embedding()` now use the default resume's `JobSearchProfile`. Affects `feed/jobs/`, `feed/insights/`, `feed/trending-skills/`, `feed/recommendations/`, `dashboard/skill-gap/`.
+- **Database constraint:** Partial unique index ensures at most one default resume per user (`unique_default_resume_per_user`).
+- **TypeScript:** `Resume` interface now includes `is_default`, `days_since_upload`, `last_analyzed_at`.
+
+#### Bug Fixes
+- **Chat 500 error fixed:** `ResumeChatTextMessageSerializer` and `process_text_message` were not imported in `views_chat.py`, causing `NameError` on every `POST /resume-chat/<id>/message/` request.
+- **Premium template expiry check:** `accessible` field and template gating on `GenerateResumeView` / `ResumeChatFinalizeView` now check `plan_valid_until`. Expired Pro users correctly lose access to premium templates.
+- **`seed_credit_costs` in entrypoint:** Added to startup sequence so `CreditCost` rows (including `interview_prep`) are always present in production. Fixes the `CreditCost row missing` warning.
+
+#### Chat Enhancements
+- **Markdown formatting:** Text-mode chat responses now use Markdown (bold, bullet lists, headers). Frontend should render `content` with a Markdown renderer for rich display.
 
 ### v0.30.0 — Analyzed Job Sync & Crawler Bot Integration
 
@@ -7261,16 +7357,3 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 - **Account deletion requires password** (`DELETE /api/v1/auth/profile/`)
 - **`celery_task_id` removed** from analysis responses
 - **`payment` throttle scope** added (30/hour) for all payment endpoints
-
----
-
-### v0.33.0 — Default Resume System
-
-- **`is_default` field** added to `Resume` model and all resume list responses (`GET /api/v1/resumes/`).
-- **`POST /api/v1/resumes/<uuid>/set-default/`** — new endpoint to change the user's default resume.
-- **Auto-default on first upload:** The first resume uploaded by a user is automatically set as the default.
-- **Delete fallback:** Deleting the default resume auto-promotes the most recently uploaded remaining resume.
-- **Dashboard scoping:** `average_ats_score`, `score_trend`, `grade_distribution`, `top_missing_keywords`, `keyword_match_trend`, `industry_benchmark_percentile` are now scoped to the **default resume's analyses** only. Overview counts (`total_analyses`, `resume_count`, etc.) remain user-wide. Falls back to all analyses if no default is set.
-- **`default_resume_id`** field added to `GET /api/v1/dashboard/stats/` response.
-- **Feed scoping:** `_get_user_skills()` and `_get_user_embedding()` now use the default resume's `JobSearchProfile`. Affects `feed/jobs/`, `feed/insights/`, `feed/trending-skills/`, `feed/recommendations/`, `dashboard/skill-gap/`.
-- **Database constraint:** Partial unique index ensures at most one default resume per user (`unique_default_resume_per_user`).

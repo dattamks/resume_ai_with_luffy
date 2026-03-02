@@ -105,6 +105,25 @@ class UserProfile(models.Model):
         help_text='LinkedIn profile URL.',
     )
 
+    # ── Geography ──────────────────────────────────────────────────────────
+    country = models.CharField(
+        max_length=100,
+        default='India',
+        help_text='Country of residence. Used as primary geo filter for feed & analytics.',
+    )
+    state = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='State / province / region (e.g. "Karnataka", "California").',
+    )
+    city = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='City of residence (e.g. "Bangalore", "Mumbai").',
+    )
+
     # ── Email verification ──────────────────────────────────────────────────
     is_email_verified = models.BooleanField(
         default=False,

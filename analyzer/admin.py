@@ -153,15 +153,15 @@ class JobAlertAdmin(admin.ModelAdmin):
 
 @admin.register(DiscoveredJob)
 class DiscoveredJobAdmin(admin.ModelAdmin):
-    list_display = ('id', 'source', 'title', 'company', 'location', 'seniority_level', 'remote_policy', 'industry', 'posted_at', 'created_at')
-    list_filter = ('source', 'seniority_level', 'employment_type', 'remote_policy', 'industry')
-    search_fields = ('title', 'company', 'location', 'skills_required')
+    list_display = ('id', 'source', 'title', 'company', 'location', 'country', 'seniority_level', 'remote_policy', 'industry', 'posted_at', 'created_at')
+    list_filter = ('source', 'country', 'seniority_level', 'employment_type', 'remote_policy', 'industry')
+    search_fields = ('title', 'company', 'location', 'country', 'skills_required')
     readonly_fields = ('id', 'raw_data', 'created_at')
     raw_id_fields = ('company_entity',)
     list_per_page = 50
     fieldsets = (
         (None, {
-            'fields': ('source', 'external_id', 'source_page_url', 'url', 'title', 'company', 'company_entity', 'location'),
+            'fields': ('source', 'external_id', 'source_page_url', 'url', 'title', 'company', 'company_entity', 'location', 'country'),
         }),
         ('Enriched Data', {
             'fields': ('skills_required', 'skills_nice_to_have', 'experience_years_min', 'experience_years_max',

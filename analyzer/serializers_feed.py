@@ -23,7 +23,7 @@ class FeedJobSerializer(serializers.ModelSerializer):
     class Meta:
         model = DiscoveredJob
         fields = (
-            'id', 'title', 'company', 'location', 'url',
+            'id', 'title', 'company', 'location', 'country', 'url',
             'salary_range', 'salary_min_usd', 'salary_max_usd',
             'employment_type', 'remote_policy', 'seniority_level',
             'industry', 'skills_required',

@@ -175,7 +175,7 @@ class DiscoveredJobIngestSerializer(serializers.ModelSerializer):
         model = DiscoveredJob
         fields = (
             'source', 'external_id', 'source_page_url', 'url',
-            'title', 'company', 'location', 'salary_range',
+            'title', 'company', 'location', 'country', 'salary_range',
             'description_snippet',
             'skills_required', 'skills_nice_to_have',
             'experience_years_min', 'experience_years_max',
@@ -191,6 +191,7 @@ class DiscoveredJobIngestSerializer(serializers.ModelSerializer):
             'title': {'required': False},
             'company': {'required': False},
             'location': {'required': False},
+            'country': {'required': False},
             'salary_range': {'required': False},
             'description_snippet': {'required': False},
             'skills_required': {'required': False},

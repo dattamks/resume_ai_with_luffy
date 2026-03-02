@@ -916,6 +916,11 @@ class DiscoveredJob(models.Model):
         help_text='Matched CompanyEntity record (linked post-crawl or via career page)',
     )
     location = models.CharField(max_length=255, blank=True)
+    country = models.CharField(
+        max_length=100, blank=True, db_index=True,
+        help_text='Normalised country name (e.g. "India", "United States"). '
+                  'Derived from location field or provided by crawler.',
+    )
     salary_range = models.CharField(max_length=255, blank=True)
     description_snippet = models.TextField(blank=True, help_text='Short job description excerpt')
 

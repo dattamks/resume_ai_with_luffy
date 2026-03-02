@@ -6,13 +6,19 @@ and under ``/api/v1/dashboard/`` for additional dashboard widgets.
 
 All endpoints require authentication and use ``ReadOnlyThrottle``.
 Heavy aggregations are cached in Redis for 15-60 minutes.
+
+Geography filtering:
+    The user's ``profile.country`` (default "India") is used as the base
+    geo filter.  Feed and analytics endpoints prioritise jobs in the
+    user's country, falling back to global results when insufficient
+    local data exists.
 """
 import logging
 from collections import Counter
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Case, Count, IntegerField, Q, Value, When
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -48,6 +54,51 @@ logger = logging.getLogger('analyzer')
 #  Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ── India location heuristics ────────────────────────────────────────────
+# Used to infer country='India' from free-text location strings when the
+# crawler hasn't set the country field explicitly.
+_INDIA_KEYWORDS = {
+    'india', 'bangalore', 'bengaluru', 'mumbai', 'delhi', 'ncr',
+    'hyderabad', 'pune', 'chennai', 'kolkata', 'noida', 'gurgaon',
+    'gurugram', 'ahmedabad', 'jaipur', 'lucknow', 'chandigarh',
+    'thiruvananthapuram', 'kochi', 'indore', 'bhopal', 'coimbatore',
+    'nagpur', 'visakhapatnam', 'mysore', 'mysuru', 'navi mumbai',
+    'greater noida', 'faridabad', 'ghaziabad',
+}
+
+
+def _is_india_location(location: str) -> bool:
+    """Quick heuristic: does the free-text location mention an Indian city?"""
+    low = location.lower()
+    return any(kw in low for kw in _INDIA_KEYWORDS)
+
+
+def _get_user_country(user) -> str:
+    """Return the user's profile country, default 'India'."""
+    profile = getattr(user, 'profile', None)
+    if profile and profile.country:
+        return profile.country
+    return 'India'
+
+
+def _filter_by_country(qs, country: str):
+    """
+    Filter a DiscoveredJob queryset to jobs in the given country.
+
+    Matches on the structured ``country`` field first. For India,
+    also includes jobs whose free-text ``location`` contains known
+    Indian city names (for legacy data without country set).
+    """
+    country_q = Q(country__iexact=country)
+    if country.lower() == 'india':
+        # Also match location strings mentioning Indian cities
+        india_q = Q()
+        for kw in _INDIA_KEYWORDS:
+            india_q |= Q(location__icontains=kw)
+        country_q |= india_q
+    return qs.filter(country_q)
+
+
 def _get_user_skills(user) -> list[str]:
     """
     Return deduplicated lowercase skill list from the user's **default**
@@ -68,21 +119,28 @@ def _get_user_skills(user) -> list[str]:
     return sorted(skills)
 
 
-def _trending_skills_raw(days: int = 30, limit: int = 30) -> list[dict]:
+def _trending_skills_raw(days: int = 30, limit: int = 30, country: str = '') -> list[dict]:
     """
     Aggregate ``skills_required`` across recent DiscoveredJobs.
     Returns [{'skill': str, 'count': int}] sorted desc by count.
+
+    If ``country`` is given, only considers jobs in that country
+    (by ``country`` field or location heuristic for India).
     """
-    cache_key = f'feed:trending_skills_raw:{days}:{limit}'
+    cache_key = f'feed:trending_skills_raw:{days}:{limit}:{country}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
     since = timezone.now() - timedelta(days=days)
-    jobs = DiscoveredJob.objects.filter(
+    qs = DiscoveredJob.objects.filter(
         created_at__gte=since,
         skills_required__isnull=False,
-    ).values_list('skills_required', flat=True)
+    )
+    if country:
+        qs = _filter_by_country(qs, country)
+
+    jobs = qs.values_list('skills_required', flat=True)
 
     counter: Counter = Counter()
     for skill_list in jobs:
@@ -97,20 +155,24 @@ def _trending_skills_raw(days: int = 30, limit: int = 30) -> list[dict]:
     return result
 
 
-def _prev_period_skills(days: int = 30, limit: int = 50) -> dict[str, int]:
+def _prev_period_skills(days: int = 30, limit: int = 50, country: str = '') -> dict[str, int]:
     """Skills from the *previous* period for growth % calculation."""
-    cache_key = f'feed:prev_skills:{days}:{limit}'
+    cache_key = f'feed:prev_skills:{days}:{limit}:{country}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
     end = timezone.now() - timedelta(days=days)
     start = end - timedelta(days=days)
-    jobs = DiscoveredJob.objects.filter(
+    qs = DiscoveredJob.objects.filter(
         created_at__gte=start,
         created_at__lt=end,
         skills_required__isnull=False,
-    ).values_list('skills_required', flat=True)
+    )
+    if country:
+        qs = _filter_by_country(qs, country)
+
+    jobs = qs.values_list('skills_required', flat=True)
 
     counter: Counter = Counter()
     for skill_list in jobs:
@@ -134,17 +196,24 @@ class FeedJobsView(APIView):
     Personalised job feed ranked by pgvector embedding similarity
     against the user's ``JobSearchProfile``.
 
+    **Geography-aware**: by default, jobs in the user's country
+    (from ``profile.country``, default India) are shown first.
+    Non-local jobs appear only after local results or when the user
+    explicitly filters for another country.
+
     Query params:
         - ``page``  (int, default 1)
         - ``page_size`` (int, default 20, max 50)
+        - ``search`` (free-text search across title, company, skills, location)
+        - ``country`` (exact country filter — overrides profile default)
         - ``remote`` (onsite|hybrid|remote)
         - ``seniority`` (intern|junior|mid|senior|lead|…)
-        - ``location`` (substring match)
+        - ``location`` (substring match on location field)
         - ``employment_type`` (full_time|part_time|contract|…)
+        - ``industry`` (substring match)
+        - ``skills`` (comma-separated skill keywords)
+        - ``salary_min`` (int, minimum salary USD filter)
         - ``days`` (int, default 30 — how far back to look)
-
-    Falls back to recency-ordered listing when pgvector is unavailable
-    or the user has no embedding.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -169,7 +238,21 @@ class FeedJobsView(APIView):
         since = timezone.now() - timedelta(days=days)
         qs = DiscoveredJob.objects.filter(created_at__gte=since)
 
-        # Filters
+        # ── Filters ──────────────────────────────────────────────────
+
+        # Country filter: explicit param > user's profile country
+        country_param = request.query_params.get('country', '').strip()
+        user_country = _get_user_country(user)
+        filter_country = country_param or user_country
+
+        # If no explicit country param was passed, we do India-first
+        # ordering rather than strict filtering (so global jobs still
+        # appear after local ones).
+        strict_country_filter = bool(country_param)
+
+        if strict_country_filter:
+            qs = _filter_by_country(qs, filter_country)
+
         remote = request.query_params.get('remote')
         if remote:
             qs = qs.filter(remote_policy=remote)
@@ -186,7 +269,53 @@ class FeedJobsView(APIView):
         if emp_type:
             qs = qs.filter(employment_type=emp_type)
 
-        # Try pgvector similarity ranking
+        industry = request.query_params.get('industry')
+        if industry:
+            qs = qs.filter(industry__icontains=industry)
+
+        skills_param = request.query_params.get('skills', '').strip()
+        if skills_param:
+            for skill in skills_param.split(','):
+                skill = skill.strip()
+                if skill:
+                    qs = qs.filter(skills_required__icontains=skill)
+
+        salary_min = request.query_params.get('salary_min')
+        if salary_min:
+            try:
+                qs = qs.filter(salary_min_usd__gte=int(salary_min))
+            except (ValueError, TypeError):
+                pass
+
+        # ── Search (free-text) ───────────────────────────────────────
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(title__icontains=search)
+                | Q(company__icontains=search)
+                | Q(location__icontains=search)
+                | Q(skills_required__icontains=search)
+                | Q(industry__icontains=search)
+            )
+
+        # ── Geo-priority annotation ─────────────────────────────────
+        # When no strict country filter is applied, annotate a
+        # ``geo_priority`` field: 0 = user's country, 1 = other.
+        # This is used as the primary sort key so local jobs come first.
+        if not strict_country_filter:
+            geo_q = Q(country__iexact=filter_country)
+            if filter_country.lower() == 'india':
+                for kw in _INDIA_KEYWORDS:
+                    geo_q |= Q(location__icontains=kw)
+            qs = qs.annotate(
+                geo_priority=Case(
+                    When(geo_q, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                ),
+            )
+
+        # ── Ranking ──────────────────────────────────────────────────
         profile_embedding = self._get_user_embedding(user)
         if profile_embedding is not None:
             try:
@@ -195,13 +324,16 @@ class FeedJobsView(APIView):
                 qs = (
                     qs.exclude(embedding__isnull=True)
                     .annotate(distance=CosineDistance('embedding', profile_embedding))
-                    .order_by('distance')
                 )
+
+                if strict_country_filter:
+                    qs = qs.order_by('distance')
+                else:
+                    qs = qs.order_by('geo_priority', 'distance')
 
                 total = qs.count()
                 job_rows = list(qs[offset:offset + page_size])
 
-                # Inject relevance as 1-distance (0-1 scale, rounded)
                 for job in job_rows:
                     job.relevance = round(1.0 - job.distance, 4)
 
@@ -210,13 +342,18 @@ class FeedJobsView(APIView):
                     'count': total,
                     'page': page,
                     'page_size': page_size,
+                    'country': filter_country,
                     'results': serializer.data,
                 })
             except Exception:
                 logger.debug('pgvector not available for feed — falling back to recency')
 
-        # Fallback — recency order
-        qs = qs.order_by('-created_at')
+        # Fallback — recency order with geo priority
+        if strict_country_filter:
+            qs = qs.order_by('-created_at')
+        else:
+            qs = qs.order_by('geo_priority', '-created_at')
+
         total = qs.count()
         job_rows = list(qs[offset:offset + page_size])
         for job in job_rows:
@@ -227,6 +364,7 @@ class FeedJobsView(APIView):
             'count': total,
             'page': page,
             'page_size': page_size,
+            'country': filter_country,
             'results': serializer.data,
         })
 
@@ -267,19 +405,30 @@ class FeedInsightsView(APIView):
     - Top skills, top companies, top locations
     - Employment-type / remote-policy / seniority breakdowns
 
-    Cached for 60 minutes.
+    Geography-aware: scoped to the user's country by default.
+    Pass ``?country=`` to filter for a specific country, or
+    ``?country=all`` to see global data.
+
+    Cached per-country for 60 minutes.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
-        cache_key = 'feed:insights:global'
+        country_param = request.query_params.get('country', '').strip()
+        user_country = _get_user_country(request.user)
+        country = country_param if country_param else user_country
+        is_global = country.lower() == 'all'
+
+        cache_key = f'feed:insights:{country.lower()}'
         cached = cache.get(cache_key)
         if cached is not None:
             return Response(cached)
 
         since = timezone.now() - timedelta(days=30)
         qs = DiscoveredJob.objects.filter(created_at__gte=since)
+        if not is_global:
+            qs = _filter_by_country(qs, country)
 
         total = qs.count()
 
@@ -292,8 +441,9 @@ class FeedInsightsView(APIView):
 
         # Top skills
         user_skills = set(_get_user_skills(request.user))
-        trending = _trending_skills_raw(days=30, limit=20)
-        prev_skills = _prev_period_skills(days=30, limit=50)
+        effective_country = '' if is_global else country
+        trending = _trending_skills_raw(days=30, limit=20, country=effective_country)
+        prev_skills = _prev_period_skills(days=30, limit=50, country=effective_country)
 
         top_skills = []
         for item in trending:
@@ -346,6 +496,7 @@ class FeedInsightsView(APIView):
         )
 
         data = {
+            'country': country if not is_global else 'all',
             'total_jobs_last_30d': total,
             'avg_salary_usd': avg_salary,
             'top_skills': top_skills,
@@ -380,7 +531,14 @@ class FeedTrendingSkillsView(APIView):
 
     def get(self, request):
         user_skills = set(_get_user_skills(request.user))
-        trending = _trending_skills_raw(days=30, limit=30)
+
+        # Geo-scoped trending skills
+        country_param = request.query_params.get('country', '').strip()
+        user_country = _get_user_country(request.user)
+        country = country_param if country_param else user_country
+        effective_country = '' if country.lower() == 'all' else country
+
+        trending = _trending_skills_raw(days=30, limit=30, country=effective_country)
         trending_set = {t['skill'] for t in trending}
         trending_map = {t['skill']: t['count'] for t in trending}
 
@@ -567,8 +725,9 @@ class FeedRecommendationsView(APIView):
 
         # 7. Skill gaps (only if user has skills + trending data available)
         user_skills = set(_get_user_skills(user))
+        user_country = _get_user_country(user)
         if user_skills:
-            trending = _trending_skills_raw(days=30, limit=20)
+            trending = _trending_skills_raw(days=30, limit=20, country=user_country)
             trending_set = {t['skill'] for t in trending}
             gaps = trending_set - user_skills
             if gaps:
@@ -663,7 +822,12 @@ class DashboardSkillGapView(APIView):
 
     def get(self, request):
         user_skills = set(_get_user_skills(request.user))
-        trending = _trending_skills_raw(days=30, limit=12)
+        user_country = _get_user_country(request.user)
+        country_param = request.query_params.get('country', '').strip()
+        country = country_param if country_param else user_country
+        effective_country = '' if country.lower() == 'all' else country
+
+        trending = _trending_skills_raw(days=30, limit=12, country=effective_country)
 
         if not trending:
             return Response([])
@@ -705,7 +869,12 @@ class DashboardMarketInsightsView(APIView):
     throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
-        cache_key = 'dashboard:market_insights'
+        user_country = _get_user_country(request.user)
+        country_param = request.query_params.get('country', '').strip()
+        country = country_param if country_param else user_country
+        is_global = country.lower() == 'all'
+
+        cache_key = f'dashboard:market_insights:{country.lower()}'
         cached = cache.get(cache_key)
         if cached is not None:
             return Response(cached)
@@ -714,21 +883,28 @@ class DashboardMarketInsightsView(APIView):
         this_week = now - timedelta(days=7)
         last_week_start = now - timedelta(days=14)
 
-        this_week_count = DiscoveredJob.objects.filter(created_at__gte=this_week).count()
-        last_week_count = DiscoveredJob.objects.filter(
+        qs_this = DiscoveredJob.objects.filter(created_at__gte=this_week)
+        qs_last = DiscoveredJob.objects.filter(
             created_at__gte=last_week_start,
             created_at__lt=this_week,
-        ).count()
+        )
+        if not is_global:
+            qs_this = _filter_by_country(qs_this, country)
+            qs_last = _filter_by_country(qs_last, country)
+
+        this_week_count = qs_this.count()
+        last_week_count = qs_last.count()
 
         growth = (
             round((this_week_count - last_week_count) / max(last_week_count, 1) * 100, 1)
             if last_week_count else 0.0
         )
 
-        trending = _trending_skills_raw(days=7, limit=5)
+        trending = _trending_skills_raw(days=7, limit=5, country='' if is_global else country)
         top_skill = trending[0]['skill'] if trending else None
 
         data = {
+            'country': country if not is_global else 'all',
             'jobs_this_week': this_week_count,
             'jobs_last_week': last_week_count,
             'growth_pct': growth,
