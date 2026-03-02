@@ -268,86 +268,58 @@ class ParseResumeTextTests(TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 2. Pipeline integration — _step_resume_parse
+# 2. Pipeline integration — Phase B: resume_parse step removed
 # ══════════════════════════════════════════════════════════════════════════════
 
-class StepResumeParsePipelineTests(TestCase):
-    """Test the _step_resume_parse step in ResumeAnalyzer."""
+class PipelinePhaseB_Tests(TestCase):
+    """Test pipeline after Phase B — STEP_RESUME_PARSE removed from _STEPS."""
 
     def setUp(self):
         _ensure_free_plan()
         self.user = User.objects.create_user('pipeuser', 'pipe@test.com', 'pw')
 
-    @patch('analyzer.services.analyzer.parse_resume_text')
-    def test_step_populates_parsed_content(self, mock_parse):
-        """_step_resume_parse calls parse_resume_text and stores result."""
-        mock_parse.return_value = {
-            'parsed': copy.deepcopy(SAMPLE_PARSED_CONTENT),
-            'raw': '{}',
-            'model': 'test-model',
-            'duration': 1.5,
-        }
+    def test_step_removed_from_pipeline(self):
+        """STEP_RESUME_PARSE is no longer in the pipeline's _STEPS list."""
+        from analyzer.services.analyzer import ResumeAnalyzer
+        step_names = [s[0] for s in ResumeAnalyzer._STEPS]
+        self.assertNotIn(ResumeAnalysis.STEP_RESUME_PARSE, step_names)
 
-        _, analysis = _create_analysis(self.user, with_parsed=False)
+    def test_pipeline_has_4_steps(self):
+        """Pipeline should have exactly 4 steps after Phase B."""
+        from analyzer.services.analyzer import ResumeAnalyzer
+        self.assertEqual(len(ResumeAnalyzer._STEPS), 4)
+        expected = ['pdf_extract', 'jd_scrape', 'llm_call', 'parse_result']
+        self.assertEqual([s[0] for s in ResumeAnalyzer._STEPS], expected)
 
+    def test_resume_parse_treated_as_done(self):
+        """pipeline_step='resume_parse' is treated as 'done' for crash recovery."""
+        from analyzer.services.analyzer import ResumeAnalyzer
+        self.assertIn(ResumeAnalysis.STEP_RESUME_PARSE, ResumeAnalyzer._COMPLETED_STEPS)
+
+    def test_step_constant_still_exists_on_model(self):
+        """STEP_RESUME_PARSE constant still exists for backward compat."""
+        self.assertEqual(ResumeAnalysis.STEP_RESUME_PARSE, 'resume_parse')
+
+    def test_parsed_content_copied_from_resume(self):
+        """Analysis gets parsed_content from Resume model (Phase A/B)."""
+        resume, analysis = _create_analysis(self.user, with_parsed=False)
+        # Simulate Phase A: parsed_content on Resume
+        resume.parsed_content = copy.deepcopy(SAMPLE_PARSED_CONTENT)
+        resume.save(update_fields=['parsed_content'])
+
+        # Simulate step_parse_result copying parsed_content
         from analyzer.services.analyzer import ResumeAnalyzer
         analyzer = ResumeAnalyzer()
-        analyzer._step_resume_parse(analysis, ResumeAnalysis.STEP_RESUME_PARSE)
+        # _step_parse_result now copies parsed_content from Resume
+        if not analysis.parsed_content and analysis.resume:
+            resume_obj = analysis.resume
+            if resume_obj.parsed_content:
+                analysis.parsed_content = resume_obj.parsed_content
+                analysis.save(update_fields=['parsed_content'])
 
         analysis.refresh_from_db()
         self.assertIsNotNone(analysis.parsed_content)
         self.assertEqual(analysis.parsed_content['contact']['name'], 'Jane Smith')
-        self.assertEqual(analysis.pipeline_step, ResumeAnalysis.STEP_RESUME_PARSE)
-
-    @patch('analyzer.services.analyzer.parse_resume_text')
-    def test_step_skips_if_already_parsed(self, mock_parse):
-        """_step_resume_parse skips when parsed_content already exists."""
-        _, analysis = _create_analysis(self.user, with_parsed=True)
-
-        from analyzer.services.analyzer import ResumeAnalyzer
-        analyzer = ResumeAnalyzer()
-        analyzer._step_resume_parse(analysis, ResumeAnalysis.STEP_RESUME_PARSE)
-
-        mock_parse.assert_not_called()
-
-    @patch('analyzer.services.analyzer.parse_resume_text')
-    def test_step_skips_if_no_resume_text(self, mock_parse):
-        """_step_resume_parse skips when resume_text is empty."""
-        _, analysis = _create_analysis(self.user, with_resume_text=False)
-
-        from analyzer.services.analyzer import ResumeAnalyzer
-        analyzer = ResumeAnalyzer()
-        analyzer._step_resume_parse(analysis, ResumeAnalysis.STEP_RESUME_PARSE)
-
-        mock_parse.assert_not_called()
-        analysis.refresh_from_db()
-        self.assertIsNone(analysis.parsed_content)
-
-    @patch('analyzer.services.analyzer.parse_resume_text')
-    def test_step_non_fatal_on_failure(self, mock_parse):
-        """_step_resume_parse continues (non-fatal) when parsing fails."""
-        mock_parse.side_effect = ValueError('LLM returned garbage')
-
-        _, analysis = _create_analysis(self.user, with_parsed=False)
-
-        from analyzer.services.analyzer import ResumeAnalyzer
-        analyzer = ResumeAnalyzer()
-        # Should NOT raise
-        analyzer._step_resume_parse(analysis, ResumeAnalysis.STEP_RESUME_PARSE)
-
-        analysis.refresh_from_db()
-        self.assertIsNone(analysis.parsed_content)
-        self.assertEqual(analysis.pipeline_step, ResumeAnalysis.STEP_RESUME_PARSE)
-
-    def test_step_in_pipeline_order(self):
-        """STEP_RESUME_PARSE is included in the analyzer's step order."""
-        from analyzer.services.analyzer import ResumeAnalyzer
-        step_names = [s[0] for s in ResumeAnalyzer._STEPS]
-        self.assertIn(ResumeAnalysis.STEP_RESUME_PARSE, step_names)
-        # Should be after parse_result
-        parse_idx = step_names.index(ResumeAnalysis.STEP_PARSE_RESULT)
-        resume_idx = step_names.index(ResumeAnalysis.STEP_RESUME_PARSE)
-        self.assertGreater(resume_idx, parse_idx)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

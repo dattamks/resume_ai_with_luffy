@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v0.33.0
+> **Last updated:** 2026-03-02 &nbsp;|&nbsp; **API version:** v0.34.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -30,7 +30,7 @@
 21. [Razorpay Payments](#21-razorpay-payments)
 22. [Landing Page Contact Form](#22-landing-page-contact-form)
 23. [Email Verification](#23-email-verification)
-24. [Bulk Analysis](#24-bulk-analysis)
+24. [Bulk Analysis (Removed)](#24-bulk-analysis-removed)
 25. [Interview Prep Generation](#25-interview-prep-generation)
 26. [Cover Letter Generation](#26-cover-letter-generation)
 27. [Resume Version History](#27-resume-version-history)
@@ -1498,9 +1498,10 @@ Each user has exactly **one** default resume at a time. The default resume is th
       "file_url": "https://r2.example.com/resumes/my_resume_2026.pdf",
       "days_since_upload": 4,
       "last_analyzed_at": "2026-02-25T14:00:00Z",
-      "is_default": true
-      "days_since_upload": 4,
-      "last_analyzed_at": "2026-02-25T14:00:00Z"
+      "is_default": true,
+      "processing_status": "done",
+      "parsed_content": { "contact": { "name": "John Doe", "..." : "..." }, "..." : "..." },
+      "career_profile": { "target_roles": ["Backend Engineer"], "skills": ["Python", "Django"], "..." : "..." }
     }
   ]
 }
@@ -1519,8 +1520,13 @@ Each user has exactly **one** default resume at a time. The default resume is th
 | `days_since_upload`    | int      | Number of days since the resume was uploaded. Use for staleness indicators (e.g., "Resume not updated in 30 days") |
 | `last_analyzed_at`     | datetime ǀ null | Timestamp of the most recent completed analysis using this resume; `null` if never analyzed |
 | `is_default`           | bool     | `true` if this is the user's default resume powering dashboard/feed/skill-gap. Exactly one resume is `true` at a time. |
+| `processing_status`    | string   | Upload-time processing status: `"pending"`, `"processing"`, `"done"`, or `"failed"`. Resume parsing and career profile extraction happen automatically on upload. |
+| `parsed_content`       | object ǀ null | Structured resume data extracted at upload time (contact, summary, experience, education, skills, etc.). `null` until `processing_status` is `"done"`. See [Parsed Content Schema](#parsed-content-schema). |
+| `career_profile`       | object ǀ null | Career profile extracted at upload time (target roles, skills, preferences, experience level). Used for job matching and feed personalisation. `null` until `processing_status` is `"done"`. |
 
 **Frontend usage:** Use `active_analysis_count` to show how many analyses reference each resume, and to determine whether the delete button should show a warning.
+
+> **v0.34.0 change:** Resume understanding (parsing + career profile extraction) now happens automatically at **upload time** instead of during each analysis. The `processing_status` field tracks this background task. When `processing_status` is `"done"`, `parsed_content` and `career_profile` are available immediately — no analysis is required.
 
 ---
 
@@ -2301,7 +2307,7 @@ Returned by `GET /api/v1/analyses/<id>/`. This is the full analysis payload with
 | `formatting_flags`     | string[] \| null| ATS formatting issues found (e.g., multi-column layout, tables) |
 | `quick_wins`           | array \| null   | `[{ priority (1-3), action }]` — 1–3 items  |
 | `summary`              | string          | 2-3 sentence overall summary of quality and fit          |
-| `parsed_content`       | object \| null  | Structured resume data extracted during analysis — see [Parsed Content Schema](#parsed-content-schema) below. `null` if extraction failed or hasn't run yet. |
+| `parsed_content`       | object \| null  | Structured resume data — sourced from the Resume model (upload-time extraction) with fallback to analysis-time extraction for older analyses. See [Parsed Content Schema](#parsed-content-schema) below. `null` if extraction failed or hasn't run yet. |
 | `ai_provider_used`     | string          | AI model identifier (e.g., `"OpenRouterProvider"`)       |
 | `report_pdf_url`       | string \| null  | URL to pre-generated PDF report in R2                    |
 | `share_token`          | UUID \| null    | Share token (null if not shared)                         |
@@ -2323,10 +2329,12 @@ This means the frontend can **always rely on `jd_role` being populated** on a co
 
 ### Parsed Content Schema
 
-The `parsed_content` field contains structured personal data extracted from the uploaded resume PDF via LLM during the analysis pipeline. This enables features like:
-- **Chat builder pre-fill** — automatically populates the conversational resume builder from any analyzed resume
+The `parsed_content` field contains structured personal data extracted from the uploaded resume PDF via LLM. As of v0.34.0, this extraction happens **at upload time** (stored on the `Resume` model) rather than during each analysis. The analysis detail endpoint returns `parsed_content` with a fallback chain: analysis-level data → Resume model data → `null`.
+
+This enables features like:
+- **Chat builder pre-fill** — automatically populates the conversational resume builder from any uploaded resume (no analysis needed)
 - **Profile auto-population** — can be used to fill user profile fields
-- **Resume data display** — show the user their extracted resume data
+- **Resume data display** — show the user their extracted resume data immediately after upload
 
 The schema matches the `resume_content` format used by Generated Resumes:
 
@@ -2376,8 +2384,9 @@ interface ParsedContent {
 ```
 
 **Notes:**
-- `parsed_content` is `null` until the analysis pipeline's `resume_parse` step completes
-- Extraction is non-fatal — if the LLM can't parse the resume, `parsed_content` stays `null` and the rest of the analysis succeeds
+- `parsed_content` is available on the `Resume` model once `processing_status` reaches `"done"` (typically within seconds of upload)
+- On the analysis detail, `parsed_content` falls back to the Resume model if the analysis itself doesn't have it (backward-compatible)
+- Extraction is non-fatal — if the LLM can't parse the resume, `parsed_content` stays `null` and analyses still succeed
 - Data is extracted as-is from the resume (no rewriting or enhancement)
 - Empty sections are represented as empty arrays `[]` or empty strings `""`
 
@@ -2762,9 +2771,10 @@ pending → processing → done
 | `jd_scrape`     | Resolving/scraping job description | "Fetching job description..." |
 | `llm_call`      | Calling AI model for analysis | "AI is analyzing..." |
 | `parse_result`  | Parsing and saving results | "Finalizing results..." |
-| `resume_parse`  | Extracting structured data from resume | "Extracting resume details..." |
 | `done`          | Analysis complete | "Complete!" |
 | `failed`        | An error occurred | "Analysis failed" |
+
+> **v0.34.0 change:** The `resume_parse` step has been removed from the pipeline. Resume parsing now happens at **upload time** (before analysis begins) via a background task. The pipeline is now 4 steps instead of 5. The `resume_parse` value may still appear in older analyses but will not occur in new ones.
 
 ### Recommended polling implementation
 
@@ -2830,13 +2840,14 @@ Map `pipeline_step` to a numeric percentage for a progress bar:
 ```js
 const STEP_PROGRESS = {
   pending: 0,
-  pdf_extract: 15,
-  jd_scrape: 30,
-  llm_call: 50,
-  parse_result: 75,
-  resume_parse: 90,
+  pdf_extract: 20,
+  jd_scrape: 40,
+  llm_call: 60,
+  parse_result: 85,
   done: 100,
   failed: 0,
+  // Legacy — kept for older analyses that may still report this step:
+  resume_parse: 95,
 };
 
 // Usage: <ProgressBar value={STEP_PROGRESS[step]} />
@@ -3071,7 +3082,8 @@ interface Job {
 type JdInputType = 'text' | 'url' | 'form';
 type AnalysisStatus = 'pending' | 'processing' | 'done' | 'failed';
 type PipelineStep = 'pending' | 'pdf_extract' | 'jd_scrape' | 'llm_call'
-                  | 'parse_result' | 'resume_parse' | 'done' | 'failed';
+                  | 'parse_result' | 'done' | 'failed'
+                  | 'resume_parse'; // legacy — no longer emitted in new analyses
 
 interface AnalysisListItem {
   id: number;
@@ -5281,90 +5293,19 @@ Use this to conditionally show a verification banner in the UI.
 
 ---
 
-## 24. Bulk Analysis
+## 24. Bulk Analysis (Removed)
 
-Analyze one resume against multiple job descriptions in a single API call. Each JD creates a separate `ResumeAnalysis` and deducts 1 credit.
-
-### `POST /api/v1/analyze/bulk/`
-
-🔒 Authenticated. **Throttled:** `analyze` scope (10/hour). **Parsers:** `multipart/form-data`, `application/json`.
-
-**Request:**
-```json
-{
-  "resume_id": "uuid-of-existing-resume",
-  "job_descriptions": [
-    {
-      "jd_input_type": "text",
-      "jd_text": "Full job description text...",
-      "jd_role": "Backend Engineer",
-      "jd_company": "Acme Corp"
-    },
-    {
-      "jd_input_type": "url",
-      "jd_url": "https://example.com/jobs/123",
-      "jd_role": "Senior Developer"
-    },
-    {
-      "jd_input_type": "form",
-      "jd_role": "Full Stack Engineer",
-      "jd_company": "StartupCo",
-      "jd_skills": "React, Django, PostgreSQL",
-      "jd_experience_years": 3,
-      "jd_industry": "SaaS"
-    }
-  ]
-}
-```
-
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `resume_file` | File (PDF) | One of `resume_file` / `resume_id` | Upload a new resume |
-| `resume_id` | UUID | One of `resume_file` / `resume_id` | Use existing resume |
-| `job_descriptions` | array | ✅ | 1–10 job description objects |
-
-Each `job_descriptions[i]` follows the same schema as single analysis (`jd_input_type`, `jd_text`, `jd_url`, `jd_role`, `jd_company`, `jd_skills`, `jd_experience_years`, `jd_industry`, `jd_extra_details`).
-
-**Response (202 Accepted):**
-```json
-{
-  "total_requested": 3,
-  "total_created": 3,
-  "analyses": [
-    {
-      "id": 42,
-      "jd_role": "Backend Engineer",
-      "jd_company": "Acme Corp",
-      "status": "processing",
-      "credits_used": 1
-    },
-    {
-      "id": 43,
-      "jd_role": "Senior Developer",
-      "jd_company": "",
-      "status": "processing",
-      "credits_used": 1
-    }
-  ]
-}
-```
-
-**Errors:**
-
-| Status | Condition | Body |
-|--------|-----------|------|
-| `400` | Validation errors | Serializer errors dict |
-| `402` | Insufficient credits | `{ "detail", "balance", "total_cost", "cost_per_analysis" }` |
-| `403` | Monthly analysis limit exceeded | `{ "detail", "limit", "used", "requested" }` |
-| `404` | `resume_id` not found | `{ "detail": "Resume not found." }` |
-
-> **Partial success:** If credits run out mid-batch, `total_created < total_requested`. Poll each `analyses[i].id` individually.
+> **⚠ Removed in v0.34.0.** The `POST /api/v1/analyze/bulk/` endpoint has been removed. Use the single analysis endpoint (`POST /api/v1/analyze/`) for each resume–JD pair instead.
+>
+> **Migration:** If your frontend called `/api/v1/analyze/bulk/` with multiple JDs, convert to sequential or parallel calls to `POST /api/v1/analyze/` — one per JD. Each call still deducts 1 credit and returns a single analysis ID.
 
 ---
 
 ## 25. Interview Prep Generation
 
-Generate AI-powered interview questions customized to a specific resume + JD analysis. Questions are categorized (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers.
+Generate interview questions customized to a specific resume + JD analysis. Questions are categorized (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers.
+
+> **v0.34.0 change:** Interview prep is now **instant** (DB-powered question bank) instead of async LLM generation. The POST endpoint returns `200 OK` with complete results immediately. Polling is no longer needed in most cases. Falls back to async LLM generation (202) only if the question bank is empty.
 
 ### `POST /api/v1/analyses/<id>/interview-prep/` — Generate Interview Prep
 
@@ -5372,7 +5313,31 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 
 **Request:** Empty body (analysis ID from URL).
 
-**Response (202 Accepted):**
+**Response — Instant (200 OK):** *(typical — when question bank is populated)*
+```json
+{
+  "id": "uuid",
+  "analysis": 42,
+  "questions": [
+    {
+      "category": "technical",
+      "question": "Can you explain how you would design a REST API for...",
+      "why_asked": "Tests backend architecture knowledge mentioned in JD",
+      "sample_answer": "I would start by...",
+      "difficulty": "medium"
+    }
+  ],
+  "tips": [
+    "Research the company's tech stack before the interview",
+    "Prepare examples of team collaboration from previous roles"
+  ],
+  "status": "done",
+  "error_message": "",
+  "created_at": "2026-03-02T10:00:00Z"
+}
+```
+
+**Response — Async fallback (202 Accepted):** *(only when question bank is empty — falls back to LLM)*
 ```json
 {
   "id": "uuid",
@@ -5380,7 +5345,28 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 }
 ```
 
-**Idempotency:** If a pending/processing interview prep already exists for this analysis, returns it with `200 OK`.
+**Idempotency:** If a completed interview prep already exists for this analysis, returns it with `200 OK`. If a pending/processing prep exists, also returns `200 OK`.
+
+**Frontend handling:**
+```js
+const generateInterviewPrep = async (analysisId) => {
+  const { data, status } = await api.post(`/api/v1/analyses/${analysisId}/interview-prep/`);
+  
+  if (status === 200) {
+    // Instant result — use data.questions and data.tips directly
+    return data;
+  }
+  
+  // 202 fallback — poll for completion (rare)
+  return new Promise((resolve, reject) => {
+    const poll = setInterval(async () => {
+      const { data: result } = await api.get(`/api/v1/analyses/${analysisId}/interview-prep/`);
+      if (result.status === 'done') { clearInterval(poll); resolve(result); }
+      if (result.status === 'failed') { clearInterval(poll); reject(new Error(result.error_message)); }
+    }, 3000);
+  });
+};
+```
 
 **Errors:**
 
@@ -5413,7 +5399,7 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
   ],
   "status": "done",
   "error_message": "",
-  "created_at": "2026-02-28T10:00:00Z"
+  "created_at": "2026-03-02T10:00:00Z"
 }
 ```
 
@@ -5424,22 +5410,6 @@ Generate AI-powered interview questions customized to a specific resume + JD ana
 🔒 Authenticated. **Throttled:** `readonly` scope (120/hour). **Paginated.**
 
 Returns all interview preps for the authenticated user (newest first).
-
-### Polling
-
-```js
-const generateInterviewPrep = async (analysisId) => {
-  const { data } = await api.post(`/api/v1/analyses/${analysisId}/interview-prep/`);
-  // Poll for completion
-  const poll = setInterval(async () => {
-    const { data: status } = await api.get(`/api/v1/analyses/${analysisId}/interview-prep/`);
-    if (status.status === 'done' || status.status === 'failed') {
-      clearInterval(poll);
-      // Use status.questions and status.tips
-    }
-  }, 3000);
-};
-```
 
 ---
 
@@ -7094,7 +7064,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/auth/payments/history/` | ✅ | Payment (30/hr) | Payment history |
 | **Analysis** |||||
 | POST | `/api/v1/analyze/` | ✅ | Analyze (10/hr) | Submit new analysis (file upload or `resume_id`) |
-| POST | `/api/v1/analyze/bulk/` | ✅ | Analyze (10/hr) | Bulk analyze: 1 resume × up to 10 JDs |
+| ~~POST~~ | ~~`/api/v1/analyze/bulk/`~~ | — | — | **Removed in v0.34.0** — use single `POST /api/v1/analyze/` per JD |
 | GET | `/api/v1/analyses/` | ✅ | Readonly (120/hr) | List analyses (search/filter/sort/paginated) |
 | GET | `/api/v1/analyses/compare/` | ✅ | Readonly (120/hr) | Compare 2–5 analyses side-by-side |
 | GET | `/api/v1/analyses/<id>/` | ✅ | Readonly (120/hr) | Full analysis detail |
@@ -7211,6 +7181,28 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 - **Batch-ready ingest pipeline**: Bot-ingested jobs now automatically trigger batch embeddings (100/API call) + user matching with Redis dedup locks. No frontend changes needed.
 - **TypeScript types** added for all feed response shapes.
 
+### v0.34.0 — Architecture Simplification (Upload-Time Resume Understanding, Instant Interview Prep, Bulk Removal)
+
+#### ⚠ Breaking Changes
+- **`POST /api/v1/analyze/bulk/` removed** — This endpoint no longer exists. Use `POST /api/v1/analyze/` individually per JD. Frontend should convert any bulk submission logic to sequential or parallel single-analysis calls.
+- **`resume_parse` pipeline step removed** — The analysis pipeline is now **4 steps** (`pdf_extract` → `jd_scrape` → `llm_call` → `parse_result`) instead of 5. The `resume_parse` value may still appear on older analyses but will not be emitted for new ones. Update progress bar mappings accordingly.
+
+#### Features
+- **Upload-time resume understanding (Phase A):** Resume parsing + career profile extraction now happen automatically at upload time via a background task. Three new fields on `Resume`: `processing_status` (`"pending"` → `"processing"` → `"done"` / `"failed"`), `parsed_content` (structured resume data), `career_profile` (target roles, skills, preferences). This means `parsed_content` is available **before** any analysis runs.
+- **Instant interview prep (Phase C):** `POST /api/v1/analyses/<id>/interview-prep/` now returns `200 OK` with complete results instantly from a curated DB question bank (filtered by role, skills, and gap analysis). No polling needed. Falls back to async LLM (`202 Accepted`) only if the question bank is empty.
+- **Pipeline reduced to 4 steps (Phase B):** Removed the `resume_parse` step from the analysis pipeline. Resume parsing data is now copied from the `Resume` model during `parse_result`. Crash recovery treats `resume_parse` as already complete.
+- **LLM fallback matching removed (Phase E):** Job matching now uses pgvector embeddings exclusively. The LLM-based fallback matcher has been removed entirely.
+
+#### TypeScript Changes
+- `PipelineStep`: `'resume_parse'` moved to legacy (kept for backward compat but no longer emitted)
+- `ResumeListItem` / resume responses: Added `processing_status`, `parsed_content`, `career_profile` fields
+- Interview prep POST response: Now typically `200 OK` (instant) instead of `202 Accepted` (async)
+
+#### Migration Notes
+- If your frontend has a "Bulk Analyze" button or form, remove it or convert to sequential single calls.
+- `STEP_PROGRESS` map should be updated: remove `resume_parse` from the main flow, adjust percentages (see §13).
+- Interview prep UI can drop the polling spinner for the common case — check HTTP status code: `200` = ready, `202` = poll.
+
 ### v0.26.0 — Conversational Resume Builder
 
 #### Features
@@ -7251,8 +7243,8 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 #### Features
 - **Email verification flow**: Registration now sends a verification email instead of a welcome email. Response includes `email_verification_required: true` and `is_email_verified: false`. New endpoints: `POST /api/v1/auth/verify-email/`, `POST /api/v1/auth/resend-verification/`. Welcome email is sent only after verification.
 - **`is_email_verified` field**: Added to user object in register, login, and `GET /api/v1/auth/me/` responses.
-- **Bulk analysis**: `POST /api/v1/analyze/bulk/` — analyze one resume against up to 10 job descriptions in a single call. Returns array of analysis IDs. Each deducts 1 credit.
-- **Interview prep generation**: `POST /api/v1/analyses/<id>/interview-prep/` (free, no credit cost) — AI-generated interview questions (behavioral, technical, situational, role-specific, gap-based) with difficulty levels and sample answers. `GET` on same URL returns status/results. `GET /api/v1/interview-preps/` lists all.
+- **Bulk analysis**: ~~`POST /api/v1/analyze/bulk/`~~ **Removed in v0.34.0.** Use single `POST /api/v1/analyze/` per JD instead.
+- **Interview prep generation**: `POST /api/v1/analyses/<id>/interview-prep/` (free, no credit cost) — **Now instant (200 OK)** using a curated DB question bank. Questions are filtered by role, skills, and gap analysis. Falls back to async LLM (202) only if question bank is empty. `GET` on same URL returns status/results. `GET /api/v1/interview-preps/` lists all.
 - **Cover letter generation**: `POST /api/v1/analyses/<id>/cover-letter/` (free, no credit cost) — AI-generated cover letter with tone selection (`professional`, `conversational`, `enthusiastic`). Returns `content` (plain text) and `content_html`. `GET` on same URL returns status/results. `GET /api/v1/cover-letters/` lists all.
 - **Resume version history**: `GET /api/v1/resumes/<uuid>/versions/` — tracks resume evolution with version numbers, `best_ats_score`, and `best_grade` per version. Auto-linked when re-uploading same filename.
 - **Rate limit headers on all responses**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers are now included in every API response. Use to show proactive warnings before users hit 429.

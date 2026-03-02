@@ -52,9 +52,11 @@ class AnalyzeResumeViewTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_success(self, mock_task):
+    def test_analyze_success(self, mock_task, mock_upload_task):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp = self.client.post(
             '/api/v1/analyze/',
@@ -83,10 +85,12 @@ class AnalyzeResumeViewTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_double_submit_blocked(self, mock_task):
+    def test_analyze_double_submit_blocked(self, mock_task, mock_upload_task):
         """Second submit within lock TTL should return 409 Conflict."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp1 = self.client.post(
             '/api/v1/analyze/',

@@ -18,7 +18,7 @@ from .views import (
     # Phase 12 — Notifications
     NotificationListView, NotificationUnreadCountView, NotificationMarkReadView,
     # Phase 13 — New features
-    ResumeVersionHistoryView, BulkAnalyzeView,
+    ResumeVersionHistoryView,
     InterviewPrepView, InterviewPrepStatusView, InterviewPrepListView,
     CoverLetterView, CoverLetterStatusView, CoverLetterListView,
     # Phase 14 — Resume Templates
@@ -78,8 +78,7 @@ urlpatterns = [
     path('notifications/mark-read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
     # Phase 13 — Resume Version History
     path('resumes/<uuid:pk>/versions/', ResumeVersionHistoryView.as_view(), name='resume-version-history'),
-    # Phase 13 — Bulk Analysis
-    path('analyze/bulk/', BulkAnalyzeView.as_view(), name='analyze-bulk'),
+    # Phase 13 — Bulk Analysis (removed: BulkAnalyzeView)
     # Phase 13 — Interview Prep
     path('analyses/<int:pk>/interview-prep/', InterviewPrepView.as_view(), name='interview-prep'),
     path('interview-preps/', InterviewPrepListView.as_view(), name='interview-prep-list'),

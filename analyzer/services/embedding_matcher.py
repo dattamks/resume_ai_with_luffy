@@ -51,11 +51,11 @@ def match_jobs_for_alert(job_alert, since_dt=None, job_ids=None) -> list:
 
     # Check if pgvector embeddings are available
     if not hasattr(profile, 'embedding') or profile.embedding is None:
-        logger.info(
-            'No embedding on JobSearchProfile for resume %s — falling back to LLM matcher',
+        logger.warning(
+            'No embedding on JobSearchProfile for resume %s — cannot match (no LLM fallback)',
             resume.id,
         )
-        return _fallback_llm_matching(job_alert, job_ids)
+        return []
 
     threshold = getattr(settings, 'JOB_MATCH_THRESHOLD', DEFAULT_MATCH_THRESHOLD)
 
@@ -126,11 +126,11 @@ def match_jobs_for_alert(job_alert, since_dt=None, job_ids=None) -> list:
         return matches
 
     except ImportError:
-        logger.warning('pgvector not available — falling back to LLM matcher')
-        return _fallback_llm_matching(job_alert, job_ids)
+        logger.warning('pgvector not available — embedding matching disabled')
+        return []
     except Exception as exc:
         logger.exception('Embedding matching failed for alert %s: %s', job_alert.id, exc)
-        return _fallback_llm_matching(job_alert, job_ids)
+        return []
 
 
 # ── Feedback learning loop ────────────────────────────────────────────────────
@@ -297,18 +297,5 @@ def _generate_match_reason(
         return f'Partial match: "{title}" at {company}{feedback_note} shares some skills with your background.'
 
 
-def _fallback_llm_matching(job_alert, job_ids=None) -> list:
-    """Fall back to the original LLM-based matching when pgvector is not available."""
-    try:
-        from analyzer.models import DiscoveredJob
-        from analyzer.services.job_matcher import match_jobs
-
-        if job_ids:
-            discovered_jobs = DiscoveredJob.objects.filter(id__in=job_ids)
-        else:
-            discovered_jobs = DiscoveredJob.objects.all()[:50]
-
-        return match_jobs(job_alert, discovered_jobs)
-    except Exception as exc:
-        logger.exception('LLM fallback matching also failed: %s', exc)
-        return []
+# _fallback_llm_matching removed in Phase E — LLM-based matching deprecated.
+# All matching is now via pgvector embeddings only.

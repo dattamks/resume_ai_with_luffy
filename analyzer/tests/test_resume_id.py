@@ -58,10 +58,12 @@ class ResumeIdAnalyzeTests(TestCase):
 
     # ── Success cases ──────────────────────────────────────────────────
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_with_resume_id_success(self, mock_task):
+    def test_analyze_with_resume_id_success(self, mock_task, mock_upload_task):
         """Sending resume_id (JSON) should create an analysis linked to the Resume."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp = self.client.post(
             '/api/v1/analyze/',
@@ -82,10 +84,12 @@ class ResumeIdAnalyzeTests(TestCase):
         self.assertEqual(analysis.resume_file.name, self.resume.file.name)
         mock_task.delay.assert_called_once()
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_with_resume_id_form_jd(self, mock_task):
+    def test_analyze_with_resume_id_form_jd(self, mock_task, mock_upload_task):
         """resume_id works with form JD type as well."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp = self.client.post(
             '/api/v1/analyze/',
@@ -99,10 +103,12 @@ class ResumeIdAnalyzeTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_with_resume_id_as_form_field(self, mock_task):
+    def test_analyze_with_resume_id_as_form_field(self, mock_task, mock_upload_task):
         """resume_id can also be sent via multipart/form-data."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp = self.client.post(
             '/api/v1/analyze/',
@@ -191,10 +197,12 @@ class ResumeIdAnalyzeTests(TestCase):
 
     # ── Multiple analyses from same Resume ─────────────────────────────
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_multiple_analyses_same_resume(self, mock_task):
+    def test_multiple_analyses_same_resume(self, mock_task, mock_upload_task):
         """Multiple analyses can reference the same Resume."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         ids = []
         for jd in ['Python role', 'Java role', 'Go role']:
@@ -219,10 +227,12 @@ class ResumeIdAnalyzeTests(TestCase):
 
     # ── File upload still works ────────────────────────────────────────
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_file_upload_still_works(self, mock_task):
+    def test_file_upload_still_works(self, mock_task, mock_upload_task):
         """Original file upload path should continue to work as before."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp = self.client.post(
             '/api/v1/analyze/',

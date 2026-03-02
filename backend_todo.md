@@ -699,3 +699,262 @@ FRONTEND_URL=https://<frontend>.up.railway.app
 - [ ] 🔵 **Personalized Recommendations** — `GET /api/v1/feed/recommendations/` endpoint; AI-suggested next actions based on resume gaps, missing trending skills, unused features (no interview prep yet, etc.)
 - [ ] ⚪ **Referral & Connections** — `ReferralCode` model (user, code, uses, max_uses, bonus_credits); `GET/POST /api/v1/referrals/`; credit reward on referred user's first analysis
 - [ ] ⚪ **Onboarding / Empty States** — `GET /api/v1/feed/onboarding/` endpoint returning user completion checklist (has_resume, has_analysis, has_alert, has_interview_prep, has_cover_letter) + suggested next step
+
+---
+
+## 🔴 Architecture Simplification — Reduce LLM Calls & Moving Parts
+
+> **Goal:** Cut LLM prompts from 6 to 2, move resume understanding to upload time, make interview prep DB-based, remove redundant endpoints. Every user action should produce value with minimal latency.
+>
+> **Principle:** LLM only when generating new text. Understanding & matching = upload-time parse + DB. Analytics = DB aggregations over existing data.
+>
+> **Status:** Not started
+
+### Current State (6 LLM prompts, value delayed)
+
+```
+Upload resume     → 0 LLM calls, 0 value (user must manually trigger everything)
+Analysis          → 2 LLM calls (analysis + resume parse)
+Interview prep    → 1 LLM call per request
+Cover letter      → 1 LLM call per request
+Resume rewrite    → 1 LLM call per request
+Job search profile→ 1 LLM call (only on alert creation)
+```
+
+### Target State (2 LLM prompts, instant value on upload)
+
+```
+Upload resume     → 1 LLM call (merged parse + profile) + 1 embedding call → instant profile, feed, skill gaps
+Analysis          → 1 LLM call (resume vs JD only — parse already done)
+Interview prep    → 0 LLM calls (DB question bank)
+Cover letter      → 1 LLM call (keep — too personalized for templates)
+Resume rewrite    → 1 LLM call (keep — needs rewriting intelligence)
+Job search profile→ 0 LLM calls (already extracted at upload)
+```
+
+---
+
+### Phase A — Merge Resume Understanding into Upload Time
+
+> **What:** Combine resume structured parsing + job search profile extraction into 1 LLM call triggered automatically on resume upload.
+>
+> **Why:** Currently these are 2 separate LLM calls (resume_parser.py + job_search_profile.py) that ask essentially the same question — "who is this person?" — in different formats. Job search profile extraction only runs when a JobAlert is created, meaning the job feed and skill gaps are empty until then.
+
+#### Backend Changes
+
+- [ ] **New merged prompt** — Combine `RESUME_PARSE_PROMPT_TEMPLATE` (from `resume_parser.py`) and `_PROMPT_TEMPLATE` (from `job_search_profile.py`) into a single prompt that returns both structured resume data AND career profile in one JSON response. New file: `analyzer/services/resume_understanding.py`
+- [ ] **New Celery task: `process_resume_upload_task(resume_id)`** — Runs automatically on upload. Pipeline: extract PDF text → call merged LLM prompt → save parsed_content + career profile → compute embedding. Chains: `compute_resume_embedding_task`
+- [ ] **Move `parsed_content` to Resume model** — Currently lives on `ResumeAnalysis` (per-analysis). Should be per-resume since it describes the resume itself, not the resume-vs-JD comparison. Add `Resume.parsed_content` (JSONField, null=True) and `Resume.processing_status` (pending/processing/done/failed)
+- [ ] **Trigger on upload** — In `AnalyzeResumeView.post()`, after resume save, dispatch `process_resume_upload_task.delay(resume.id)` if resume is new (not a duplicate hash). Also trigger from any future standalone upload endpoint.
+- [ ] **Update `extract_job_search_profile_task`** — Remove LLM call. Instead, read from `Resume.parsed_content` career profile fields and save to `JobSearchProfile`. Becomes a pure DB copy.
+- [ ] **Update `compute_resume_embedding_task`** — No change, but now chains from `process_resume_upload_task` instead of `extract_job_search_profile_task`
+- [ ] **Deprecate standalone `resume_parser.py`** — Functionality merged into `resume_understanding.py`
+- [ ] **Deprecate standalone `job_search_profile.py` LLM call** — Profile data comes from upload-time parse
+
+#### Endpoints Impacted
+
+| Endpoint | Change | Frontend Impact |
+|---|---|---|
+| `POST /api/v1/analyze/` | Dispatches `process_resume_upload_task` for new resumes (transparent) | **None** |
+| `GET /api/v1/resumes/` | Response gains: `parsed_content`, `career_profile`, `processing_status` | **Add:** Show parsed name/skills on resume card, "Processing…" spinner |
+| `GET /api/v1/feed/jobs/` | Works immediately after upload (embedding ready sooner) | **None** — faster |
+| `GET /api/v1/feed/trending-skills/` | User skills available immediately | **None** — faster |
+| `GET /api/v1/dashboard/skill-gap/` | Same | **None** — faster |
+
+---
+
+### Phase B — Remove Resume Parse Step from Analysis Pipeline
+
+> **What:** Drop Step 5 (`STEP_RESUME_PARSE`) from the analysis pipeline. Resume parsing is already done at upload time (Phase A).
+>
+> **Why:** Currently every analysis re-parses the resume (1 extra LLM call per analysis). Since parsed_content now lives on the Resume model, this is redundant.
+
+#### Backend Changes
+
+- [ ] **Remove `STEP_RESUME_PARSE` from `analyzer.py`** — Delete `_step_resume_parse` method. Remove from `_STEPS` list. Pipeline goes from 5 steps → 4 steps.
+- [ ] **Update `_step_parse_result`** — If analysis needs `parsed_content`, read from `analysis.resume.parsed_content` instead of running a separate LLM call
+- [ ] **Keep backward compat** — `ResumeAnalysis.parsed_content` can remain as a denormalized copy (populated from `Resume.parsed_content` during `_step_parse_result`) or become a read-through property
+
+#### Endpoints Impacted
+
+| Endpoint | Change | Frontend Impact |
+|---|---|---|
+| `GET /api/v1/analyses/<id>/` | `parsed_content` still present (sourced from Resume now) | **None** |
+| `GET /api/v1/analyses/<id>/status/` | One fewer pipeline step in progress | **Minor:** Update progress bar if it shows step names |
+
+---
+
+### Phase C — Interview Prep: LLM → DB Question Bank
+
+> **What:** Replace LLM-generated interview questions with a curated question bank stored in DB, filtered by role/skill/gap data from analysis results.
+>
+> **Why:** Interview questions are predictable and categorizable. An LLM call per request is expensive and slow for something that can be pre-curated and personalized via DB filtering.
+
+#### Backend Changes
+
+- [ ] **New model: `InterviewQuestion`** — Fields: `category` (behavioral/technical/situational/role_specific/gap_based), `question` (TextField), `why_asked` (TextField), `sample_answer_template` (TextField with `{role}`, `{company}`, `{skill}` placeholders), `difficulty` (easy/medium/hard), `tags` (JSONField — skill/keyword tags), `roles` (JSONField — applicable role patterns), `is_active` (bool), `created_at`
+- [ ] **Seed data: management command `load_interview_questions`** — Populate 100-200 curated questions covering all categories. Tagged by common roles (software engineer, data analyst, product manager, etc.) and skills (Python, SQL, leadership, etc.)
+- [ ] **Rewrite `interview_prep.py` service** — Replace LLM call with DB query: filter `InterviewQuestion` by `analysis.jd_role` (match against `roles` JSON), `analysis.keyword_analysis.missing_keywords` (match against `tags`), section scores < 70 (gap_based category). Return 10-15 questions. Fill `sample_answer_template` placeholders with analysis data.
+- [ ] **Simplify `generate_interview_prep_task`** — No longer async LLM call. Becomes synchronous DB lookup. Can run inline in the view (no Celery needed).
+- [ ] **Update `InterviewPrepView`** — Return 200 with results immediately instead of 202 + polling
+- [ ] **Remove `InterviewPrepStatusView`** — No longer needed (no async processing)
+
+#### Endpoints Impacted
+
+| Endpoint | Change | Frontend Impact |
+|---|---|---|
+| `POST /api/v1/analyses/<id>/interview-prep/` | Returns 200 with results immediately (was 202 + poll) | **Simplify:** Remove polling logic, use instant response |
+| `GET /api/v1/interview-preps/` | Same response shape | **None** |
+| ~~`GET /api/v1/analyses/<id>/interview-prep/` (status)~~ | **Can be removed** — no async processing | **Remove:** Status polling code |
+
+---
+
+### Phase D — Remove Bulk Analysis Endpoint
+
+> **What:** Remove `POST /api/v1/analyze/bulk/`. Frontend can loop `POST /api/v1/analyze/` if needed.
+>
+> **Why:** It's just a server-side loop over the same logic. Adds maintenance burden with no real benefit. Frontend looping gives better UX (individual progress tracking per analysis).
+
+#### Backend Changes
+
+- [ ] **Remove `BulkAnalyzeView`** from `analyzer/views.py`
+- [ ] **Remove URL** `path('analyze/bulk/', ...)` from `analyzer/urls.py`
+
+#### Endpoints Impacted
+
+| Endpoint | Change | Frontend Impact |
+|---|---|---|
+| ~~`POST /api/v1/analyze/bulk/`~~ | **Deleted** | **Replace:** Loop individual `POST /api/v1/analyze/` calls if needed |
+
+---
+
+### Phase E — Remove LLM Fallback in Job Matching
+
+> **What:** Remove the LLM-based job matching fallback in `embedding_matcher.py`. Keep embedding-only matching.
+>
+> **Why:** Production uses PostgreSQL + pgvector. The LLM fallback (`job_matcher.py`) was for SQLite dev environments. It adds a full LLM call per 15-job batch — expensive and unnecessary.
+
+#### Backend Changes
+
+- [ ] **Remove `_fallback_llm_matching()`** from `embedding_matcher.py`
+- [ ] **Deprecate / remove `job_matcher.py`** — No longer called from anywhere
+- [ ] **Ensure dev environments use PostgreSQL** — Document Docker-based local PostgreSQL setup as required
+
+#### Endpoints Impacted
+
+| Endpoint | Change | Frontend Impact |
+|---|---|---|
+| None — internal only | No API surface change | **None** |
+
+---
+
+### Execution Order & Effort
+
+| Phase | What | Files Touched | Endpoints Affected | Effort |
+|---|---|---|---|---|
+| **A** | Merge resume understanding into upload | 7 files | 2 endpoints gain fields | 2 days |
+| **B** | Remove Step 5 from analysis pipeline | 2 files | 1 endpoint (status steps) | 0.5 day |
+| **C** | Interview prep → DB question bank | 5 files + seed data | 3 endpoints simplified | 2 days |
+| **D** | Remove bulk analysis endpoint | 2 files | 1 endpoint removed | 0.5 hour |
+| **E** | Remove LLM job-matching fallback | 2 files | 0 | 0.5 hour |
+| | **Total** | | | **~5 days** |
+
+Each phase is independently deployable. Recommended order: **A → B → C → D → E**
+
+### Net Result
+
+| Metric | Before | After |
+|---|---|---|
+| LLM prompts to maintain | 6 | 2 (upload-time + analysis) |
+| LLM calls on upload | 0 | 1 (merged) |
+| LLM calls per analysis | 2 | 1 |
+| Interview prep LLM calls | 1 per request | 0 (DB) |
+| Time to first value | Minutes (manual trigger) | Seconds (upload = value) |
+| Pipeline steps per analysis | 5 | 4 |
+| Endpoints removed | 0 | 2 (bulk analysis, interview prep status) |
+
+---
+
+## Edge Cases & Migration Notes (per Phase)
+
+### Phase A Edge Cases
+
+1. **`_get_resume_text()` dependency loop** — Both `job_search_profile.py` and `embedding_service.py` get resume text from the latest completed analysis (`resume.analyses.filter(status='done')`). At upload time no analysis exists yet. **Fix:** `process_resume_upload_task` extracts PDF text directly via `PDFExtractor`, not `_get_resume_text()`.
+
+2. **`parsed_content` lives on `ResumeAnalysis`, not `Resume`** — Moving it to `Resume` requires:
+   - Django migration: add `Resume.parsed_content` (JSONField, nullable) + `Resume.processing_status`
+   - Data migration: backfill existing `Resume.parsed_content` from latest analysis's `parsed_content`
+   - Keep `ResumeAnalysis.parsed_content` column temporarily for backward compat
+
+3. **`soft_delete()` clears `parsed_content`** — `ResumeAnalysis.soft_delete()` sets `parsed_content = None`. Once it lives on `Resume`, soft-deleting an analysis must NOT clear the resume's parsed data.
+
+4. **`_prefill_from_resume()` fallback chain** — `resume_chat_service.py` queries `ResumeAnalysis.parsed_content` in two places. After migration, these must query `Resume.parsed_content` instead.
+
+5. **`ResumeSerializer` doesn't include `parsed_content`** — Need to add `parsed_content`, `processing_status` fields.
+
+6. **Duplicate resume (same hash) skips upload** — `get_or_create_from_upload()` returns `(existing, False)` for duplicates. Must NOT re-trigger `process_resume_upload_task`.
+
+7. **Race condition: analysis starts before upload processing finishes** — If user uploads and immediately runs analysis, the analysis pipeline's step 5 might run before `process_resume_upload_task` completes. Falls back gracefully — analysis runs its own parse if `Resume.parsed_content` is null.
+
+8. **`extract_job_search_profile_task` triggered on JobAlert creation** — After Phase A, becomes a DB copy. The mock patches in CRUD tests still work.
+
+### Phase B Edge Cases
+
+1. **Pipeline crash recovery** — If analysis was interrupted at step `resume_parse`, removing it from `_STEPS` means pipeline can't find it on resume. **Fix:** Treat `pipeline_step == 'resume_parse'` as equivalent to `STEP_DONE`.
+
+2. **Existing analyses with `pipeline_step = 'resume_parse'`** — Data migration: change all `pipeline_step='resume_parse'` to `'done'`.
+
+3. **`STEP_CHOICES` on model** — Keep the choice value in model for DB compatibility, but remove from pipeline `_STEPS`.
+
+4. **`ResumeAnalysisDetailSerializer`** — Add fallback: `analysis.parsed_content or analysis.resume.parsed_content`.
+
+### Phase C Edge Cases
+
+1. **`InterviewPrep.llm_response` FK** — Already `null=True`, no migration needed.
+2. **`InterviewPrepView` returns 202 → 200** — Must coordinate frontend change. During transition, could support both.
+3. **`build_interview_prep_prompt()` uses analysis fields** — DB replacement must use same fields for filtering.
+
+### Phase D Edge Cases
+
+1. **No test coverage to remove** — `BulkAnalyzeView` has no dedicated tests. Clean removal.
+
+### Phase E Edge Cases
+
+1. **`_fallback_llm_matching()` called in 3 places** — Replace all with `return []` + warning log.
+2. **Dev/test environments using SQLite** — Tests must mock embedding matching or use PostgreSQL.
+3. **`job_matcher.py` still imported** — Delete import and file.
+
+---
+
+## Obsolete Tests Inventory
+
+### Fully Obsolete (remove)
+
+| Test Class | File | Lines | Phase |
+|---|---|---|---|
+| `StepResumeParsePipelineTests` (5 tests) | `test_resume_parser.py` | 275–349 | B |
+| `ParsedContentModelTests.test_pipeline_step_resume_parse_exists` | `test_resume_parser.py` | 387–393 | B |
+| `JobSearchProfileExtractionTest` (1 test) | `test_job_alerts.py` | 323–366 | A |
+| `JobMatcherServiceTest` (1 test) | `test_job_alerts.py` | 419–462 | E |
+
+### Need Rewriting
+
+| Test | File | What Changes |
+|---|---|---|
+| `ParsedContentModelTests` (3 remaining) | `test_resume_parser.py` | Assert on `Resume.parsed_content` |
+| `test_soft_delete_clears_parsed_content` | `test_resume_parser.py` | Soft-delete should NOT clear `Resume.parsed_content` |
+| `ChatBuilderParsedContentFallbackTests` (5 tests) | `test_resume_parser.py` | Read from `Resume.parsed_content` |
+| `ParsedContentSerializerTests` (2 tests) | `test_resume_parser.py` | Serializer sources from Resume |
+| CRUD tests with `@patch('...extract_job_search_profile_task')` | `test_job_alerts.py` | Task is now DB copy |
+
+### New Tests Needed
+
+| What to Test | Phase |
+|---|---|
+| `process_resume_upload_task` — happy path, duplicate skip, PDF failure | A |
+| `Resume.parsed_content` field, `Resume.processing_status` transitions | A |
+| Merged prompt returns structured resume + career profile | A |
+| Pipeline runs with 4 steps (no `resume_parse`) | B |
+| `InterviewQuestion` model, seed data, filtering | C |
+| `InterviewPrepView` returns 200 with instant results | C |
+| Embedding matcher returns `[]` when no embedding (no fallback) | E |

@@ -26,6 +26,19 @@ class Resume(models.Model):
     The same physical file (by SHA-256 hash) is stored once per user.
     Multiple ResumeAnalysis rows can reference the same Resume.
     """
+
+    # Processing status for upload-time resume understanding (Phase A)
+    PROCESSING_PENDING = 'pending'
+    PROCESSING_PROCESSING = 'processing'
+    PROCESSING_DONE = 'done'
+    PROCESSING_FAILED = 'failed'
+    PROCESSING_STATUS_CHOICES = [
+        (PROCESSING_PENDING, 'Pending'),
+        (PROCESSING_PROCESSING, 'Processing'),
+        (PROCESSING_DONE, 'Done'),
+        (PROCESSING_FAILED, 'Failed'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resumes')
     file = models.FileField(upload_to='resumes/')
@@ -41,6 +54,30 @@ class Resume(models.Model):
         help_text='The single default resume used for dashboard, feed, and personalisation.',
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    # ── Phase A: Upload-time resume understanding fields ──────────────
+    parsed_content = models.JSONField(
+        null=True, blank=True,
+        help_text='Structured resume data (contact, experience, education, skills, etc.) extracted at upload time.',
+    )
+    career_profile = models.JSONField(
+        null=True, blank=True,
+        help_text='Career matching profile (titles, skills, seniority, industries, locations, experience_years).',
+    )
+    resume_text = models.TextField(
+        blank=True,
+        help_text='Plain text extracted from the PDF at upload time.',
+    )
+    processing_status = models.CharField(
+        max_length=20,
+        choices=PROCESSING_STATUS_CHOICES,
+        default=PROCESSING_PENDING,
+        help_text='Status of the upload-time resume understanding pipeline.',
+    )
+    processing_error = models.TextField(
+        blank=True,
+        help_text='Error message if processing_status is failed.',
+    )
 
     class Meta:
         ordering = ['-uploaded_at']
@@ -1386,6 +1423,102 @@ class InterviewPrep(models.Model):
 
     def __str__(self):
         return f"InterviewPrep for analysis #{self.analysis_id} ({self.status})"
+
+
+# ── Interview Question Bank (Phase C) ────────────────────────────────────────
+
+
+class InterviewQuestion(models.Model):
+    """
+    Curated interview question bank — replaces LLM-generated questions.
+
+    Questions are tagged by category, difficulty, roles, and skills so they
+    can be filtered and matched to a specific analysis (resume + JD).
+    Sample answer templates support placeholders like {role}, {company}, {skill}.
+    """
+    CATEGORY_BEHAVIORAL = 'behavioral'
+    CATEGORY_TECHNICAL = 'technical'
+    CATEGORY_SITUATIONAL = 'situational'
+    CATEGORY_ROLE_SPECIFIC = 'role_specific'
+    CATEGORY_GAP_BASED = 'gap_based'
+    CATEGORY_CHOICES = [
+        (CATEGORY_BEHAVIORAL, 'Behavioral'),
+        (CATEGORY_TECHNICAL, 'Technical'),
+        (CATEGORY_SITUATIONAL, 'Situational'),
+        (CATEGORY_ROLE_SPECIFIC, 'Role-Specific'),
+        (CATEGORY_GAP_BASED, 'Gap-Based'),
+    ]
+
+    DIFFICULTY_EASY = 'easy'
+    DIFFICULTY_MEDIUM = 'medium'
+    DIFFICULTY_HARD = 'hard'
+    DIFFICULTY_CHOICES = [
+        (DIFFICULTY_EASY, 'Easy'),
+        (DIFFICULTY_MEDIUM, 'Medium'),
+        (DIFFICULTY_HARD, 'Hard'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, db_index=True)
+    question = models.TextField(help_text='The interview question text.')
+    why_asked = models.TextField(
+        blank=True,
+        help_text='Why an interviewer would ask this. Supports {role}, {company} placeholders.',
+    )
+    sample_answer_template = models.TextField(
+        blank=True,
+        help_text='Sample answer template. Supports {role}, {company}, {skill} placeholders.',
+    )
+    difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, default=DIFFICULTY_MEDIUM)
+    tags = models.JSONField(
+        default=list,
+        help_text='Skill/keyword tags for matching, e.g. ["python", "leadership", "sql"]',
+    )
+    roles = models.JSONField(
+        default=list,
+        help_text='Applicable role patterns, e.g. ["software engineer", "data analyst"]',
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['category', 'difficulty']
+        verbose_name = 'Interview Question'
+        verbose_name_plural = 'Interview Questions'
+        indexes = [
+            models.Index(fields=['category', 'is_active']),
+            models.Index(fields=['difficulty', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"[{self.category}/{self.difficulty}] {self.question[:80]}"
+
+    def render(self, context: dict = None) -> dict:
+        """
+        Render this question with context-specific placeholders filled in.
+
+        Args:
+            context: dict with keys like 'role', 'company', 'skill'
+
+        Returns:
+            dict with category, question, why_asked, sample_answer, difficulty
+        """
+        ctx = context or {}
+        safe_ctx = {k: str(v) for k, v in ctx.items()}
+
+        def _fill(template):
+            try:
+                return template.format_map(safe_ctx) if template else template
+            except (KeyError, ValueError):
+                return template
+
+        return {
+            'category': self.get_category_display(),
+            'question': _fill(self.question),
+            'why_asked': _fill(self.why_asked),
+            'sample_answer': _fill(self.sample_answer_template),
+            'difficulty': self.difficulty,
+        }
 
 
 # ── Cover Letter ─────────────────────────────────────────────────────────────

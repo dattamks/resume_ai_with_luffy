@@ -5,6 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.35.0] — 2026-03-04
+
+### Architecture Simplification — 5-Phase Pipeline Refactor
+
+#### Added — Resume Understanding at Upload (`analyzer/services/resume_understanding.py`)
+- New `process_resume_upload()` performs a **single LLM call** at resume upload that produces both parsed resume data and a career profile in one shot.
+- New Celery task `process_resume_upload_task` runs async after upload.
+- New fields on `Resume` model: `parsed_content`, `career_profile`, `parsing_status`.
+- `parsed_content` is copied to `ResumeAnalysis` at analysis time (no LLM call needed in pipeline).
+- Migration: `0029_add_resume_understanding_fields.py`, `0030_backfill_resume_parsed_content.py`.
+
+#### Added — Interview Question Bank (`analyzer/models.py`)
+- New `InterviewQuestion` model: pre-seeded DB table of interview questions with category, difficulty, `why_asked`, `sample_answer`.
+- Migration: `0031_add_interview_question_bank.py` (seeds 100+ questions across categories).
+
+#### Changed — Analysis Pipeline Reduced from 5 Steps to 4
+- **Removed Step 5 (`_step_resume_parse`)** from `ResumeAnalyzer.analyze()` — parsed content is now pre-computed at upload and copied into the analysis result.
+- Pipeline steps: `extract_text → resolve_jd → llm_call → parse_result → done`.
+
+#### Changed — Interview Prep Is Now Instant (No LLM, No Celery)
+- `InterviewPrepService.generate()` queries the `InterviewQuestion` DB bank, selects relevant questions by matched skills/category, and returns immediately.
+- Removed `generate_interview_prep_task` Celery task.
+- No LLM call, no async polling — response is instant.
+
+#### Removed — Bulk Analysis Endpoint
+- Removed `BulkAnalyzeView` and its URL route `analyze/bulk/`.
+- Frontend should use sequential single-analysis calls instead.
+
+#### Removed — LLM Fallback in Job Matcher
+- `EmbeddingMatcher` no longer falls back to an LLM call when embeddings are missing.
+- Jobs without embeddings are silently skipped — pure vector similarity matching only.
+
+#### Documentation
+- `FRONTEND_API_GUIDE.md` updated: pipeline steps, `parsed_content` field, interview prep instant flow, bulk endpoint removed, changelog.
+- `ARCHITECTURE_FLOW.md` updated: pipeline diagram (4 steps), file tree, external services, interview prep section, Celery tasks, URL listing.
+
+---
+
 ## [0.34.1] — 2026-03-03
 
 ### Changed — Interview Prep, Cover Letter & Job Alerts Are Now Free

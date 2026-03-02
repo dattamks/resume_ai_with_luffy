@@ -368,9 +368,11 @@ class AnalyzeResumeDeduplicationTests(TestCase):
         )
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_resp.data["access"]}')
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_creates_resume_row(self, mock_task):
+    def test_analyze_creates_resume_row(self, mock_task, mock_upload_task):
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
 
         resp = self.client.post(
             '/api/v1/analyze/',
@@ -386,10 +388,12 @@ class AnalyzeResumeDeduplicationTests(TestCase):
         # Clean up idempotency lock
         cache.delete(f'analyze_lock:{self.user.id}')
 
+    @patch('analyzer.views.process_resume_upload_task')
     @patch('analyzer.views.run_analysis_task')
-    def test_analyze_dedup_same_file(self, mock_task):
+    def test_analyze_dedup_same_file(self, mock_task, mock_upload_task):
         """Two analyses with same resume file → same Resume row."""
         mock_task.delay.return_value = MagicMock(id='fake-task-id')
+        mock_upload_task.delay.return_value = MagicMock()
         content = b'%PDF-1.4 identical pdf bytes'
 
         resp1 = self.client.post(

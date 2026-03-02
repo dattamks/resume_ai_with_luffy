@@ -1,6 +1,6 @@
 # i-Luffy — Architecture & Flow Document
 
-> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **Platform version:** v0.27.0
+> **Last updated:** 2026-03-04 &nbsp;|&nbsp; **Platform version:** v0.35.0
 > Deep technical reference describing how every component connects, what happens at every stage, and what systems are involved.
 
 ---
@@ -114,7 +114,7 @@
 
 | Service | Used For | Called By |
 |---------|----------|-----------|
-| **OpenRouter** | LLM API calls (analysis, rewriting, job matching, interview prep, cover letters) | `analyzer/services/ai_providers/` |
+| **OpenRouter** | LLM API calls (analysis, rewriting, cover letters, resume understanding at upload) | `analyzer/services/ai_providers/` |
 | **Razorpay** | Payment processing (subscriptions + one-time top-ups) | `accounts/razorpay_service.py` |
 | **Firecrawl** | Web scraping (JD URLs + job board crawling) | `analyzer/services/jd_fetcher.py`, `analyzer/services/job_sources/` |
 | **SMTP** | Email delivery | `accounts/email_utils.py` |
@@ -159,7 +159,7 @@ resume_ai_with_luffy/
 │   │                          #   ResumeChat, ResumeChatMessage
 │   ├── views.py               #   All analyzer API views (analyze, analyses, resumes, dashboard,
 │   │                          #   share, generate, job alerts, notifications, version history,
-│   │                          #   bulk analysis, interview prep, cover letter, templates)
+│   │                          #   interview prep, cover letter, templates)
 │   ├── views_chat.py          #   Conversational resume builder views
 │   ├── views_celery.py        #   Admin-only Celery monitoring views
 │   ├── views_health.py        #   Health check endpoint
@@ -173,7 +173,8 @@ resume_ai_with_luffy/
 │       ├── analyzer.py        #     ResumeAnalyzer — orchestrates the analysis pipeline
 │       ├── pdf_extractor.py   #     PDF text extraction (pdfplumber)
 │       ├── jd_fetcher.py      #     JD URL scraping (requests + BeautifulSoup + Firecrawl)
-│       ├── resume_parser.py   #     Structured resume data extraction
+│       ├── resume_understanding.py#  Combined resume parsing + career profile at upload (LLM)
+│       ├── resume_parser.py   #     (Legacy) Structured resume data extraction
 │       ├── resume_generator.py#     LLM-based resume rewriting
 │       ├── pdf_report.py      #     Analysis report PDF generation
 │       ├── template_registry.py#    Resume template → renderer mapping
@@ -184,12 +185,12 @@ resume_ai_with_luffy/
 │       ├── resume_minimal_*.py #    Minimal template renderers
 │       ├── resume_executive_*.py#   Executive template renderers
 │       ├── resume_chat_service.py#  Conversational builder session logic
-│       ├── interview_prep.py  #     Interview prep generation
+│       ├── interview_prep.py  #     Interview prep from DB question bank (instant, no LLM)
 │       ├── cover_letter.py    #     Cover letter generation
 │       ├── job_search_profile.py#   Resume → job search profile extraction
-│       ├── job_matcher.py     #     Job matching with relevance scoring
+│       ├── job_matcher.py     #     (Legacy) Job matching with relevance scoring
 │       ├── embedding_service.py#    Text embedding generation
-│       ├── embedding_matcher.py#    Vector similarity matching (pgvector)
+│       ├── embedding_matcher.py#    Vector similarity matching only (pgvector, no LLM fallback)
 │       └── ai_providers/      #     LLM provider abstraction:
 │           ├── factory.py     #       get_ai_provider() → configured provider
 │           └── openrouter_provider.py # OpenRouter API client
@@ -364,15 +365,8 @@ POST /api/v1/analyze/ (multipart/form-data)
 │  │  │              │   • sentence_suggestions (original → suggested)  │  │
 │  │  │              │   • formatting_flags, quick_wins, summary        │  │
 │  │  │              │   • ats_score (generic_ats for dashboard)        │  │
-│  │  └──────┬───────┘                                                 │  │
-│  │         │                                                          │  │
-│  │         ▼                                                          │  │
-│  │  ┌──────────────┐                                                 │  │
-│  │  │ Step 5:      │   Extract structured data from resume_text:     │  │
-│  │  │ Resume Parse │   • contact info (name, email, phone, etc.)     │  │
-│  │  │              │   • experience (companies, roles, bullets)       │  │
-│  │  │ parse_resume │   • education, skills, certifications, etc.     │  │
-│  │  │ _text()      │   Saved to analysis.parsed_content (JSON)       │  │
+│  │  │              │   • parsed_content copied from Resume.parsed_content │  │
+│  │  │              │     (pre-computed at upload by resume_understanding) │  │
 │  │  └──────┬───────┘                                                 │  │
 │  │         │                                                          │  │
 │  │         ▼                                                          │  │
@@ -558,24 +552,23 @@ Each assistant message includes a `ui_spec` JSON that tells the frontend what in
 POST /api/v1/analyses/{id}/interview-prep/
   │
   ▼
-View: Check analysis is done → Check no pending prep → Deduct credits
+View: Check analysis is done → Check no pending prep
   │
-  ▼ (async)
-Celery: generate_interview_prep_task
+  ▼ (instant — no Celery, no LLM)
+InterviewPrepService.generate()
   │
-  ├─ Build prompt from: analysis results, resume text, JD text
-  │  Focus on: gaps, weak areas, role requirements
+  ├─ Query InterviewQuestion bank (DB):
+  │    Filter by: category ∈ analysis.keyword_analysis matched skills
+  │    Select: random subset per category + general questions
   │
-  ├─ Call LLM → get structured JSON:
-  │    questions: [{category, question, why_asked, sample_answer, difficulty}]
-  │    tips: [general interview advice]
-  │
-  ├─ Record LLMResponse (tokens, cost, duration)
+  ├─ Build questions list from DB rows:
+  │    [{category, question, why_asked, sample_answer, difficulty}]
+  │    Add general tips from DB bank
   │
   └─ Update InterviewPrep (status=done, questions, tips)
       │
       ▼
-  On failure: refund credits, status=failed
+  Response returned immediately (no polling needed)
 ```
 
 ---
@@ -1024,7 +1017,6 @@ generate_improved_resume_task     2        15s       API request
 extract_job_search_profile_task   2        15s       After alert created
 crawl_jobs_for_alert_task         1        30s       Beat schedule / manual
 match_jobs_task                   1        15s       After crawl done
-generate_interview_prep_task      2        15s       API request
 generate_cover_letter_task        2        15s       API request
 cleanup_stale_analyses            0        —         Beat: every 15 min
 flush_expired_tokens              0        —         Beat: daily
@@ -1187,7 +1179,6 @@ All endpoints live under `/api/v1/`:
 
 /api/v1/                             Analyzer endpoints
   ├── analyze/                       POST   Start analysis
-  ├── analyze/bulk/                  POST   Bulk analysis (up to 10 JDs)
   ├── analyses/                      GET    List analyses (paginated, filtered)
   ├── analyses/compare/              GET    Compare 2-5 analyses side-by-side
   ├── analyses/bulk-delete/          POST   Soft-delete multiple analyses

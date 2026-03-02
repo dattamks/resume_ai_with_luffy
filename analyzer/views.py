@@ -40,10 +40,9 @@ from .serializers import (
     InterviewPrepCreateSerializer,
     CoverLetterSerializer,
     CoverLetterCreateSerializer,
-    BulkAnalysisCreateSerializer,
     ResumeTemplateSerializer,
 )
-from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task, generate_interview_prep_task, generate_cover_letter_task
+from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task, generate_interview_prep_task, generate_cover_letter_task, process_resume_upload_task
 
 logger = logging.getLogger('analyzer')
 
@@ -153,6 +152,12 @@ class AnalyzeResumeView(APIView):
             run_analysis_task.delay(analysis.id, request.user.id)
 
             logger.info('Celery task dispatched for analysis id=%s', analysis.id)
+
+            # Phase A: Dispatch resume upload processing for new/unprocessed resumes
+            resume_obj = analysis.resume
+            if resume_obj and resume_obj.processing_status == Resume.PROCESSING_PENDING:
+                process_resume_upload_task.delay(str(resume_obj.id))
+                logger.info('Resume upload processing dispatched: resume=%s', resume_obj.id)
 
             # Track activity for streak
             from .models import UserActivity
@@ -1935,133 +1940,6 @@ class ResumeVersionHistoryView(APIView):
         })
 
 
-# ── Bulk Analysis ────────────────────────────────────────────────────────────
-
-
-class BulkAnalyzeView(APIView):
-    """
-    POST /api/v1/analyze/bulk/
-    Analyze one resume against multiple job descriptions (up to 10).
-    Creates separate analysis entries for each JD.
-    """
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-    throttle_classes = [AnalyzeThrottle]
-
-    def post(self, request):
-        serializer = BulkAnalysisCreateSerializer(
-            data=request.data,
-            context={'request': request},
-        )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        jd_list = serializer.validated_data['job_descriptions']
-        total_count = len(jd_list)
-
-        # ── Plan quota checks ──
-        profile = getattr(request.user, 'profile', None)
-        plan = getattr(profile, 'plan', None) if profile else None
-
-        if plan and plan.analyses_per_month > 0:
-            month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            month_count = ResumeAnalysis.objects.filter(
-                user=request.user, created_at__gte=month_start,
-            ).exclude(status=ResumeAnalysis.STATUS_FAILED).count()
-            remaining = plan.analyses_per_month - month_count
-            if remaining < total_count:
-                return Response(
-                    {
-                        'detail': f'Monthly analysis limit allows only {remaining} more analyses. Requested {total_count}.',
-                        'limit': plan.analyses_per_month,
-                        'used': month_count,
-                        'requested': total_count,
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
-        # ── Check total credit balance ──
-        balance = check_balance(request.user)
-        from accounts.models import CreditCost
-        cost_per = CreditCost.objects.filter(action='resume_analysis').first()
-        cost_each = cost_per.cost if cost_per else 1
-        total_cost = cost_each * total_count
-        if balance < total_cost:
-            return Response(
-                {
-                    'detail': f'Insufficient credits for {total_count} analyses.',
-                    'balance': balance,
-                    'total_cost': total_cost,
-                    'cost_per_analysis': cost_each,
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
-
-        # ── Resolve resume ──
-        resume_file = serializer.validated_data.get('resume_file')
-        resume_id = serializer.validated_data.get('resume_id')
-
-        if resume_id:
-            try:
-                resume_obj = Resume.objects.get(id=resume_id, user=request.user)
-            except Resume.DoesNotExist:
-                return Response(
-                    {'detail': 'Resume not found.'},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-        elif resume_file:
-            resume_obj, _ = Resume.get_or_create_from_upload(request.user, resume_file)
-        else:
-            return Response(
-                {'detail': 'Resume is required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # ── Create analyses ──
-        created_analyses = []
-        for jd in jd_list:
-            try:
-                credit_result = deduct_credits(
-                    request.user,
-                    'resume_analysis',
-                    description=f'Bulk analysis: {jd.get("jd_role", "Untitled")}',
-                )
-            except InsufficientCreditsError as e:
-                break
-
-            analysis = ResumeAnalysis.objects.create(
-                user=request.user,
-                resume_file=resume_obj.file.name,
-                resume=resume_obj,
-                jd_input_type=jd.get('jd_input_type', 'text'),
-                jd_text=jd.get('jd_text', ''),
-                jd_url=jd.get('jd_url', ''),
-                jd_role=jd.get('jd_role', ''),
-                jd_company=jd.get('jd_company', ''),
-                jd_skills=jd.get('jd_skills', ''),
-                jd_experience_years=jd.get('jd_experience_years'),
-                jd_industry=jd.get('jd_industry', ''),
-                jd_extra_details=jd.get('jd_extra_details', ''),
-                status=ResumeAnalysis.STATUS_PROCESSING,
-                credits_deducted=True,
-            )
-
-            run_analysis_task.delay(analysis.id, request.user.id)
-            created_analyses.append({
-                'id': analysis.id,
-                'jd_role': analysis.jd_role,
-                'jd_company': analysis.jd_company,
-                'status': analysis.status,
-                'credits_used': credit_result['cost'],
-            })
-
-        return Response({
-            'total_requested': total_count,
-            'total_created': len(created_analyses),
-            'analyses': created_analyses,
-        }, status=status.HTTP_202_ACCEPTED)
-
-
 # ── Interview Prep ───────────────────────────────────────────────────────────
 
 
@@ -2104,17 +1982,51 @@ class InterviewPrepView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check for existing pending/processing
-        existing = InterviewPrep.objects.filter(
-            analysis=analysis,
-            status__in=[InterviewPrep.STATUS_PENDING, InterviewPrep.STATUS_PROCESSING],
-        ).first()
-        if existing:
+        # Check for existing completed prep (return cached)
+        existing_done = InterviewPrep.objects.filter(
+            analysis=analysis, user=request.user,
+            status=InterviewPrep.STATUS_DONE,
+        ).order_by('-created_at').first()
+        if existing_done:
             return Response(
-                InterviewPrepSerializer(existing).data,
+                InterviewPrepSerializer(existing_done).data,
                 status=status.HTTP_200_OK,
             )
 
+        # Check for existing pending/processing (legacy async in flight)
+        existing_pending = InterviewPrep.objects.filter(
+            analysis=analysis,
+            status__in=[InterviewPrep.STATUS_PENDING, InterviewPrep.STATUS_PROCESSING],
+        ).first()
+        if existing_pending:
+            return Response(
+                InterviewPrepSerializer(existing_pending).data,
+                status=status.HTTP_200_OK,
+            )
+
+        # Phase C: Try DB question bank first (instant, no LLM)
+        from .services.interview_prep import generate_interview_prep_from_db
+        from .models import InterviewQuestion
+        if InterviewQuestion.objects.filter(is_active=True).exists():
+            result = generate_interview_prep_from_db(analysis)
+            prep = InterviewPrep.objects.create(
+                analysis=analysis,
+                user=request.user,
+                status=InterviewPrep.STATUS_DONE,
+                questions=result['questions'],
+                tips=result['tips'],
+                credits_deducted=False,
+            )
+
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_INTERVIEW_PREP)
+
+            return Response(
+                InterviewPrepSerializer(prep).data,
+                status=status.HTTP_200_OK,
+            )
+
+        # Fallback: no questions in DB → use legacy LLM path (async)
         prep = InterviewPrep.objects.create(
             analysis=analysis,
             user=request.user,

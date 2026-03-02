@@ -159,10 +159,20 @@ def _prefill_from_profile(user: User, resume_data: dict) -> dict:
 
 def _prefill_from_resume(user: User, resume_id: str, resume_data: dict) -> dict:
     """
-    Pre-fill resume_data from a previous GeneratedResume's resume_content,
-    or from ResumeAnalysis.parsed_content (extracted during analysis),
-    or fall back to profile data.
+    Pre-fill resume_data from the best available source:
+    1. GeneratedResume.resume_content (most refined)
+    2. Resume.parsed_content (Phase A: extracted at upload time)
+    3. ResumeAnalysis.parsed_content (legacy: extracted during analysis)
+    4. Profile data (last resort)
     """
+    _EXPECTED_KEYS = ('contact', 'summary', 'experience', 'education', 'skills', 'certifications', 'projects')
+
+    def _ensure_keys(content):
+        for key in _EXPECTED_KEYS:
+            if key not in content:
+                content[key] = _empty_resume_data()[key]
+        return content
+
     # First try to find a GeneratedResume with resume_content for this resume
     if resume_id:
         try:
@@ -176,15 +186,13 @@ def _prefill_from_resume(user: User, resume_id: str, resume_data: dict) -> dict:
             ).order_by('-created_at').first()
 
             if gen and gen.resume_content:
-                # Deep-copy the structured content
-                content = copy.deepcopy(gen.resume_content)
-                # Ensure all expected keys exist
-                for key in ('contact', 'summary', 'experience', 'education', 'skills', 'certifications', 'projects'):
-                    if key not in content:
-                        content[key] = _empty_resume_data()[key]
-                return content
+                return _ensure_keys(copy.deepcopy(gen.resume_content))
 
-            # Fall back to parsed_content from analysis (extracted during analysis pipeline)
+            # Phase A: prefer Resume.parsed_content (extracted at upload time)
+            if resume.parsed_content:
+                return _ensure_keys(copy.deepcopy(resume.parsed_content))
+
+            # Legacy fallback: parsed_content from analysis
             analysis = ResumeAnalysis.objects.filter(
                 resume=resume,
                 user=user,
@@ -193,11 +201,7 @@ def _prefill_from_resume(user: User, resume_id: str, resume_data: dict) -> dict:
             ).order_by('-created_at').first()
 
             if analysis and analysis.parsed_content:
-                content = copy.deepcopy(analysis.parsed_content)
-                for key in ('contact', 'summary', 'experience', 'education', 'skills', 'certifications', 'projects'):
-                    if key not in content:
-                        content[key] = _empty_resume_data()[key]
-                return content
+                return _ensure_keys(copy.deepcopy(analysis.parsed_content))
         except Resume.DoesNotExist:
             pass
 
@@ -209,13 +213,18 @@ def _prefill_from_resume(user: User, resume_id: str, resume_data: dict) -> dict:
     ).order_by('-created_at').first()
 
     if gen and gen.resume_content:
-        content = copy.deepcopy(gen.resume_content)
-        for key in ('contact', 'summary', 'experience', 'education', 'skills', 'certifications', 'projects'):
-            if key not in content:
-                content[key] = _empty_resume_data()[key]
-        return content
+        return _ensure_keys(copy.deepcopy(gen.resume_content))
 
-    # Also check for any analysis with parsed_content by this user
+    # Phase A: check any of user's resumes for parsed_content
+    any_resume = Resume.objects.filter(
+        user=user,
+        parsed_content__isnull=False,
+    ).order_by('-uploaded_at').first()
+
+    if any_resume and any_resume.parsed_content:
+        return _ensure_keys(copy.deepcopy(any_resume.parsed_content))
+
+    # Legacy fallback: any analysis with parsed_content
     analysis = ResumeAnalysis.objects.filter(
         user=user,
         status=ResumeAnalysis.STATUS_DONE,
@@ -223,11 +232,7 @@ def _prefill_from_resume(user: User, resume_id: str, resume_data: dict) -> dict:
     ).order_by('-created_at').first()
 
     if analysis and analysis.parsed_content:
-        content = copy.deepcopy(analysis.parsed_content)
-        for key in ('contact', 'summary', 'experience', 'education', 'skills', 'certifications', 'projects'):
-            if key not in content:
-                content[key] = _empty_resume_data()[key]
-        return content
+        return _ensure_keys(copy.deepcopy(analysis.parsed_content))
 
     # Fall back to profile
     return _prefill_from_profile(user, resume_data)

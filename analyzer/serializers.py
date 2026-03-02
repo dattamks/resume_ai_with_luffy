@@ -17,6 +17,7 @@ class ResumeSerializer(serializers.ModelSerializer):
             'id', 'original_filename', 'file_size_bytes',
             'uploaded_at', 'active_analysis_count', 'file_url',
             'days_since_upload', 'last_analyzed_at', 'is_default',
+            'parsed_content', 'career_profile', 'processing_status',
         )
         read_only_fields = fields
 
@@ -181,6 +182,7 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
     resume_file_url = serializers.SerializerMethodField()
     share_url = serializers.SerializerMethodField()
     ai_response_time_seconds = serializers.SerializerMethodField()
+    parsed_content = serializers.SerializerMethodField()
 
     class Meta:
         model = ResumeAnalysis
@@ -247,6 +249,16 @@ class ResumeAnalysisDetailSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(path)
             return path
+        return None
+
+    def get_parsed_content(self, obj):
+        """Return parsed_content with fallback to Resume.parsed_content (Phase A)."""
+        if obj.parsed_content:
+            return obj.parsed_content
+        # Phase A fallback: read from the Resume model
+        resume = getattr(obj, 'resume', None)
+        if resume and resume.parsed_content:
+            return resume.parsed_content
         return None
 
 

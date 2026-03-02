@@ -45,6 +45,114 @@ def _set_analysis_cache(analysis):
     acks_late=True,
     reject_on_worker_lost=True,
 )
+def process_resume_upload_task(self, resume_id):
+    """
+    Phase A — Process a newly uploaded resume: extract text, run merged
+    resume understanding LLM call, save parsed_content + career_profile,
+    then chain embedding computation.
+
+    Triggered automatically on resume upload (for new resumes only).
+    Pipeline: PDF extract → merged LLM call → save → chain embedding.
+    """
+    from .models import Resume, JobSearchProfile
+    from .services.pdf_extractor import PDFExtractor
+    from .services.resume_understanding import understand_resume
+
+    logger.info('process_resume_upload_task started: resume_id=%s', resume_id)
+
+    try:
+        resume = Resume.objects.get(id=resume_id)
+    except Resume.DoesNotExist:
+        logger.error('Resume %s not found — aborting upload processing', resume_id)
+        return
+
+    # Guard: skip if already processed
+    if resume.processing_status == Resume.PROCESSING_DONE:
+        logger.info('Resume %s already processed — skipping', resume_id)
+        return
+
+    # Mark as processing
+    resume.processing_status = Resume.PROCESSING_PROCESSING
+    resume.save(update_fields=['processing_status'])
+
+    try:
+        # Step 1: Extract text from PDF
+        extractor = PDFExtractor()
+        resume_text = extractor.extract(resume.file)
+        if not resume_text or len(resume_text.strip()) < 50:
+            raise ValueError(
+                f'Resume {resume_id} has insufficient text ({len(resume_text or "")} chars). '
+                'Upload a readable PDF.'
+            )
+        resume.resume_text = resume_text
+        resume.save(update_fields=['resume_text'])
+        logger.info('PDF text extracted: resume=%s chars=%d', resume_id, len(resume_text))
+
+        # Step 2: Merged LLM call — resume understanding
+        result = understand_resume(resume_text)
+
+        # Step 3: Save results
+        resume.parsed_content = result['resume_data']
+        resume.career_profile = result['career_profile']
+        resume.processing_status = Resume.PROCESSING_DONE
+        resume.processing_error = ''
+        resume.save(update_fields=[
+            'parsed_content', 'career_profile',
+            'processing_status', 'processing_error',
+        ])
+        logger.info(
+            'Resume understanding complete: resume=%s name=%s seniority=%s',
+            resume_id,
+            result['resume_data'].get('contact', {}).get('name', '?'),
+            result['career_profile'].get('seniority', '?'),
+        )
+
+        # Step 4: Upsert JobSearchProfile from career_profile (DB copy, no LLM)
+        cp = result['career_profile']
+        JobSearchProfile.objects.update_or_create(
+            resume=resume,
+            defaults={
+                'titles': cp.get('titles', []),
+                'skills': cp.get('skills', []),
+                'seniority': cp.get('seniority', 'mid'),
+                'industries': cp.get('industries', []),
+                'locations': cp.get('locations', []),
+                'experience_years': cp.get('experience_years'),
+                'raw_extraction': result.get('raw', ''),
+            },
+        )
+        logger.info('JobSearchProfile upserted from upload processing: resume=%s', resume_id)
+
+        # Step 5: Chain embedding computation
+        compute_resume_embedding_task.delay(str(resume_id))
+
+    except ValueError as exc:
+        logger.warning('Resume upload processing failed (resume=%s): %s', resume_id, exc)
+        resume.processing_status = Resume.PROCESSING_FAILED
+        resume.processing_error = str(exc)
+        resume.save(update_fields=['processing_status', 'processing_error'])
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+
+    except Exception as exc:
+        logger.exception('Unexpected error in resume upload processing (resume=%s)', resume_id)
+        resume.processing_status = Resume.PROCESSING_FAILED
+        resume.processing_error = str(exc)[:500]
+        resume.save(update_fields=['processing_status', 'processing_error'])
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    autoretry_for=(ConnectionError, OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def run_analysis_task(self, analysis_id, user_id):
     """
     Run the full resume analysis pipeline as a Celery task.
@@ -706,13 +814,16 @@ def _refund_builder_credits(gen):
 )
 def extract_job_search_profile_task(self, resume_id):
     """
-    Extract a job search profile from a resume using the LLM.
-    Triggered automatically when a JobAlert is created.
+    Extract a job search profile from a resume.
 
+    Phase A: Now a DB copy from Resume.career_profile instead of an LLM call.
+    Falls back to LLM extraction only if Resume.career_profile is not yet
+    available (e.g. resume uploaded before Phase A was deployed).
+
+    Triggered automatically when a JobAlert is created.
     Saves (or updates) the JobSearchProfile OneToOne record for the resume.
     """
     from .models import Resume, JobSearchProfile
-    from .services.job_search_profile import extract_search_profile
 
     logger.info('Job search profile extraction started: resume_id=%s', resume_id)
 
@@ -723,6 +834,31 @@ def extract_job_search_profile_task(self, resume_id):
         return
 
     try:
+        # Phase A: prefer career_profile from upload-time processing
+        if resume.career_profile:
+            cp = resume.career_profile
+            profile, _ = JobSearchProfile.objects.update_or_create(
+                resume=resume,
+                defaults={
+                    'titles': cp.get('titles', []),
+                    'skills': cp.get('skills', []),
+                    'seniority': cp.get('seniority', 'mid'),
+                    'industries': cp.get('industries', []),
+                    'locations': cp.get('locations', []),
+                    'experience_years': cp.get('experience_years'),
+                    'raw_extraction': cp,
+                },
+            )
+            logger.info(
+                'JobSearchProfile saved (from career_profile): resume=%s seniority=%s titles=%s',
+                resume_id, profile.seniority, profile.titles[:2],
+            )
+            # Chain embedding computation
+            compute_resume_embedding_task.delay(str(resume_id))
+            return
+
+        # Fallback: LLM extraction for resumes uploaded before Phase A
+        from .services.job_search_profile import extract_search_profile
         result = extract_search_profile(resume)
 
         # Upsert JobSearchProfile
@@ -739,7 +875,7 @@ def extract_job_search_profile_task(self, resume_id):
             },
         )
         logger.info(
-            'JobSearchProfile saved: resume=%s seniority=%s titles=%s',
+            'JobSearchProfile saved (LLM fallback): resume=%s seniority=%s titles=%s',
             resume_id, profile.seniority, profile.titles[:2],
         )
 
@@ -766,13 +902,15 @@ def extract_job_search_profile_task(self, resume_id):
 def match_jobs_task(self, job_alert_id, discovered_job_ids):
     """
     Score a set of DiscoveredJob objects for relevance to a JobAlert.
-    Creates JobMatch records for jobs scoring ≥ MATCH_THRESHOLD.
+    Creates JobMatch records for jobs scoring ≥ threshold.
     Chains send_job_alert_notification_task on completion.
+
+    Phase E: Uses embedding matcher instead of LLM-based job_matcher.
     """
     import time as _time
     from django.utils import timezone
     from .models import JobAlert, DiscoveredJob, JobMatch, JobAlertRun
-    from .services.job_matcher import match_jobs, MATCH_THRESHOLD
+    from .services.embedding_matcher import match_jobs_for_alert
 
     logger.info('match_jobs_task: alert=%s jobs=%d', job_alert_id, len(discovered_job_ids))
 
@@ -791,15 +929,15 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
         discovered_jobs = DiscoveredJob.objects.filter(id__in=discovered_job_ids)
         run.jobs_discovered = discovered_jobs.count()
 
-        scored = match_jobs(alert, discovered_jobs)
+        # Use embedding matcher (Phase E — replaces LLM-based match_jobs)
+        scored = match_jobs_for_alert(alert, job_ids=discovered_job_ids)
 
         # Build a map: DiscoveredJob.id → DiscoveredJob
         job_map = {str(j.id): j for j in discovered_jobs}
 
         matches_created = 0
         for item in scored:
-            if item['score'] < MATCH_THRESHOLD:
-                continue
+            # Embedding matcher already filters by threshold
             dj = job_map.get(item['discovered_job_id'])
             if not dj:
                 continue
