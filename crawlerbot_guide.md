@@ -707,6 +707,8 @@ Creates or updates a career page keyed on `(entity, url)`.
 
 Creates or updates a `DiscoveredJob` keyed on `(source, external_id)`.
 
+> **Idempotent upsert:** Re-posting a job with the same `(source, external_id)` updates the existing record. The bot can safely re-push jobs with enriched/updated fields without worrying about duplicate errors.
+
 **curl:**
 
 ```bash
@@ -800,7 +802,7 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/ \
 
 **`POST /api/v1/ingest/jobs/bulk/`**
 
-Ingest up to **500 jobs** in a single request.
+Ingest up to **500 jobs** in a single request. Uses the same `(source, external_id)` upsert semantics as the single endpoint — duplicates are updated, not rejected.
 
 **curl:**
 

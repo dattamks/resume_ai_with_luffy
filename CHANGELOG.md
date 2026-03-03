@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.38.0] — 2026-03-03
+
+### Ingest Upsert Fix & Data Cleanup
+
+#### Fixed — Job Ingest Upsert Blocked by DRF Validator (`analyzer/serializers_ingest.py`)
+- `DiscoveredJobIngestSerializer` had DRF's auto-generated `UniqueTogetherValidator` for `(source, external_id)` which rejected duplicate pairs at validation time — before the `update_or_create()` in `create()` ever ran.
+- Fix: added `validators = []` to `Meta` to disable the auto-generated validator. The serializer's `create()` method intentionally uses `update_or_create()` for upsert semantics, so the DRF-level uniqueness check was counterproductive.
+- Both `POST /api/v1/ingest/jobs/` and `POST /api/v1/ingest/jobs/bulk/` are now truly idempotent — re-pushing a job with the same `(source, external_id)` updates the existing record instead of returning a 400 error.
+
+#### Data — Purged Legacy Firecrawl Jobs
+- Deleted all 554 `DiscoveredJob` records with `source='firecrawl'` to allow a clean re-sync from the crawler bot.
+- No cascade impact — zero `JobMatch` rows were linked to these jobs.
+
+---
+
 ## [0.37.0] — 2026-03-03
 
 ### Generated Resumes Are First-Class Resumes

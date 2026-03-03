@@ -186,6 +186,11 @@ class DiscoveredJobIngestSerializer(serializers.ModelSerializer):
             # lookup fields
             'company_entity_display_name', 'company_entity_country',
         )
+        # Disable the auto-generated UniqueTogetherValidator for
+        # (source, external_id).  We intentionally handle duplicates
+        # via update_or_create() in create(), so the DRF-level
+        # uniqueness check must be skipped.
+        validators = []
         extra_kwargs = {
             'source_page_url': {'required': False},
             'title': {'required': False},

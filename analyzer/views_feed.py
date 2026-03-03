@@ -18,7 +18,8 @@ from collections import Counter
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.db.models import Avg, Case, Count, IntegerField, Q, Value, When
+from django.db.models import Avg, Case, Count, F, FloatField, IntegerField, Q, Value, When
+from django.db.models.expressions import ExpressionWrapper
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -191,6 +192,10 @@ def _prev_period_skills(days: int = 30, limit: int = 50, country: str = '') -> d
 #  GET /api/v1/feed/jobs/
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ── Allowed ordering values for FeedJobsView ────────────────────────────
+_FEED_ORDERING_ALLOWLIST = {'relevance', '-posted_at', '-salary_min_usd'}
+
+
 class FeedJobsView(APIView):
     """
     Personalised job feed ranked by pgvector embedding similarity
@@ -214,6 +219,11 @@ class FeedJobsView(APIView):
         - ``skills`` (comma-separated skill keywords)
         - ``salary_min`` (int, minimum salary USD filter)
         - ``days`` (int, default 30 — how far back to look)
+        - ``relevance_min`` (float 0-1, only return jobs with relevance >= value;
+          jobs without embeddings are excluded when set; requires pgvector)
+        - ``ordering`` (sort field: ``relevance`` (default), ``-posted_at``,
+          ``-salary_min_usd``; when no explicit country is selected the
+          user's geo-priority is always the primary sort key)
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -315,8 +325,25 @@ class FeedJobsView(APIView):
                 ),
             )
 
+        # ── Parse new query params ────────────────────────────────
+        ordering_param = request.query_params.get('ordering', '').strip()
+        if ordering_param not in _FEED_ORDERING_ALLOWLIST:
+            ordering_param = 'relevance'  # default
+
+        relevance_min_param = request.query_params.get('relevance_min')
+        relevance_min: float | None = None
+        if relevance_min_param is not None:
+            try:
+                relevance_min = float(relevance_min_param)
+                if not (0.0 <= relevance_min <= 1.0):
+                    relevance_min = None
+            except (ValueError, TypeError):
+                relevance_min = None
+
         # ── Ranking ──────────────────────────────────────────────────
         profile_embedding = self._get_user_embedding(user)
+        has_pgvector = False
+
         if profile_embedding is not None:
             try:
                 from pgvector.django import CosineDistance
@@ -324,40 +351,56 @@ class FeedJobsView(APIView):
                 qs = (
                     qs.exclude(embedding__isnull=True)
                     .annotate(distance=CosineDistance('embedding', profile_embedding))
+                    .annotate(
+                        relevance_score=ExpressionWrapper(
+                            Value(1.0) - F('distance'),
+                            output_field=FloatField(),
+                        )
+                    )
                 )
-
-                if strict_country_filter:
-                    qs = qs.order_by('distance')
-                else:
-                    qs = qs.order_by('geo_priority', 'distance')
-
-                total = qs.count()
-                job_rows = list(qs[offset:offset + page_size])
-
-                for job in job_rows:
-                    job.relevance = round(1.0 - job.distance, 4)
-
-                serializer = FeedJobSerializer(job_rows, many=True)
-                return Response({
-                    'count': total,
-                    'page': page,
-                    'page_size': page_size,
-                    'country': filter_country,
-                    'results': serializer.data,
-                })
+                has_pgvector = True
             except Exception:
                 logger.debug('pgvector not available for feed — falling back to recency')
 
-        # Fallback — recency order with geo priority
-        if strict_country_filter:
-            qs = qs.order_by('-created_at')
-        else:
-            qs = qs.order_by('geo_priority', '-created_at')
+        # ── relevance_min filter (applied before pagination) ─────────
+        if relevance_min is not None:
+            if has_pgvector:
+                qs = qs.filter(relevance_score__gte=relevance_min)
+            else:
+                # Without embeddings we cannot compute relevance;
+                # return empty result set so counts are accurate.
+                qs = qs.none()
 
+        # ── Build ordering clause ────────────────────────────────────
+        order_fields: list = []
+
+        # Geo-priority is always the primary sort key when no explicit
+        # country filter was provided by the user.
+        if not strict_country_filter:
+            order_fields.append('geo_priority')
+
+        if ordering_param == 'relevance':
+            if has_pgvector:
+                order_fields.append('distance')  # asc = most relevant first
+            else:
+                order_fields.append('-created_at')  # fallback
+        elif ordering_param == '-posted_at':
+            order_fields.append(F('posted_at').desc(nulls_last=True))
+        elif ordering_param == '-salary_min_usd':
+            order_fields.append(F('salary_min_usd').desc(nulls_last=True))
+
+        qs = qs.order_by(*order_fields)
+
+        # ── Pagination ───────────────────────────────────────────────
         total = qs.count()
         job_rows = list(qs[offset:offset + page_size])
+
+        # Attach relevance attribute for the serializer
         for job in job_rows:
-            job.relevance = None
+            if has_pgvector and hasattr(job, 'relevance_score'):
+                job.relevance = round(job.relevance_score, 4)
+            else:
+                job.relevance = None
 
         serializer = FeedJobSerializer(job_rows, many=True)
         return Response({

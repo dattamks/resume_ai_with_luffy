@@ -6193,6 +6193,8 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 | `industry` | string | — | Substring match on job industry |
 | `skills` | string | — | Comma-separated skill keywords (all must match) |
 | `salary_min` | int | — | Minimum `salary_min_usd` filter |
+| `relevance_min` | float (0–1) | — | Only return jobs with `relevance >= value`. Applied **server-side before pagination** so `count` and pages are accurate. Jobs without embeddings are excluded when set. Ignored silently if value is out of range or non-numeric. Example: `?relevance_min=0.7` |
+| `ordering` | string | `relevance` | Sort field. Allowed values: `relevance` (default — highest match first), `-posted_at` (newest first), `-salary_min_usd` (highest salary first). Invalid values fall back to `relevance`. When no explicit `country` param is provided, the user's geo-priority is always the **primary** sort key (local jobs first) and `ordering` is the secondary sort. Null values in `-posted_at` and `-salary_min_usd` sort last. |
 
 > **India-first behaviour:** When no `country` param is passed, results are sorted with the user's country first, then global jobs. If `country` is explicitly provided, only jobs in that country are returned (strict filter).
 
@@ -6235,7 +6237,21 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 | `country` | string | The country filter applied (from query param or user profile) |
 | `results[].country` | string | Normalised country of the job (may be empty for legacy data) |
 
-**Frontend usage:** Main feed page job cards. Sort by relevance (default) or recency. Show `relevance` as a match percentage badge (e.g., "87% match"). Provide search bar and filter dropdowns for country, remote, seniority, employment type, industry, and skills.
+**Frontend usage:** Main feed page job cards. Show `relevance` as a match percentage badge (e.g., "87% match"). Provide search bar and filter dropdowns for country, remote, seniority, employment type, industry, and skills.
+
+Sort & filter controls should pass params to the API (server-side) rather than filtering/sorting locally, since results are paginated:
+
+```js
+// Match % threshold slider
+if (jobFilters.match_min) params.set('relevance_min', jobFilters.match_min)
+
+// Sort dropdown
+if (jobFilters.sort === 'newest')  params.set('ordering', '-posted_at')
+if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
+// omit ordering param (or pass 'relevance') for default relevance sort
+```
+
+> **Why server-side?** Client-side sorting only reorders the current page (e.g., 20 jobs). A job on page 5 that's the newest overall won't move to page 1. Similarly, filtering by match % on the client hides jobs from the current page but `count` still reflects the unfiltered total — the user sees "3 of 142 jobs" on page 1 with no way to know how many match on other pages. With `relevance_min` and `ordering`, `count` accurately reflects filtered/sorted results across all pages.
 
 ---
 
@@ -7191,7 +7207,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | POST | `/api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
 | POST | `/api/v1/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
 | **Feed & Analytics** |||||
-| GET | `/api/v1/feed/jobs/` | ✅ | Readonly (120/hr) | Personalised job feed (pgvector similarity) |
+| GET | `/api/v1/feed/jobs/` | ✅ | Readonly (120/hr) | Personalised job feed (pgvector similarity). Supports `relevance_min`, `ordering` |
 | GET | `/api/v1/feed/insights/` | ✅ | Readonly (120/hr) | Market intelligence (cached 60 min) |
 | GET | `/api/v1/feed/trending-skills/` | ✅ | Readonly (120/hr) | User skills vs market demand |
 | GET | `/api/v1/feed/hub/` | ✅ | Readonly (120/hr) | Alerts + preps + cover letters composite |
@@ -7412,6 +7428,14 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 - **New fields in job alert list:** `total_matches`
 - **New dashboard stats fields:** `keyword_match_percent` in score_trend, `top_missing_keywords`, `credit_usage`, `weekly_job_matches`, `industry_benchmark_percentile`
 - **Breaking:** Payment history response changed from `{count, payments}` to `{count, next, previous, results}` with DRF pagination. `?limit=` replaced by `?page=`.
+
+### v0.18.0 — Server-side Feed Sorting & Filtering + Ingest Fix
+
+- **`relevance_min` query param** on `GET /api/v1/feed/jobs/`: Float 0–1. Only returns jobs with `relevance >= value`. Applied **before pagination** so `count` and page numbers are accurate. Jobs without embeddings are excluded when set. Silently ignored if invalid.
+- **`ordering` query param** on `GET /api/v1/feed/jobs/`: Sort field with `-` prefix for descending. Allowed values: `relevance` (default), `-posted_at` (newest first), `-salary_min_usd` (highest salary first). Invalid values fall back to `relevance`. Null `posted_at`/`salary_min_usd` values sort last.
+- **Geo-priority preserved:** When no explicit `country` param is passed, the user's country jobs always sort first (primary key), with `ordering` as the secondary sort. This matches existing behaviour.
+- **Frontend migration:** Replace client-side sort/filter with API params: `params.set('relevance_min', matchMin)`, `params.set('ordering', '-posted_at')`. No response shape changes — `count`, `page`, `page_size`, `country`, `results` remain identical.
+- **Ingest upsert fix:** `POST /api/v1/ingest/jobs/` and `/jobs/bulk/` now correctly upsert on `(source, external_id)` — re-pushing existing jobs updates them instead of returning a 400 duplicate error. No frontend impact (crawler-only endpoints).
 
 ### v0.17.0 — Unified Job Alerts Architecture
 
