@@ -64,8 +64,7 @@ class AnalyzeResumeView(APIView):
             data=request.data,
             context={'request': request},
         )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         # ── Plan quota: monthly analysis limit ──
         profile = getattr(request.user, 'profile', None)
@@ -1010,8 +1009,7 @@ class GenerateResumeView(APIView):
 
         # Validate request body
         serializer = GeneratedResumeCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         template = serializer.validated_data['template']
         fmt = serializer.validated_data['format']
@@ -2123,8 +2121,7 @@ class CoverLetterView(APIView):
             )
 
         serializer = CoverLetterCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         tone = serializer.validated_data.get('tone', 'professional')
 

@@ -58,13 +58,15 @@ class UpdateProfileTests(TestCase):
         User.objects.create_user(username='taken', password='StrongPass123!')
         resp = self.client.put('/api/v1/auth/me/', {'username': 'taken'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('username', resp.data)
+        self.assertIn('detail', resp.data)
+        self.assertIn('username', resp.data.get('errors', {}))
 
     def test_duplicate_email_rejected(self):
         User.objects.create_user(username='other', password='StrongPass123!', email='used@test.com')
         resp = self.client.put('/api/v1/auth/me/', {'email': 'used@test.com'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('email', resp.data)
+        self.assertIn('detail', resp.data)
+        self.assertIn('email', resp.data.get('errors', {}))
 
     def test_requires_auth(self):
         resp = APIClient().put('/api/v1/auth/me/', {'username': 'x'}, format='json')
@@ -95,7 +97,8 @@ class ChangePasswordTests(TestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('current_password', resp.data)
+        self.assertIn('detail', resp.data)
+        self.assertIn('current_password', resp.data.get('errors', {}))
 
     def test_weak_new_password(self):
         resp = self.client.post(
@@ -104,7 +107,8 @@ class ChangePasswordTests(TestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('new_password', resp.data)
+        self.assertIn('detail', resp.data)
+        self.assertIn('new_password', resp.data.get('errors', {}))
 
     def test_requires_auth(self):
         resp = APIClient().post(

@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
@@ -6,6 +8,31 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import UserProfile, NotificationPreference, Plan, Wallet, WalletTransaction, ContactSubmission
+
+
+# ── Reserved usernames that cannot be registered ───────────────────────────
+_RESERVED_USERNAMES = frozenset({
+    'admin', 'administrator', 'root', 'superuser', 'sysadmin',
+    'api', 'system', 'support', 'help', 'info',
+    'null', 'undefined', 'none', 'true', 'false',
+    'moderator', 'mod', 'staff', 'webmaster', 'postmaster',
+    'iluffy', 'i-luffy', 'luffy',
+})
+
+
+def _validate_username_common(value: str) -> str:
+    """Shared username validation for Register + GoogleComplete serializers."""
+    if len(value) < 3:
+        raise serializers.ValidationError('Username must be at least 3 characters.')
+    if len(value) > 30:
+        raise serializers.ValidationError('Username must be at most 30 characters.')
+    if not re.match(r'^[a-zA-Z0-9_]+$', value):
+        raise serializers.ValidationError(
+            'Username may only contain letters, digits, and underscores.'
+        )
+    if value.lower() in _RESERVED_USERNAMES:
+        raise serializers.ValidationError('This username is reserved. Please choose a different one.')
+    return value
 
 
 class PlanSerializer(serializers.ModelSerializer):
@@ -97,6 +124,9 @@ class RegisterSerializer(serializers.ModelSerializer):
             'username', 'email', 'password', 'password2',
             'agree_to_terms', 'agree_to_data_usage', 'marketing_opt_in',
         )
+
+    def validate_username(self, value):
+        return _validate_username_common(value)
 
     def validate_email(self, value):
         value = value.lower().strip()
@@ -245,6 +275,7 @@ class UpdateUserSerializer(serializers.ModelSerializer):
                   'website_url', 'github_url', 'linkedin_url', 'avatar_url')
 
     def validate_username(self, value):
+        value = _validate_username_common(value)
         user = self.context['request'].user
         if User.objects.filter(username=value).exclude(pk=user.pk).exists():
             raise serializers.ValidationError('This username is already taken.')
@@ -489,6 +520,7 @@ class GoogleCompleteSerializer(serializers.Serializer):
     )
 
     def validate_username(self, value):
+        value = _validate_username_common(value)
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError('A user with that username already exists.')
         return value

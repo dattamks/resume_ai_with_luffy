@@ -43,8 +43,7 @@ class CreateSubscriptionView(APIView):
 
     def post(self, request):
         serializer = CreateSubscriptionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         from .razorpay_service import create_subscription
 
@@ -72,8 +71,7 @@ class VerifySubscriptionView(APIView):
 
     def post(self, request):
         serializer = VerifySubscriptionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         from .razorpay_service import verify_subscription_payment
 
@@ -137,8 +135,7 @@ class CreateTopUpOrderView(APIView):
 
     def post(self, request):
         serializer = CreateTopUpOrderSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         from .razorpay_service import create_topup_order
 
@@ -166,8 +163,7 @@ class VerifyTopUpView(APIView):
 
     def post(self, request):
         serializer = VerifyTopUpSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         from .razorpay_service import verify_topup_payment
 

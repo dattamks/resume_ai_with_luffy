@@ -238,6 +238,11 @@ def _get_role_scoped_qs(
     # ── Union ────────────────────────────────────────────────────────
     scoped_qs = (layer1_qs | layer2_qs) if has_embedding_layer else layer1_qs
 
+    # Keep narrow (role-only) queryset for skill aggregation even when
+    # the job listing is broadened.  This prevents unrelated skills
+    # (e.g. React/Node for a Data Analyst) from dominating top_skills.
+    role_qs = scoped_qs
+
     # ── Auto-broaden if too few results ──────────────────────────────
     scoped_count = scoped_qs.count()
     broadened = False
@@ -259,7 +264,7 @@ def _get_role_scoped_qs(
         'broadened': broadened,
     }
 
-    return scoped_qs, role_info, not broadened
+    return scoped_qs, role_info, not broadened, role_qs
 
 
 def _trending_skills_raw(
@@ -645,8 +650,9 @@ class FeedInsightsView(APIView):
             qs = _filter_by_country(qs, country)
 
         # ── Apply role scoping ──────────────────────────────────────────
+        role_qs = None
         if not skip_role_scope:
-            qs, role_info, is_scoped = _get_role_scoped_qs(request.user, qs)
+            qs, role_info, is_scoped, role_qs = _get_role_scoped_qs(request.user, qs)
         else:
             role_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
 
@@ -659,12 +665,14 @@ class FeedInsightsView(APIView):
         if avg_salary is not None:
             avg_salary = int(avg_salary)
 
-        # Top skills (role-scoped)
+        # Top skills — use the narrow role-scoped queryset when
+        # broadened to avoid polluting skills with unrelated roles.
         user_skills = set(_get_user_skills(request.user))
         effective_country = '' if is_global else country
+        skills_qs = role_qs if (role_qs is not None and role_qs.exists()) else qs
         trending = _trending_skills_raw(
             days=30, limit=20, country=effective_country,
-            role_titles_hash=titles_hash, queryset=qs,
+            role_titles_hash=titles_hash, queryset=skills_qs,
         )
 
         # For growth %, build the role title Q to pass to prev_period
@@ -797,12 +805,16 @@ class FeedTrendingSkillsView(APIView):
             qs = _filter_by_country(qs, effective_country)
 
         role_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
+        role_qs = None
         if not skip_role_scope:
-            qs, role_info, _ = _get_role_scoped_qs(request.user, qs)
+            qs, role_info, _, role_qs = _get_role_scoped_qs(request.user, qs)
 
+        # Use narrow role-scoped queryset for skill aggregation when
+        # broadened to avoid polluting with unrelated roles' skills.
+        skills_qs = role_qs if (role_qs is not None and role_qs.exists()) else qs
         trending = _trending_skills_raw(
             days=30, limit=30, country=effective_country,
-            role_titles_hash=titles_hash, queryset=qs,
+            role_titles_hash=titles_hash, queryset=skills_qs,
         )
         trending_set = {t['skill'] for t in trending}
         trending_map = {t['skill']: t['count'] for t in trending}
@@ -1111,12 +1123,16 @@ class DashboardSkillGapView(APIView):
         )
         if effective_country:
             qs = _filter_by_country(qs, effective_country)
+        role_qs = None
         if not skip_role_scope:
-            qs, _, _ = _get_role_scoped_qs(request.user, qs)
+            qs, _, _, role_qs = _get_role_scoped_qs(request.user, qs)
 
+        # Use narrow role-scoped queryset for skill aggregation when
+        # broadened to avoid polluting with unrelated roles' skills.
+        skills_qs = role_qs if (role_qs is not None and role_qs.exists()) else qs
         trending = _trending_skills_raw(
             days=30, limit=12, country=effective_country,
-            role_titles_hash=titles_hash, queryset=qs,
+            role_titles_hash=titles_hash, queryset=skills_qs,
         )
 
         if not trending:
@@ -1191,9 +1207,10 @@ class DashboardMarketInsightsView(APIView):
             qs_last = _filter_by_country(qs_last, country)
 
         # Apply role scoping to both periods
+        role_qs_this = None
         if not skip_role_scope:
-            qs_this, _, _ = _get_role_scoped_qs(request.user, qs_this)
-            qs_last, _, _ = _get_role_scoped_qs(request.user, qs_last)
+            qs_this, _, _, role_qs_this = _get_role_scoped_qs(request.user, qs_this)
+            qs_last, _, _, _ = _get_role_scoped_qs(request.user, qs_last)
 
         this_week_count = qs_this.count()
         last_week_count = qs_last.count()
@@ -1203,9 +1220,11 @@ class DashboardMarketInsightsView(APIView):
             if last_week_count else 0.0
         )
 
+        # Use narrow role-scoped queryset for skill aggregation
+        skills_qs = role_qs_this if (role_qs_this is not None and role_qs_this.exists()) else qs_this
         trending = _trending_skills_raw(
             days=7, limit=5, country='' if is_global else country,
-            role_titles_hash=titles_hash, queryset=qs_this,
+            role_titles_hash=titles_hash, queryset=skills_qs,
         )
         top_skill = trending[0]['skill'] if trending else None
 

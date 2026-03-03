@@ -54,8 +54,7 @@ class ResumeChatStartView(APIView):
 
     def post(self, request):
         serializer = ResumeChatStartSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         source = serializer.validated_data['source']
         base_resume_id = serializer.validated_data.get('base_resume_id')
@@ -152,8 +151,7 @@ class ResumeChatSubmitView(APIView):
             )
 
         serializer = ResumeChatSubmitSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         action = serializer.validated_data['action']
         payload = serializer.validated_data.get('payload', {})
@@ -163,7 +161,7 @@ class ResumeChatSubmitView(APIView):
         except Exception as exc:
             logger.exception('Error processing chat step: chat=%s action=%s', pk, action)
             return Response(
-                {'detail': f'Error processing step: {exc}'},
+                {'detail': 'An unexpected error occurred while processing your request. Please try again.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -217,8 +215,7 @@ class ResumeChatTextMessageView(APIView):
             )
 
         serializer = ResumeChatTextMessageSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         user_text = serializer.validated_data['text']
 
@@ -227,7 +224,7 @@ class ResumeChatTextMessageView(APIView):
         except Exception as exc:
             logger.exception('Error processing text message: chat=%s', pk)
             return Response(
-                {'detail': f'Error processing message: {exc}'},
+                {'detail': 'An unexpected error occurred while processing your message. Please try again.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -262,8 +259,7 @@ class ResumeChatFinalizeView(APIView):
             )
 
         serializer = ResumeChatFinalizeSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         template = serializer.validated_data['template']
         fmt = serializer.validated_data['format']

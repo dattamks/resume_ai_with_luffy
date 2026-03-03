@@ -36,7 +36,7 @@ class CeleryWorkersView(APIView):
         except Exception as exc:
             logger.warning('Celery inspect failed: %s', exc)
             return Response(
-                {'error': 'Unable to reach Celery workers.'},
+                {'detail': 'Unable to reach Celery workers.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -82,7 +82,7 @@ class CeleryActiveTasksView(APIView):
         except Exception as exc:
             logger.warning('Celery inspect failed: %s', exc)
             return Response(
-                {'error': 'Unable to reach Celery workers.'},
+                {'detail': 'Unable to reach Celery workers.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -148,7 +148,7 @@ class CeleryQueueLengthView(APIView):
         redis_url = getattr(settings, 'CELERY_BROKER_URL', None)
         if not redis_url:
             return Response(
-                {'error': 'No Redis broker configured.'},
+                {'detail': 'No Redis broker configured.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -159,7 +159,7 @@ class CeleryQueueLengthView(APIView):
         except Exception as exc:
             logger.warning('Redis queue check failed: %s', exc)
             return Response(
-                {'error': 'Unable to check queue lengths.'},
+                {'detail': 'Unable to check queue lengths.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 

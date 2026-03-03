@@ -49,76 +49,76 @@ class RegisterView(APIView):
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
-        if serializer.is_valid():
-            agree_to_terms = serializer.validated_data.get('agree_to_terms', False)
-            agree_to_data_usage = serializer.validated_data.get('agree_to_data_usage', False)
-            marketing_opt_in = serializer.validated_data.get('marketing_opt_in', False)
+        serializer.is_valid(raise_exception=True)
 
-            user = serializer.save()
-            refresh = RefreshToken.for_user(user)
+        agree_to_terms = serializer.validated_data.get('agree_to_terms', False)
+        agree_to_data_usage = serializer.validated_data.get('agree_to_data_usage', False)
+        marketing_opt_in = serializer.validated_data.get('marketing_opt_in', False)
 
-            # ── Record consent audit trail ──
-            ip = self._get_client_ip(request)
-            ua = request.META.get('HTTP_USER_AGENT', '')
-            consent_entries = [
-                ConsentLog(
-                    user=user,
-                    consent_type=ConsentLog.CONSENT_TERMS_PRIVACY,
-                    agreed=agree_to_terms,
-                    ip_address=ip,
-                    user_agent=ua,
-                ),
-                ConsentLog(
-                    user=user,
-                    consent_type=ConsentLog.CONSENT_DATA_USAGE_AI,
-                    agreed=agree_to_data_usage,
-                    ip_address=ip,
-                    user_agent=ua,
-                ),
-                ConsentLog(
-                    user=user,
-                    consent_type=ConsentLog.CONSENT_MARKETING,
-                    agreed=marketing_opt_in,
-                    ip_address=ip,
-                    user_agent=ua,
-                ),
-            ]
-            ConsentLog.objects.bulk_create(consent_entries)
+        user = serializer.save()
+        refresh = RefreshToken.for_user(user)
 
-            # ── Update profile consent flags ──
-            profile = user.profile
-            profile.agreed_to_terms = agree_to_terms
-            profile.agreed_to_data_usage = agree_to_data_usage
-            profile.marketing_opt_in = marketing_opt_in
-            profile.save(update_fields=['agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in'])
+        # ── Record consent audit trail ──
+        ip = self._get_client_ip(request)
+        ua = request.META.get('HTTP_USER_AGENT', '')
+        consent_entries = [
+            ConsentLog(
+                user=user,
+                consent_type=ConsentLog.CONSENT_TERMS_PRIVACY,
+                agreed=agree_to_terms,
+                ip_address=ip,
+                user_agent=ua,
+            ),
+            ConsentLog(
+                user=user,
+                consent_type=ConsentLog.CONSENT_DATA_USAGE_AI,
+                agreed=agree_to_data_usage,
+                ip_address=ip,
+                user_agent=ua,
+            ),
+            ConsentLog(
+                user=user,
+                consent_type=ConsentLog.CONSENT_MARKETING,
+                agreed=marketing_opt_in,
+                ip_address=ip,
+                user_agent=ua,
+            ),
+        ]
+        ConsentLog.objects.bulk_create(consent_entries)
 
-            # ── Sync marketing opt-in to newsletter preference ──
-            if hasattr(user, 'notification_preferences'):
-                prefs = user.notification_preferences
-                prefs.newsletters_email = marketing_opt_in
-                prefs.save(update_fields=['newsletters_email'])
+        # ── Update profile consent flags ──
+        profile = user.profile
+        profile.agreed_to_terms = agree_to_terms
+        profile.agreed_to_data_usage = agree_to_data_usage
+        profile.marketing_opt_in = marketing_opt_in
+        profile.save(update_fields=['agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in'])
 
-            # ── Send email verification link ──
-            verification_token = EmailVerificationToken.create_for_user(user)
-            verify_url = f'{settings.FRONTEND_URL}/verify-email?token={verification_token.token}'
-            send_templated_email(
-                slug='email-verification',
-                recipient=user.email,
-                context={
-                    'username': user.username,
-                    'verify_url': verify_url,
-                },
-                fail_silently=True,
-            )
+        # ── Sync marketing opt-in to newsletter preference ──
+        if hasattr(user, 'notification_preferences'):
+            prefs = user.notification_preferences
+            prefs.newsletters_email = marketing_opt_in
+            prefs.save(update_fields=['newsletters_email'])
 
-            return Response({
-                'user': UserSerializer(user).data,
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'email_verification_required': True,
-                'message': 'Account created. Please check your email to verify your address.',
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # ── Send email verification link ──
+        verification_token = EmailVerificationToken.create_for_user(user)
+        verify_url = f'{settings.FRONTEND_URL}/verify-email?token={verification_token.token}'
+        send_templated_email(
+            slug='email-verification',
+            recipient=user.email,
+            context={
+                'username': user.username,
+                'verify_url': verify_url,
+            },
+            fail_silently=True,
+        )
+
+        return Response({
+            'user': UserSerializer(user).data,
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'email_verification_required': True,
+            'message': 'Account created. Please check your email to verify your address.',
+        }, status=status.HTTP_201_CREATED)
 
     @staticmethod
     def _get_client_ip(request):
@@ -324,16 +324,14 @@ class MeView(APIView):
             partial=True,
             context={'request': request},
         )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(UserSerializer(request.user).data)
 
     def delete(self, request):
         from .serializers import DeleteAccountSerializer
         serializer = DeleteAccountSerializer(data=request.data, context={'request': request})
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         user = request.user
         logger.warning('Account deletion requested for user=%s (id=%s)', user.username, user.id)
@@ -378,8 +376,7 @@ class ChangePasswordView(APIView):
             data=request.data,
             context={'request': request},
         )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save(update_fields=['password'])
@@ -426,8 +423,7 @@ class NotificationPreferenceView(APIView):
         from .models import NotificationPreference
         prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
         serializer = NotificationPreferenceSerializer(prefs, data=request.data, partial=True)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
@@ -443,8 +439,7 @@ class ForgotPasswordView(APIView):
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         email = serializer.validated_data['email']
 
@@ -495,8 +490,7 @@ class ResetPasswordView(APIView):
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         user = serializer.save()
         logger.info('Password reset completed for user=%s', user.username)

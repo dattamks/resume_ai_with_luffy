@@ -76,7 +76,8 @@ class RegisterViewTests(TestCase):
         }
         resp = self.client.post(self.url, payload, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('agree_to_terms', resp.data)
+        self.assertIn('detail', resp.data)
+        self.assertIn('agree_to_terms', resp.data.get('errors', {}))
 
     def test_register_missing_data_usage_consent(self):
         """Registration fails when agree_to_data_usage is not True."""
@@ -90,7 +91,8 @@ class RegisterViewTests(TestCase):
         }
         resp = self.client.post(self.url, payload, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('agree_to_data_usage', resp.data)
+        self.assertIn('detail', resp.data)
+        self.assertIn('agree_to_data_usage', resp.data.get('errors', {}))
 
     def test_register_consent_logged(self):
         """ConsentLog entries are created on successful registration."""

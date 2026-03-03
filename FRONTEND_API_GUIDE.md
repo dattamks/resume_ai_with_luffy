@@ -218,13 +218,15 @@ Creates a new user account and returns tokens immediately (auto-login).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `username` | string | ✅ | Unique username |
+| `username` | string | ✅ | Unique username (3–30 chars, letters/digits/underscore only, no reserved words — see below) |
 | `email` | string | ✅ | Valid email address |
 | `password` | string | ✅ | Min 8 chars, can't be too common/numeric |
 | `password2` | string | ✅ | Must match `password` |
 | `agree_to_terms` | boolean | ✅ | Must be `true` — Terms of Service & Privacy Policy |
 | `agree_to_data_usage` | boolean | ✅ | Must be `true` — AI data processing & Data Usage Policy |
 | `marketing_opt_in` | boolean | ❌ | Optional (default `false`) — marketing emails & newsletters |
+
+> **Username rules (v0.26.0):** `username` must be **3–30 characters**, contain only **letters, digits, and underscores** (`^[a-zA-Z0-9_]+$`), and must **not** be a reserved word. Reserved words: `admin`, `root`, `superuser`, `api`, `system`, `support`, `help`, `info`, `null`, `undefined`, `iluffy`, `luffy`. The same rules apply to `POST /api/v1/auth/me/` (profile update) and `POST /api/v1/auth/google/complete/`.
 
 **Response (201 Created):**
 ```json
@@ -284,13 +286,23 @@ Creates a new user account and returns tokens immediately (auto-login).
 **Errors (400):**
 ```json
 {
-  "username": ["A user with that username already exists."],
-  "password": ["This password is too common."],
-  "password2": ["Passwords do not match."],
-  "agree_to_terms": ["You must agree to the Terms of Service and Privacy Policy."],
-  "agree_to_data_usage": ["You must acknowledge the Data Usage & AI Disclaimer."]
+  "detail": "A user with that username already exists.",
+  "errors": {
+    "username": ["A user with that username already exists."],
+    "password": ["This password is too common."],
+    "password2": ["Passwords do not match."],
+    "agree_to_terms": ["You must agree to the Terms of Service and Privacy Policy."],
+    "agree_to_data_usage": ["You must acknowledge the Data Usage & AI Disclaimer."]
+  }
 }
 ```
+
+Username-specific validation errors that may appear in `errors.username`:
+- `"Username must be at least 3 characters long."`
+- `"Username must be at most 30 characters long."`
+- `"Username may only contain letters, digits, and underscores."`
+- `"This username is reserved."`
+- `"A user with that username already exists."`
 
 > **Consent audit:** Three `ConsentLog` entries are recorded per registration (terms, data usage, marketing) with the user's IP address, user agent, and timestamp. This log is immutable — used for GDPR/compliance auditing.
 >
@@ -2878,18 +2890,48 @@ const STEP_PROGRESS = {
 
 ### Error response formats
 
-**Single error (most endpoints):**
+> **v0.39.0**: All error responses now follow a **standardized shape** via a custom DRF exception handler. The frontend only needs to check `response.data.detail` for the human-readable summary.
+
+**Standard error shape (all endpoints, all status codes):**
 ```json
 {
-  "detail": "Human-readable error message."
+  "detail": "Human-readable error summary.",
+  "errors": {
+    "field_name": ["Specific field error message."]
+  }
 }
 ```
 
-**Validation errors (400 on create/submit):**
+| Key | Type | Always present? | Description |
+|-----|------|-----------------|-------------|
+| `detail` | `string` | **Yes** | Single human-readable error message. Always a string. |
+| `errors` | `object` | Only for 400 validation errors | Field-level errors: `{ field: [messages] }`. Absent for 401/403/404/409/500. |
+| *(extra keys)* | varies | Only on specific endpoints | Some 402/403 responses include enrichment fields like `balance`, `cost`, `limit`, `used`. |
+
+**Example — validation error (400):**
 ```json
 {
-  "resume_file": ["Only PDF files are accepted."],
-  "jd_text": ["Job description text is required when input type is \"text\"."]
+  "detail": "Username must be at least 3 characters.",
+  "errors": {
+    "username": ["Username must be at least 3 characters."],
+    "email": ["An account with this email already exists."]
+  }
+}
+```
+
+**Example — single error (401/403/404/409):**
+```json
+{
+  "detail": "Analysis not found."
+}
+```
+
+**Example — enriched error (402):**
+```json
+{
+  "detail": "Insufficient credits.",
+  "balance": 0,
+  "cost": 1
 }
 ```
 
@@ -2919,24 +2961,32 @@ function handleApiError(error) {
 
   const { status, data } = error.response;
 
+  // `data.detail` is ALWAYS a string on error responses (standardized in v0.39.0)
+  const message = data.detail || 'An unexpected error occurred.';
+
+  // Field-level errors (only present on 400 validation errors)
+  const fieldErrors = data.errors || null;  // { field: [msgs] } or null
+
   switch (status) {
     case 400:
-      // Validation errors — may be field-level or detail
-      if (data.detail) return { type: 'validation', message: data.detail };
-      // Field-level errors: { field: [errors] }
-      const fieldErrors = Object.entries(data)
-        .map(([field, msgs]) => `${field}: ${msgs.join(', ')}`)
-        .join('\n');
-      return { type: 'validation', message: fieldErrors };
+      return { type: 'validation', message, fieldErrors };
 
     case 401:
       return { type: 'auth', message: 'Session expired. Please log in again.' };
 
+    case 402:
+      // May include `balance`, `cost` for credit errors
+      return { type: 'payment', message, balance: data.balance, cost: data.cost };
+
+    case 403:
+      // May include `limit`, `used` for quota errors
+      return { type: 'forbidden', message, limit: data.limit, used: data.used };
+
     case 404:
-      return { type: 'not_found', message: 'Resource not found.' };
+      return { type: 'not_found', message };
 
     case 409:
-      return { type: 'conflict', message: data.detail || 'Request conflicts with current state.' };
+      return { type: 'conflict', message };
 
     case 429:
       const retryAfter = error.response.headers['retry-after'] || '60';
@@ -2946,7 +2996,7 @@ function handleApiError(error) {
       return { type: 'service', message: 'Service temporarily unavailable. Try again later.' };
 
     default:
-      return { type: 'unknown', message: data.detail || 'An unexpected error occurred.' };
+      return { type: 'unknown', message };
   }
 }
 ```
@@ -6262,7 +6312,7 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 **Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. The backend uses a hybrid two-layer role scoping system:
 - **Layer 1 — LLM Role Map:** A `RoleFamily` record (generated asynchronously via LLM when the user's `JobSearchProfile` is created/updated) provides a curated list of related job titles.
 - **Layer 2 — Embedding proximity:** Jobs within cosine distance ≤ 0.40 of the user's resume embedding are included, catching synonyms the map may have missed.
-- If fewer than 5 jobs match after scoping, the filter auto-broadens to all jobs in the country.
+- If fewer than 5 jobs match after scoping, the **job listing** auto-broadens to all jobs in the country (so the user still sees results). However, **skill aggregation** (`top_skills`, `trending-skills`, `skill-gap`, `market-insights`) always uses the narrow role-scoped queryset — this prevents unrelated skills (e.g. React/Node.js for a Data Analyst) from appearing in top skills.
 
 Pass `?country=` to filter for a specific country, or `?country=all` for global data. Pass `?role=all` to skip role scoping entirely (show all roles).
 
@@ -6343,7 +6393,7 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 
 🔒 Requires auth. Compares the user's skills against market demand. **Personalised — not cached.**
 
-**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as insights (Layer 1: LLM Role Map + Layer 2: embedding proximity). Pass `?role=all` to skip role scoping.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as insights (Layer 1: LLM Role Map + Layer 2: embedding proximity). Skill aggregation always uses the narrow role-scoped queryset even when the job count is low (see §30.2 broadening note). Pass `?role=all` to skip role scoping.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -6522,7 +6572,7 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 
 🔒 Requires auth. Data for a radar/spider chart comparing user skills vs market demand.
 
-**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as feed insights (see §30.2). Pass `?role=all` to skip role scoping.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as feed insights (see §30.2). Skill aggregation always uses the narrow role-scoped queryset even when broadened. Pass `?role=all` to skip role scoping.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -6553,7 +6603,7 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 
 🔒 Requires auth. Short summary of this week vs last week. **Cached 60 minutes per country + role.**
 
-**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as feed insights (see §30.2). Pass `?role=all` to skip role scoping.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as feed insights (see §30.2). Skill aggregation (`top_skills`, `top_skill_this_week`) always uses the narrow role-scoped queryset even when broadened. Pass `?role=all` to skip role scoping.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|

@@ -5,6 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.39.0] — 2026-03-03
+
+### Standardized Error Responses & Feed Skills Fix
+
+#### Added — Custom DRF Exception Handler (`resume_ai/exception_handler.py`)
+- All API error responses now return a standardized shape: `{"detail": "string", "errors": {...}}`.
+- `detail` is always a human-readable string. `errors` (field-level dict) is only present on 400 validation errors.
+- Extra keys like `balance`, `cost`, `limit`, `used` are preserved for enriched errors.
+- Registered in `REST_FRAMEWORK['EXCEPTION_HANDLER']` in settings.
+
+#### Changed — Views: `raise_exception=True`
+- Converted all 18 views (accounts, payments, analyzer, chat) from manual `serializer.errors` returns to `serializer.is_valid(raise_exception=True)` — errors now flow through the custom handler.
+- Fixed 5 Celery admin views using `'error'` key → `'detail'`.
+- Fixed 2 chat views leaking raw Python exception strings to API clients → generic messages.
+
+#### Added — Username Validation (`accounts/serializers.py`)
+- Shared `_validate_username_common()` enforcing: min 3, max 30 chars, `^[a-zA-Z0-9_]+$`, reserved word blocklist.
+- Applied to `RegisterSerializer`, `UpdateUserSerializer`, `GoogleCompleteSerializer`.
+
+#### Added — Serializer Edge-Case Tests (`accounts/test_serializer_edge_cases.py`)
+- 46 new tests across 3 test classes covering username, email, password, country code, mobile number validation, and standardized error shape.
+
+#### Fixed — Feed Skills Scoping When Broadened
+- **Bug:** When `_get_role_scoped_qs` auto-broadened (< 5 role-matched jobs), `top_skills` / trending-skills / skill-gap / market-insights were aggregated from ALL jobs — causing irrelevant skills (e.g. React, Node.js, CSS) to appear for Data Analyst roles.
+- **Fix:** `_get_role_scoped_qs` now returns a 4th value (`role_qs`) — the narrow pre-broadened queryset. Skill aggregation in `FeedInsightsView`, `FeedTrendingSkillsView`, skill-gap radar, and `DashboardMarketInsightsView` now uses this narrow queryset. Job listing counts remain broadened.
+
+#### Documentation
+- `FRONTEND_API_GUIDE.md` §14 updated with standardized error shape, JavaScript error handler, username validation rules.
+- `FRONTEND_API_GUIDE.md` §30.2/30.3/30.7/30.8 updated with skill-scoping clarification.
+
+---
+
 ## [0.38.0] — 2026-03-05
 
 ### Role-Based Feed & Dashboard Scoping

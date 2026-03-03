@@ -226,6 +226,7 @@ CELERY_BEAT_SCHEDULE = {
 
 # DRF
 REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'resume_ai.exception_handler.standardized_exception_handler',
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),

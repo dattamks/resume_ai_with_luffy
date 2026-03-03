@@ -546,7 +546,7 @@ On resume upload:
 ### Code Quality
 
 - [x] **Consolidate inline imports** — Moved `from accounts.services import ...` to top-level in `analyzer/views.py` (9 inline → 1 top-level). `tasks.py` kept inline per Celery best practice.
-- [ ] **⚪ DEFERRED — Standardize error response format** — Some views use `raise_exception=True`, others return `serializer.errors` manually. Pick one pattern.
+- [x] **Standardize error response format** — Custom DRF exception handler (`resume_ai/exception_handler.py`) ensures all errors return `{detail, errors}`. All views now use `raise_exception=True`. Celery views fixed `'error'`→`'detail'`. Chat views no longer leak exception strings to clients.
 - [x] **`except (ValueError, Exception)` cleanup** — No longer present in codebase *(already cleaned up)*
 - [x] **PDF file validation** — Added `_validate_pdf_magic()` checking `%PDF` magic bytes before processing *(v0.23.0)*
 - [x] **DOCX renderer lacks input sanitization** — Added `_safe()` to strip control chars/null bytes from all user data *(v0.23.0)*
@@ -587,7 +587,7 @@ On resume upload:
 ### P3 — Low
 
 - [x] **Account deletion cascade** — Tests verify wallet + transaction cleanup *(v0.23.0)*
-- [ ] **⚪ DEFERRED — Serializer edge cases** — No tests for `RegisterSerializer` with blank email, duplicate email, invalid country code/mobile number
+- [x] **Serializer edge cases** — 46 tests in `test_serializer_edge_cases.py`: username (min 3, max 30, reserved words, invalid chars), email (blank, duplicate case-insensitive), password (weak, numeric, mismatch), country code/mobile format, standardized error shape.
 
 ---
 
