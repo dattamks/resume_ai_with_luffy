@@ -1,13 +1,14 @@
 """
-Tests for resume parsing — extracting structured data from resume text.
+Tests for resume parsed_content — structured data on Resume/ResumeAnalysis.
 
 Covers:
-  - parse_resume_text() — LLM call, validation, error handling
-  - Pipeline integration — _step_resume_parse in ResumeAnalyzer
+  - Pipeline integration — Phase B (STEP_RESUME_PARSE removed)
   - parsed_content on ResumeAnalysis model
   - Chat builder _prefill_from_resume fallback to parsed_content
   - Serializer inclusion of parsed_content
-  - Soft-delete clears parsed_content
+
+Note: parse_resume_text() tests removed in v0.36.0 — module deleted,
+functionality merged into resume_understanding.py.
 """
 import copy
 import uuid
@@ -21,7 +22,6 @@ from rest_framework import status
 
 from accounts.models import Plan, Wallet
 from analyzer.models import ResumeAnalysis, Resume, GeneratedResume, LLMResponse
-from analyzer.services.resume_parser import parse_resume_text, RESUME_PARSE_SYSTEM_PROMPT
 from analyzer.services.resume_chat_service import _prefill_from_resume, _empty_resume_data
 
 
@@ -159,112 +159,9 @@ def _create_analysis(user, with_parsed=False, with_resume_text=True):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. parse_resume_text() unit tests
+# 1. parse_resume_text() tests — REMOVED in v0.36.0
+#    Module resume_parser.py deleted; functionality in resume_understanding.py
 # ══════════════════════════════════════════════════════════════════════════════
-
-class ParseResumeTextTests(TestCase):
-    """Test the parse_resume_text() function."""
-
-    @override_settings(OPENROUTER_API_KEY='test-key')
-    @patch('analyzer.services.resume_parser.get_openai_client')
-    def test_successful_parse(self, mock_get_client):
-        """parse_resume_text returns validated structured data on success."""
-        import json
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(SAMPLE_PARSED_CONTENT)
-        mock_client.chat.completions.create.return_value = mock_response
-
-        result = parse_resume_text(SAMPLE_RESUME_TEXT)
-
-        self.assertIn('parsed', result)
-        self.assertIn('raw', result)
-        self.assertIn('model', result)
-        self.assertIn('duration', result)
-        self.assertEqual(result['parsed']['contact']['name'], 'Jane Smith')
-        self.assertEqual(len(result['parsed']['experience']), 1)
-        self.assertEqual(len(result['parsed']['education']), 1)
-
-    @override_settings(OPENROUTER_API_KEY='test-key')
-    @patch('analyzer.services.resume_parser.get_openai_client')
-    def test_parse_with_code_fences(self, mock_get_client):
-        """parse_resume_text strips markdown code fences."""
-        import json
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = f'```json\n{json.dumps(SAMPLE_PARSED_CONTENT)}\n```'
-        mock_client.chat.completions.create.return_value = mock_response
-
-        result = parse_resume_text(SAMPLE_RESUME_TEXT)
-        self.assertEqual(result['parsed']['contact']['name'], 'Jane Smith')
-
-    def test_empty_text_raises(self):
-        """parse_resume_text raises ValueError for empty text."""
-        with self.assertRaises(ValueError) as ctx:
-            parse_resume_text('')
-        self.assertIn('empty', str(ctx.exception).lower())
-
-    def test_whitespace_only_raises(self):
-        """parse_resume_text raises ValueError for whitespace-only text."""
-        with self.assertRaises(ValueError) as ctx:
-            parse_resume_text('   \n\t  ')
-        self.assertIn('empty', str(ctx.exception).lower())
-
-    @override_settings(OPENROUTER_API_KEY='')
-    def test_no_api_key_raises(self):
-        """parse_resume_text raises if no API key configured."""
-        with self.assertRaises(ValueError) as ctx:
-            parse_resume_text('Some resume text')
-        self.assertIn('OPENROUTER_API_KEY', str(ctx.exception))
-
-    @override_settings(OPENROUTER_API_KEY='test-key')
-    @patch('analyzer.services.resume_parser.get_openai_client')
-    def test_invalid_json_with_repair(self, mock_get_client):
-        """parse_resume_text attempts repair on invalid JSON."""
-        import json
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        # Return valid JSON with trailing comma (common LLM issue)
-        content = json.dumps(SAMPLE_PARSED_CONTENT)
-        mock_response.choices[0].message.content = content
-        mock_client.chat.completions.create.return_value = mock_response
-
-        result = parse_resume_text(SAMPLE_RESUME_TEXT)
-        self.assertIsNotNone(result['parsed'])
-
-    @override_settings(OPENROUTER_API_KEY='test-key')
-    @patch('analyzer.services.resume_parser.get_openai_client')
-    def test_schema_validation_failure(self, mock_get_client):
-        """parse_resume_text raises on schema validation failure."""
-        import json
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        # Missing required contact.name
-        bad_content = {
-            'contact': {'name': '', 'email': 'x@x.com'},
-            'summary': 'test',
-            'experience': [],
-            'education': [],
-            'skills': {'technical': []},
-        }
-        mock_response.choices[0].message.content = json.dumps(bad_content)
-        mock_client.chat.completions.create.return_value = mock_response
-
-        with self.assertRaises(ValueError):
-            parse_resume_text(SAMPLE_RESUME_TEXT)
-
-    def test_system_prompt_content(self):
-        """System prompt emphasizes extraction over fabrication."""
-        self.assertIn('extract', RESUME_PARSE_SYSTEM_PROMPT.lower())
-        self.assertIn('DO NOT fabricate', RESUME_PARSE_SYSTEM_PROMPT)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

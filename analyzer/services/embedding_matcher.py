@@ -1,16 +1,14 @@
 """
 Embedding-based job matching service (Phase 12).
 
-Replaces LLM-based batch scoring from job_matcher.py with pgvector
-cosine similarity. One fast SQL query per alert instead of one LLM
-call per 15-job batch.
+Replaces LLM-based batch scoring with pgvector cosine similarity.
+One fast SQL query per alert instead of one LLM call per 15-job batch.
 
 Includes a feedback learning loop: past user feedback (with reasons)
 adjusts relevance scores via company boosting and keyword-based
 penalty/boost heuristics.
 
-Fallback: If pgvector is not available (SQLite dev), falls back to
-the original LLM-based matching via job_matcher.py.
+Requires PostgreSQL with pgvector extension. No SQLite fallback.
 """
 import logging
 import re

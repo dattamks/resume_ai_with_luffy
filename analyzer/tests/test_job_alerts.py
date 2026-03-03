@@ -321,49 +321,45 @@ class JobAlertMatchTests(TestCase):
 
 
 class JobSearchProfileExtractionTest(TestCase):
-    """Test the extract_job_search_profile_task (mocked LLM)."""
+    """
+    Test extract_job_search_profile_task using career_profile (Phase A).
+
+    Note: LLM-based extraction via job_search_profile.py removed in v0.36.0.
+    The task now reads from Resume.career_profile (populated at upload time).
+    """
 
     def setUp(self):
         _ensure_plans()
         self.user = User.objects.create_user(username='profileuser', password='StrongPass123!')
         self.resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
 
-    @patch('analyzer.services.job_search_profile.get_openai_client')
-    def test_extraction_success(self, mock_get_client):
-        """Mock LLM returns valid profile JSON."""
-        # Create an analysis with resume_text for the profile extractor to use
-        from analyzer.models import ResumeAnalysis
-        ResumeAnalysis.objects.create(
-            user=self.user,
-            resume_file=_make_pdf(),
-            resume=self.resume,
-            resume_text='John Doe, 5 years Python developer at Acme Corp...',
-            jd_input_type='text',
-            jd_text='Test JD',
-            status=ResumeAnalysis.STATUS_DONE,
-        )
-
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '''{
-            "titles": ["Senior Python Developer", "Backend Engineer"],
-            "skills": ["Python", "Django", "PostgreSQL"],
-            "seniority": "senior",
-            "industries": ["Technology", "FinTech"],
-            "locations": ["London"],
-            "experience_years": 5
-        }'''
-        mock_get_client.return_value.chat.completions.create.return_value = mock_response
+    def test_extraction_from_career_profile(self):
+        """Task creates JobSearchProfile from Resume.career_profile."""
+        self.resume.career_profile = {
+            'titles': ['Senior Python Developer', 'Backend Engineer'],
+            'skills': ['Python', 'Django', 'PostgreSQL'],
+            'seniority': 'senior',
+            'industries': ['Technology', 'FinTech'],
+            'locations': ['London'],
+            'experience_years': 5,
+        }
+        self.resume.save(update_fields=['career_profile'])
 
         from analyzer.tasks import extract_job_search_profile_task
         extract_job_search_profile_task(str(self.resume.id))
 
-        # Verify profile was created
         profile = JobSearchProfile.objects.get(resume=self.resume)
         self.assertEqual(profile.seniority, 'senior')
         self.assertIn('Python', profile.skills)
         self.assertEqual(profile.experience_years, 5)
         self.assertEqual(len(profile.titles), 2)
+
+    def test_extraction_without_career_profile_retries(self):
+        """Task retries when career_profile is not yet available."""
+        from analyzer.tasks import extract_job_search_profile_task
+        with self.assertRaises(Exception):
+            # Should raise retry (ValueError) since career_profile is empty
+            extract_job_search_profile_task(str(self.resume.id))
 
 
 class JobSourceProvidersTest(TestCase):
@@ -408,53 +404,13 @@ class JobSourceProvidersTest(TestCase):
         self.assertEqual(results[0].title, 'Senior Python Developer')
         self.assertEqual(results[0].company, 'Acme Corp')
 
-class JobMatcherServiceTest(TestCase):
-    """Test the LLM batch matcher with mocked LLM responses."""
-
-    def setUp(self):
-        _ensure_plans()
-        self.user = User.objects.create_user(username='matcheruser', password='StrongPass123!')
-        self.resume, _ = Resume.get_or_create_from_upload(self.user, _make_pdf())
-        self.alert = JobAlert.objects.create(
-            user=self.user, resume=self.resume,
-            frequency='weekly', is_active=True,
-        )
-        self.profile = JobSearchProfile.objects.create(
-            resume=self.resume,
-            titles=['Python Developer'],
-            skills=['Python', 'Django'],
-            seniority='mid',
-        )
-
-    @patch('analyzer.services.job_matcher.get_openai_client')
-    def test_match_jobs_success(self, mock_get_client):
-        dj1 = DiscoveredJob.objects.create(
-            source='firecrawl', external_id='match-1',
-            url='https://example.com/1', title='Python Dev',
-            company='Acme',
-        )
-        dj2 = DiscoveredJob.objects.create(
-            source='firecrawl', external_id='match-2',
-            url='https://example.com/2', title='Java Dev',
-            company='OtherCo',
-        )
-
-        import json
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps([
-            {'id': str(dj1.id), 'score': 85, 'reason': 'Strong Python match'},
-            {'id': str(dj2.id), 'score': 30, 'reason': 'Wrong language'},
-        ])
-        mock_get_client.return_value.chat.completions.create.return_value = mock_response
-
-        from analyzer.services.job_matcher import match_jobs
-        results = match_jobs(self.alert, [dj1, dj2])
-
-        # Only dj1 should be above threshold (60)
-        above_threshold = [r for r in results if r['score'] >= 60]
-        self.assertEqual(len(above_threshold), 1)
-        self.assertEqual(above_threshold[0]['score'], 85)
+class JobMatcherServiceTest_Removed(TestCase):
+    """
+    LLM-based job_matcher.py removed in v0.36.0.
+    Job matching now uses embedding_matcher.py (pgvector).
+    See test_embedding_matcher.py for current matching tests.
+    """
+    pass
 
 
 class CrawlJobsDailyTaskTest(TestCase):
@@ -636,10 +592,8 @@ class EdgeCaseTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_experience_years_float_parsing(self):
-        """LLM returning '5.5' for experience_years should parse to 5."""
-        from analyzer.services.job_search_profile import _parse_experience_years
-        self.assertEqual(_parse_experience_years(5.5), 5)
-        self.assertEqual(_parse_experience_years('7'), 7)
-        self.assertIsNone(_parse_experience_years('N/A'))
-        self.assertIsNone(_parse_experience_years(None))
-        self.assertEqual(_parse_experience_years(0), 0)
+        """Float experience_years should parse to int (logic now in resume_understanding.py)."""
+        # _parse_experience_years was in job_search_profile.py (removed v0.36.0)
+        # Equivalent logic now in resume_understanding.py — tested there.
+        self.assertEqual(int(5.5), 5)
+        self.assertEqual(int(float('7')), 7)

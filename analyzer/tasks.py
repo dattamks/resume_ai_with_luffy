@@ -857,30 +857,17 @@ def extract_job_search_profile_task(self, resume_id):
             compute_resume_embedding_task.delay(str(resume_id))
             return
 
-        # Fallback: LLM extraction for resumes uploaded before Phase A
-        from .services.job_search_profile import extract_search_profile
-        result = extract_search_profile(resume)
-
-        # Upsert JobSearchProfile
-        profile, _ = JobSearchProfile.objects.update_or_create(
-            resume=resume,
-            defaults={
-                'titles': result['titles'],
-                'skills': result['skills'],
-                'seniority': result['seniority'],
-                'industries': result['industries'],
-                'locations': result['locations'],
-                'experience_years': result['experience_years'],
-                'raw_extraction': result['raw_extraction'],
-            },
+        # No career_profile available — resume was uploaded before Phase A.
+        # Trigger process_resume_upload_task to populate it, then retry.
+        logger.warning(
+            'Resume %s has no career_profile — triggering upload processing',
+            resume_id,
         )
-        logger.info(
-            'JobSearchProfile saved (LLM fallback): resume=%s seniority=%s titles=%s',
-            resume_id, profile.seniority, profile.titles[:2],
+        process_resume_upload_task.delay(str(resume_id))
+        raise self.retry(
+            exc=ValueError('career_profile not yet available'),
+            countdown=30,
         )
-
-        # Phase 12: Chain embedding computation
-        compute_resume_embedding_task.delay(str(resume_id))
 
     except ValueError as exc:
         logger.warning('Profile extraction failed (resume=%s): %s', resume_id, exc)

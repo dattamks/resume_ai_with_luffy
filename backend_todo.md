@@ -748,8 +748,8 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 - [x] **Trigger on upload** — In `AnalyzeResumeView.post()`, after resume save, dispatch `process_resume_upload_task.delay(resume.id)` if resume is new (not a duplicate hash). Also trigger from any future standalone upload endpoint. *(v0.35.0)*
 - [x] **Update `extract_job_search_profile_task`** — Remove LLM call. Instead, read from `Resume.parsed_content` career profile fields and save to `JobSearchProfile`. Becomes a pure DB copy. *(v0.35.0)*
 - [x] **Update `compute_resume_embedding_task`** — No change, but now chains from `process_resume_upload_task` instead of `extract_job_search_profile_task` *(v0.35.0)*
-- [ ] **Deprecate standalone `resume_parser.py`** — Functionality merged into `resume_understanding.py` *(superseded but file still exists)*
-- [ ] **Deprecate standalone `job_search_profile.py` LLM call** — Profile data comes from upload-time parse *(superseded but file still exists)*
+- [x] **Deprecate standalone `resume_parser.py`** — Functionality merged into `resume_understanding.py` *(deleted in v0.36.0)*
+- [x] **Deprecate standalone `job_search_profile.py` LLM call** — Profile data comes from upload-time parse *(deleted in v0.36.0)*
 
 #### Endpoints Impacted
 
@@ -837,8 +837,8 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 #### Backend Changes
 
 - [x] **Remove `_fallback_llm_matching()`** from `embedding_matcher.py` *(v0.35.0)*
-- [ ] **Deprecate / remove `job_matcher.py`** — No longer called from anywhere *(file still exists, still imported in tests)*
-- [ ] **Ensure dev environments use PostgreSQL** — Document Docker-based local PostgreSQL setup as required
+- [x] **Deprecate / remove `job_matcher.py`** — No longer called from anywhere *(deleted in v0.36.0)*
+- [x] **Ensure dev environments use PostgreSQL** — Document Docker-based local PostgreSQL setup as required *(v0.36.0 — README.md updated)*
 
 #### Endpoints Impacted
 

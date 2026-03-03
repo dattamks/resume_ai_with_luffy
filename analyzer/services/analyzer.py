@@ -6,8 +6,6 @@ from ..models import ResumeAnalysis, LLMResponse
 from .pdf_extractor import PDFExtractor
 from .jd_fetcher import JDFetcher
 from .ai_providers.factory import get_ai_provider
-# Phase B: resume_parser import removed — parsing now happens at upload time
-# from .resume_parser import parse_resume_text
 
 logger = logging.getLogger('analyzer')
 

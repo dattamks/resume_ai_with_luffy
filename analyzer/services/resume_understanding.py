@@ -1,12 +1,12 @@
 """
 Merged resume understanding service — Phase A.
 
-Combines resume structured parsing (from resume_parser.py) and job search
-profile extraction (from job_search_profile.py) into a single LLM call.
+Combines resume structured parsing and job search profile extraction into
+a single LLM call.
 
-Previously these were 2 separate LLM calls asking essentially the same
-question — "who is this person?" — in different formats. This module
-merges them into one prompt that returns BOTH:
+Previously these were 2 separate LLM calls (removed in v0.36.0) asking
+essentially the same question — "who is this person?" — in different
+formats. This module merges them into one prompt that returns BOTH:
   1. Structured resume data (contact, experience, education, skills, etc.)
   2. Career profile (titles, seniority, industries, locations, experience_years)
 

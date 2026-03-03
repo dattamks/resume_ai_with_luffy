@@ -174,7 +174,6 @@ resume_ai_with_luffy/
 │       ├── pdf_extractor.py   #     PDF text extraction (pdfplumber)
 │       ├── jd_fetcher.py      #     JD URL scraping (requests + BeautifulSoup + Firecrawl)
 │       ├── resume_understanding.py#  Combined resume parsing + career profile at upload (LLM)
-│       ├── resume_parser.py   #     (Legacy) Structured resume data extraction
 │       ├── resume_generator.py#     LLM-based resume rewriting
 │       ├── pdf_report.py      #     Analysis report PDF generation
 │       ├── template_registry.py#    Resume template → renderer mapping
@@ -187,10 +186,8 @@ resume_ai_with_luffy/
 │       ├── resume_chat_service.py#  Conversational builder session logic
 │       ├── interview_prep.py  #     Interview prep from DB question bank (instant, no LLM)
 │       ├── cover_letter.py    #     Cover letter generation
-│       ├── job_search_profile.py#   Resume → job search profile extraction
-│       ├── job_matcher.py     #     (Legacy) Job matching with relevance scoring
 │       ├── embedding_service.py#    Text embedding generation
-│       ├── embedding_matcher.py#    Vector similarity matching only (pgvector, no LLM fallback)
+│       ├── embedding_matcher.py#    Vector similarity matching (pgvector)
 │       └── ai_providers/      #     LLM provider abstraction:
 │           ├── factory.py     #       get_ai_provider() → configured provider
 │           └── openrouter_provider.py # OpenRouter API client
