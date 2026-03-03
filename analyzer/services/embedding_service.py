@@ -152,8 +152,8 @@ def compute_resume_embedding(resume) -> list[float]:
     """
     Compute an embedding for a resume's text content.
 
-    Extracts text from the latest completed analysis or falls back to
-    PDF extraction. Stores the embedding on the JobSearchProfile.
+    Uses the resume's own text (populated at upload time) for a clean,
+    JD-agnostic embedding. Falls back to analysis text or PDF extraction.
 
     Args:
         resume: Resume model instance.
@@ -199,10 +199,18 @@ def compute_job_embedding(title: str, company: str = '', description: str = '') 
 
 def _get_resume_text(resume) -> str:
     """
-    Get resume text from the latest completed analysis.
-    Falls back to PDF extraction if no analysis exists.
+    Get resume text for embedding computation.
+
+    Priority:
+    1. resume.resume_text (populated at upload time by resume understanding)
+    2. Latest completed analysis resume_text (legacy fallback)
+    3. PDF extraction (last resort)
     """
-    # Try latest completed analysis
+    # Primary — upload-time extracted text (since v0.35.0)
+    if hasattr(resume, 'resume_text') and resume.resume_text and resume.resume_text.strip():
+        return resume.resume_text
+
+    # Fallback — latest completed analysis
     latest = (
         resume.analyses
         .filter(status='done', deleted_at__isnull=True)
@@ -214,7 +222,7 @@ def _get_resume_text(resume) -> str:
     if latest:
         return latest
 
-    # Fallback — extract from PDF
+    # Last resort — extract from PDF
     try:
         from .pdf_extractor import PDFExtractor
         extractor = PDFExtractor()

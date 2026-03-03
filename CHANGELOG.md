@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.37.0] — 2026-03-03
+
+### Generated Resumes Are First-Class Resumes
+
+#### Added — Auto-Create Resume from GeneratedResume (`analyzer/tasks.py`)
+- New helper `_create_resume_from_generated()`: when a resume generation (analysis-based or chat builder) completes, a full `Resume` record is automatically created from the output.
+- The auto-created Resume has `processing_status=done`, pre-populated `parsed_content`, `career_profile`, and `resume_text` — no second LLM call needed.
+- SHA-256 deduplication: if the generated file hash matches an existing Resume for the same user, the system links to the existing record instead of creating a duplicate.
+- Auto-default: if the user has no default resume, the auto-created Resume is set as default.
+- `JobSearchProfile` auto-created from career profile (titles, skills, seniority, locations).
+- `ResumeVersion` entry created for version tracking.
+- `compute_resume_embedding_task` chained for pgvector similarity matching.
+- Best-effort: if auto-creation fails, the generated resume itself is still marked as done.
+
+#### Added — Resume FK on GeneratedResume (`analyzer/models.py`)
+- New `resume` FK on `GeneratedResume` → `Resume` (nullable, SET_NULL).
+- Migration: `0032_add_resume_fk_to_generated_resume.py`.
+
+#### Added — Builder Task Auto-Creates Resume (`analyzer/tasks.py`)
+- `render_builder_resume_task` now also calls `_create_resume_from_generated()` after successful render.
+
+#### Added — Helper Functions (`analyzer/tasks.py`)
+- `_build_career_profile(resume_content, analysis)`: derives career profile (titles, skills, seniority, industries, locations, experience_years) from structured resume content.
+- `_resume_content_to_text(resume_content)`: converts structured JSON to plain text for embedding computation.
+
+#### Changed — Serializer (`analyzer/serializers.py`)
+- `GeneratedResumeSerializer` now includes `resume` field (UUID, read-only).
+
+#### Added — Tests (`analyzer/tests/test_generated_resume_linkage.py`)
+- 27 new tests: unit tests for `_build_career_profile` and `_resume_content_to_text`, integration tests for auto-creation (happy path, dedup, default handling, DOCX→PDF, best-effort error handling, embedding chaining), serializer tests, full task integration tests for both generation and builder tasks.
+
+#### Documentation
+- `FRONTEND_API_GUIDE.md` updated: version bumped to v0.37.0, `resume` field added to all GeneratedResume response schemas, TypeScript interface updated, auto-creation behavior documented in §19 and §29.6, changelog entries added.
+
+---
+
+## [0.36.0] — 2026-03-03
+
+### Code Cleanup — Deprecated Module Removal
+
+#### Removed — Deprecated Service Modules
+- Deleted `analyzer/services/resume_parser.py` — functionality consolidated into `resume_understanding.py`.
+- Deleted `analyzer/services/job_search_profile.py` — functionality consolidated into `resume_understanding.py`.
+- Deleted `analyzer/services/job_matcher.py` — functionality consolidated into `embedding_matcher.py`.
+- Removed all imports and references from production code (`tasks.py`, `analyzer.py`, `embedding_matcher.py`, `resume_understanding.py`).
+- Updated/removed affected tests in `test_resume_parser.py` and `test_job_alerts.py`.
+
+#### Added — PostgreSQL Development Setup (`README.md`)
+- Full local development setup instructions for PostgreSQL + pgvector + Redis.
+- Docker, Ubuntu, and macOS installation paths.
+- Seed commands and Celery run instructions.
+
+#### Documentation
+- `ARCHITECTURE_FLOW.md` updated: removed references to deleted modules.
+
+---
+
 ## [0.35.0] — 2026-03-04
 
 ### Architecture Simplification — 5-Phase Pipeline Refactor

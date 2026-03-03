@@ -663,6 +663,9 @@ def generate_improved_resume_task(self, generated_resume_id):
             gen.id, analysis.id, gen.format, filename, result['duration'],
         )
 
+        # Step 6: Create a usable Resume from the generated output
+        _create_resume_from_generated(gen, result['parsed'], file_bytes, ext)
+
     except ValueError as exc:
         logger.warning('Resume generation failed: id=%s error=%s', gen.id, exc)
         gen.status = GeneratedResume.STATUS_FAILED
@@ -708,6 +711,254 @@ def _refund_generation_credits(gen):
         logger.info('Credits refunded for failed resume generation id=%s', gen.id)
     except Exception:
         logger.exception('Failed to refund credits for resume generation id=%s', gen.id)
+
+
+def _create_resume_from_generated(gen, resume_content, file_bytes, ext):
+    """
+    Create a full Resume record from a completed GeneratedResume.
+
+    The generated resume becomes a first-class Resume that can be used
+    for new analyses, job alerts, feed, etc. — no second LLM call needed
+    since we already have structured data from the generation.
+
+    Steps:
+    1. Render PDF if the original format was DOCX (Resume needs a PDF)
+    2. Create Resume with parsed_content + career_profile from resume_content
+    3. Mark as PROCESSING_DONE (skip process_resume_upload_task)
+    4. Create JobSearchProfile from career_profile
+    5. Link back to the GeneratedResume
+    6. Chain embedding computation
+    """
+    import hashlib
+    from .models import Resume, JobSearchProfile, ResumeVersion
+    from .services.template_registry import get_renderer
+
+    user = gen.user
+
+    try:
+        # Step 1: Ensure we have a PDF for the Resume file
+        if ext != 'pdf':
+            pdf_renderer = get_renderer(gen.template, 'pdf')
+            pdf_bytes = pdf_renderer(resume_content)
+        else:
+            pdf_bytes = file_bytes
+
+        # Step 2: Build parsed_content and career_profile from resume_content
+        # resume_content has: contact, summary, experience, education, skills, etc.
+        # This IS the parsed_content — same schema.
+        parsed_content = resume_content
+
+        # Build career_profile from the structured data
+        career_profile = _build_career_profile(resume_content, gen.analysis)
+
+        # Compute file hash for dedup
+        file_hash = hashlib.sha256(pdf_bytes).hexdigest()
+
+        # Check if this exact file already exists for the user
+        existing = Resume.objects.filter(user=user, file_hash=file_hash).first()
+        if existing:
+            # Same content already exists — just link it
+            gen.resume = existing
+            gen.save(update_fields=['resume'])
+            logger.info(
+                'Generated resume %s linked to existing Resume %s (same hash)',
+                gen.id, existing.id,
+            )
+            return
+
+        # Step 3: Create the Resume record
+        contact = resume_content.get('contact', {})
+        contact_name = contact.get('name', 'Generated Resume')
+        role = (gen.analysis.jd_role if gen.analysis else 'general').strip() or 'general'
+        original_filename = f"{contact_name.replace(' ', '_')}_{role.replace(' ', '_')}_generated.pdf"
+
+        resume = Resume(
+            user=user,
+            file_hash=file_hash,
+            original_filename=original_filename[:255],
+            file_size_bytes=len(pdf_bytes),
+            # Pre-populate with structured data — skip LLM understanding
+            parsed_content=parsed_content,
+            career_profile=career_profile,
+            resume_text=_resume_content_to_text(resume_content),
+            processing_status=Resume.PROCESSING_DONE,
+        )
+        resume.file.save(
+            f'resumes/{original_filename[:200]}',
+            ContentFile(pdf_bytes),
+            save=False,
+        )
+        resume.save()
+
+        # Create version history entry
+        ResumeVersion.objects.create(
+            user=user,
+            resume=resume,
+            version_number=1,
+            change_summary=f'AI-generated from analysis (template: {gen.template})',
+        )
+
+        # Auto-set as default if user has no default resume
+        if not Resume.objects.filter(user=user, is_default=True).exists():
+            resume.is_default = True
+            resume.save(update_fields=['is_default'])
+
+        # Step 4: Create JobSearchProfile from career_profile
+        if career_profile:
+            JobSearchProfile.objects.update_or_create(
+                resume=resume,
+                defaults={
+                    'titles': career_profile.get('titles', []),
+                    'skills': career_profile.get('skills', []),
+                    'seniority': career_profile.get('seniority', 'mid'),
+                    'industries': career_profile.get('industries', []),
+                    'locations': career_profile.get('locations', []),
+                    'experience_years': career_profile.get('experience_years'),
+                    'raw_extraction': career_profile,
+                },
+            )
+
+        # Step 5: Link the Resume back to the GeneratedResume
+        gen.resume = resume
+        gen.save(update_fields=['resume'])
+
+        logger.info(
+            'Resume created from generated output: gen=%s resume=%s filename=%s',
+            gen.id, resume.id, original_filename,
+        )
+
+        # Step 6: Chain embedding computation
+        compute_resume_embedding_task.delay(str(resume.id))
+
+    except Exception:
+        logger.exception(
+            'Failed to create Resume from GeneratedResume %s — '
+            'generated resume is still usable, Resume creation is best-effort',
+            gen.id,
+        )
+
+
+def _build_career_profile(resume_content, analysis=None):
+    """
+    Derive career_profile from structured resume_content + analysis context.
+
+    Returns dict with: titles, skills, seniority, industries, locations, experience_years.
+    """
+    contact = resume_content.get('contact', {})
+    experience = resume_content.get('experience', [])
+    skills_data = resume_content.get('skills', {})
+
+    # Extract titles from experience
+    titles = []
+    if analysis and analysis.jd_role:
+        titles.append(analysis.jd_role)
+    for exp in experience[:3]:
+        title = exp.get('title', '')
+        if title and title not in titles:
+            titles.append(title)
+
+    # Extract skills (flatten grouped skills)
+    skills = []
+    if isinstance(skills_data, dict):
+        for category_skills in skills_data.values():
+            if isinstance(category_skills, list):
+                skills.extend(str(s) for s in category_skills if s)
+    elif isinstance(skills_data, list):
+        skills = [str(s) for s in skills_data if s]
+
+    # Estimate seniority from experience count & years
+    years = 0
+    if experience:
+        years = len(experience) * 2  # rough estimate: 2 years per role
+        # Check for years in date fields
+        for exp in experience:
+            start = exp.get('start_date', '')
+            if 'present' in str(start).lower() or 'current' in str(start).lower():
+                years = max(years, len(experience) * 2)
+
+    seniority = 'mid'
+    if years >= 10:
+        seniority = 'lead'
+    elif years >= 6:
+        seniority = 'senior'
+    elif years <= 2:
+        seniority = 'junior'
+
+    # Extract locations
+    locations = []
+    loc = contact.get('location', '')
+    if loc:
+        locations.append(loc)
+    for exp in experience[:2]:
+        exp_loc = exp.get('location', '')
+        if exp_loc and exp_loc not in locations:
+            locations.append(exp_loc)
+
+    return {
+        'titles': titles[:5],
+        'skills': skills[:20],
+        'seniority': seniority,
+        'industries': [],  # not reliably derivable without LLM
+        'locations': locations[:5],
+        'experience_years': years if years > 0 else None,
+    }
+
+
+def _resume_content_to_text(resume_content):
+    """
+    Convert structured resume_content JSON to plain text.
+    Used for embedding computation and text-based processing.
+    """
+    parts = []
+
+    contact = resume_content.get('contact', {})
+    if contact.get('name'):
+        parts.append(contact['name'])
+    if contact.get('email'):
+        parts.append(contact['email'])
+    if contact.get('phone'):
+        parts.append(contact['phone'])
+    if contact.get('location'):
+        parts.append(contact['location'])
+
+    summary = resume_content.get('summary', '')
+    if summary:
+        parts.append(f"\nSUMMARY\n{summary}")
+
+    for exp in resume_content.get('experience', []):
+        title = exp.get('title', '')
+        company = exp.get('company', '')
+        location = exp.get('location', '')
+        dates = f"{exp.get('start_date', '')} - {exp.get('end_date', '')}".strip(' -')
+        parts.append(f"\n{title} | {company} | {location} | {dates}")
+        for bullet in exp.get('bullets', []):
+            parts.append(f"  - {bullet}")
+
+    edu_items = resume_content.get('education', [])
+    if edu_items:
+        parts.append("\nEDUCATION")
+        for edu in edu_items:
+            degree = edu.get('degree', '')
+            institution = edu.get('institution', '')
+            year = edu.get('year', '')
+            parts.append(f"  {degree} | {institution} | {year}")
+
+    skills_data = resume_content.get('skills', {})
+    if skills_data:
+        parts.append("\nSKILLS")
+        if isinstance(skills_data, dict):
+            for category, skill_list in skills_data.items():
+                if isinstance(skill_list, list):
+                    parts.append(f"  {category}: {', '.join(str(s) for s in skill_list)}")
+        elif isinstance(skills_data, list):
+            parts.append(f"  {', '.join(str(s) for s in skills_data)}")
+
+    for cert in resume_content.get('certifications', []):
+        name = cert.get('name', '')
+        issuer = cert.get('issuer', '')
+        parts.append(f"  {name} | {issuer}")
+
+    return '\n'.join(parts)
 
 
 # ── Resume builder (chat) rendering task ─────────────────────────────────
@@ -763,6 +1014,9 @@ def render_builder_resume_task(self, generated_resume_id):
             'Builder resume rendered: id=%s format=%s file=%s',
             gen.id, gen.format, filename,
         )
+
+        # Create a usable Resume from the builder output
+        _create_resume_from_generated(gen, gen.resume_content, file_bytes, ext)
 
     except Exception as exc:
         logger.exception('Builder render failed: id=%s', gen.id)

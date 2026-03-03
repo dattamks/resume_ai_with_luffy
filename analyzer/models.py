@@ -522,6 +522,12 @@ class GeneratedResume(models.Model):
         help_text='The analysis whose findings drive the resume rewrite (NULL for builder-created resumes)',
     )
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='generated_resumes')
+    resume = models.ForeignKey(
+        Resume, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='generated_from',
+        help_text='Resume created from this generated output — usable for analyses, alerts, feed',
+    )
     template = models.SlugField(
         max_length=50, default='ats_classic',
         help_text='Template slug (e.g. ats_classic, modern_clean)',

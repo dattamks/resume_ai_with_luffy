@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-02 &nbsp;|&nbsp; **API version:** v0.34.0
+> **Last updated:** 2026-03-03 &nbsp;|&nbsp; **API version:** v0.37.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -4222,6 +4222,8 @@ Generate an AI-improved resume directly from a completed analysis report. The sy
 
 **Cost:** 1 credit per generation.
 
+> **Auto-created Resume:** When a generated resume reaches `status: "done"`, the backend automatically creates a full **Resume** record from the output. This means every generated resume is immediately usable for new analyses, job alerts, feed, and embedding-based matching — no re-upload needed. The `resume` field in the response contains the UUID of this auto-created Resume. The frontend can use it to navigate to `/api/v1/resumes/<resume>/` or set it as the user's default resume.
+
 ### 19.1 Trigger Generation
 
 ```
@@ -4280,6 +4282,7 @@ Authorization: Bearer <token>
 {
   "id": "a1b2c3d4-...",
   "analysis": 42,
+  "resume": "e5f6a7b8-...",
   "template": "ats_classic",
   "format": "pdf",
   "status": "done",
@@ -4288,6 +4291,10 @@ Authorization: Bearer <token>
   "created_at": "2026-02-26T12:00:00Z"
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `resume` | UUID \| null | ID of the auto-created Resume record. `null` while `status` is `pending`/`processing`. Once `done`, the generated output is automatically saved as a full Resume that can be used for new analyses, job alerts, feed, etc. |
 
 | `status` | Meaning |
 |----------|---------|
@@ -4332,6 +4339,7 @@ Returns a **paginated** list of all generated resumes for the authenticated user
     {
       "id": "a1b2c3d4-...",
       "analysis": 42,
+      "resume": "e5f6a7b8-...",
       "template": "ats_classic",
       "format": "pdf",
       "status": "done",
@@ -4342,6 +4350,8 @@ Returns a **paginated** list of all generated resumes for the authenticated user
   ]
 }
 ```
+
+Each item follows the same schema as 19.2. The `resume` field links to the auto-created Resume — use it to navigate to `/api/v1/resumes/<resume>/` for full resume details.
 
 ### 19.5 Delete Generated Resume
 
@@ -4386,6 +4396,7 @@ interface GenerateResumeResponse {
 interface GeneratedResume {
   id: string;
   analysis: number;
+  resume: string | null;       // UUID of auto-created Resume (null while pending/processing)
   template: ResumeTemplateSlug;
   format: ResumeFormat;
   status: GeneratedResumeStatus;
@@ -5970,6 +5981,8 @@ Content-Type: application/json
 | 403 | Premium template without premium plan |
 | 404 | Session not found or not active |
 
+> **Auto-created Resume:** Same as analysis-based generation (§19) — once the builder render completes, a full Resume record is auto-created. Poll the generated resume status endpoint (`GET /api/v1/generated-resumes/<id>/`) and use the `resume` field to access the new Resume.
+
 ### 29.7 Delete Session
 
 ```
@@ -7180,6 +7193,28 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
   - `/api/v1/dashboard/activity/` — Streak days + actions this month
 - **Batch-ready ingest pipeline**: Bot-ingested jobs now automatically trigger batch embeddings (100/API call) + user matching with Redis dedup locks. No frontend changes needed.
 - **TypeScript types** added for all feed response shapes.
+
+### v0.37.0 — Generated Resumes Are First-Class Resumes
+
+#### Features
+- **Auto-create Resume from GeneratedResume:** Every successfully generated resume (from analysis-based rewrite or chat builder) now automatically creates a full `Resume` record. The generated resume becomes immediately usable for new analyses, job alerts, feed, and embedding-based matching — no re-upload needed.
+- **New `resume` field on GeneratedResume responses:** All generated resume endpoints (`GET /api/v1/analyses/<id>/generated-resume/`, `GET /api/v1/generated-resumes/`) now include a `resume` UUID field pointing to the auto-created Resume.
+- **Deduplication:** If the generated file's SHA-256 hash matches an existing Resume for the same user, the system links to the existing Resume instead of creating a duplicate.
+- **Auto-default:** If the user has no default resume, the auto-created Resume is set as default automatically.
+- **JobSearchProfile auto-created:** Career profile (titles, skills, seniority, locations) is derived from the generated `resume_content` and used to create a `JobSearchProfile` for job alert matching.
+- **Embedding auto-computed:** A background task computes the resume text embedding immediately after creation for pgvector similarity matching.
+
+#### TypeScript Changes
+- `GeneratedResume`: Added `resume: string | null` field (UUID of auto-created Resume, `null` while pending/processing)
+
+#### Migration
+- `0032_add_resume_fk_to_generated_resume` — adds nullable FK from `GeneratedResume` → `Resume`
+
+### v0.36.0 — Code Cleanup (Deprecated Module Removal, PostgreSQL Dev Setup)
+
+#### Features
+- **Removed deprecated modules:** Deleted `resume_parser.py`, `job_search_profile.py`, `job_matcher.py` — all functionality consolidated into `resume_understanding.py` and `embedding_matcher.py`.
+- **PostgreSQL dev setup documented:** README now includes full local development setup instructions for PostgreSQL + pgvector + Redis (Docker, Ubuntu, macOS).
 
 ### v0.34.0 — Architecture Simplification (Upload-Time Resume Understanding, Instant Interview Prep, Bulk Removal)
 

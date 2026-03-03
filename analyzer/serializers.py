@@ -336,7 +336,7 @@ class GeneratedResumeSerializer(serializers.ModelSerializer):
     class Meta:
         model = GeneratedResume
         fields = (
-            'id', 'analysis', 'template', 'format',
+            'id', 'analysis', 'resume', 'template', 'format',
             'status', 'error_message', 'file_url', 'created_at',
         )
         read_only_fields = fields
