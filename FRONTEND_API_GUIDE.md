@@ -6257,13 +6257,19 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 
 ### 30.2 GET `/api/v1/feed/insights/` — Market Intelligence
 
-🔒 Requires auth. Aggregated job market data from the last 30 days. **Cached 60 minutes per country.**
+🔒 Requires auth. Aggregated job market data from the last 30 days. **Cached 60 minutes per country + role.**
 
-**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to filter for a specific country, or `?country=all` for global data.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. The backend uses a hybrid two-layer role scoping system:
+- **Layer 1 — LLM Role Map:** A `RoleFamily` record (generated asynchronously via LLM when the user's `JobSearchProfile` is created/updated) provides a curated list of related job titles.
+- **Layer 2 — Embedding proximity:** Jobs within cosine distance ≤ 0.40 of the user's resume embedding are included, catching synonyms the map may have missed.
+- If fewer than 5 jobs match after scoping, the filter auto-broadens to all jobs in the country.
+
+Pass `?country=` to filter for a specific country, or `?country=all` for global data. Pass `?role=all` to skip role scoping entirely (show all roles).
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `country` | string | profile country | Country to scope insights to, or `"all"` for global |
+| `role` | string | auto (from profile) | Pass `"all"` to disable role scoping and see all roles |
 
 **Response (200):**
 
@@ -6307,6 +6313,13 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
     "senior": 520,
     "mid": 480,
     "junior": 310
+  },
+  "role_filter": {
+    "source_titles": ["Data Analyst", "Business Analyst"],
+    "related_titles": ["Data Scientist", "BI Analyst", "Analytics Engineer"],
+    "method": "llm_map+embedding",
+    "scoped": true,
+    "broadened": false
   }
 }
 ```
@@ -6316,8 +6329,13 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 | `top_skills[].you_have` | bool | Whether the user's profile includes this skill |
 | `top_skills[].growth_pct` | float | % change vs previous 30-day period |
 | `avg_salary_usd` | int \| null | Average of `salary_min_usd` across jobs with salary data |
+| `role_filter.source_titles` | string[] | User's own job titles (from `JobSearchProfile`) |
+| `role_filter.related_titles` | string[] | LLM-generated related titles used for scoping |
+| `role_filter.method` | string | Scoping method used: `"llm_map+embedding"`, `"llm_map"`, `"titles_only"`, or `"none"` |
+| `role_filter.scoped` | bool | `true` if results are role-filtered, `false` if showing all |
+| `role_filter.broadened` | bool | `true` if auto-broadened due to < 5 results |
 
-**Frontend usage:** Insights dashboard cards — donut charts for breakdowns, bar charts for top skills/companies.
+**Frontend usage:** Insights dashboard cards — donut charts for breakdowns, bar charts for top skills/companies. Optionally show a "Showing results for: Data Analyst + 3 related roles" label using `role_filter`. Add a toggle/button to switch to `?role=all` for unscoped view.
 
 ---
 
@@ -6325,11 +6343,12 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 
 🔒 Requires auth. Compares the user's skills against market demand. **Personalised — not cached.**
 
-**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to override, or `?country=all` for global.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as insights (Layer 1: LLM Role Map + Layer 2: embedding proximity). Pass `?role=all` to skip role scoping.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `country` | string | profile country | Country to scope trending skills, or `"all"` for global |
+| `role` | string | auto (from profile) | Pass `"all"` to disable role scoping and see all roles |
 
 **Response (200):**
 
@@ -6346,7 +6365,14 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
   "niche": [
     { "skill": "fortran", "demand_count": 0, "you_have": true, "category": "niche" }
   ],
-  "match_pct": 40.0
+  "match_pct": 40.0,
+  "role_filter": {
+    "source_titles": ["Data Analyst", "Business Analyst"],
+    "related_titles": ["Data Scientist", "BI Analyst", "Analytics Engineer"],
+    "method": "llm_map+embedding",
+    "scoped": true,
+    "broadened": false
+  }
 }
 ```
 
@@ -6356,8 +6382,9 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 | `gaps` | array | In-demand skills you're missing |
 | `niche` | array | Skills you have that aren't trending |
 | `match_pct` | float | % of top 30 trending skills you possess |
+| `role_filter` | object | Role scoping metadata (same shape as insights — see §30.2) |
 
-**Frontend usage:** Skill gap radar chart, "Skills you should learn" cards, match percentage ring.
+**Frontend usage:** Skill gap radar chart, "Skills you should learn" cards, match percentage ring. Use `role_filter` to display which roles are being compared.
 
 ---
 
@@ -6495,11 +6522,12 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 
 🔒 Requires auth. Data for a radar/spider chart comparing user skills vs market demand.
 
-**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to override, or `?country=all` for global.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as feed insights (see §30.2). Pass `?role=all` to skip role scoping.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `country` | string | profile country | Country to scope market demand, or `"all"` for global |
+| `role` | string | auto (from profile) | Pass `"all"` to disable role scoping and see all roles |
 
 **Response (200):**
 
@@ -6523,13 +6551,14 @@ if (jobFilters.sort === 'salary')  params.set('ordering', '-salary_min_usd')
 
 ### 30.8 GET `/api/v1/dashboard/market-insights/` — Weekly Trend Card
 
-🔒 Requires auth. Short summary of this week vs last week. **Cached 60 minutes per country.**
+🔒 Requires auth. Short summary of this week vs last week. **Cached 60 minutes per country + role.**
 
-**Geography-aware:** Scoped to the user's profile country by default. Pass `?country=` to override, or `?country=all` for global.
+**Geography & role-aware:** Scoped to the user's profile country **and job titles** by default. Uses the same hybrid role scoping as feed insights (see §30.2). Pass `?role=all` to skip role scoping.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `country` | string | profile country | Country to scope weekly trends, or `"all"` for global |
+| `role` | string | auto (from profile) | Pass `"all"` to disable role scoping and see all roles |
 
 **Response (200):**
 
@@ -7208,15 +7237,15 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | POST | `/api/v1/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
 | **Feed & Analytics** |||||
 | GET | `/api/v1/feed/jobs/` | ✅ | Readonly (120/hr) | Personalised job feed (pgvector similarity). Supports `relevance_min`, `ordering` |
-| GET | `/api/v1/feed/insights/` | ✅ | Readonly (120/hr) | Market intelligence (cached 60 min) |
-| GET | `/api/v1/feed/trending-skills/` | ✅ | Readonly (120/hr) | User skills vs market demand |
+| GET | `/api/v1/feed/insights/` | ✅ | Readonly (120/hr) | Market intelligence (cached 60 min). Role-aware: `?role=all` to disable |
+| GET | `/api/v1/feed/trending-skills/` | ✅ | Readonly (120/hr) | User skills vs market demand. Role-aware: `?role=all` to disable |
 | GET | `/api/v1/feed/hub/` | ✅ | Readonly (120/hr) | Alerts + preps + cover letters composite |
 | GET | `/api/v1/feed/recommendations/` | ✅ | Readonly (120/hr) | AI-suggested next actions |
 | GET | `/api/v1/feed/onboarding/` | ✅ | Readonly (120/hr) | Completion checklist |
 | **Dashboard** |||||
 | GET | `/api/v1/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
-| GET | `/api/v1/dashboard/skill-gap/` | ✅ | Readonly (120/hr) | Skill radar chart data |
-| GET | `/api/v1/dashboard/market-insights/` | ✅ | Readonly (120/hr) | Weekly trend card (cached 60 min) |
+| GET | `/api/v1/dashboard/skill-gap/` | ✅ | Readonly (120/hr) | Skill radar chart data. Role-aware: `?role=all` to disable |
+| GET | `/api/v1/dashboard/market-insights/` | ✅ | Readonly (120/hr) | Weekly trend card (cached 60 min). Role-aware: `?role=all` to disable |
 | GET | `/api/v1/dashboard/activity/` | ✅ | Readonly (120/hr) | Activity streak + monthly actions |
 | GET | `/api/v1/dashboard/activity/history/` | ✅ | Readonly (120/hr) | Daily activity history (heatmap data) |
 | **Share** |||||
@@ -7228,6 +7257,32 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 ---
 
 ## Changelog
+
+### v0.38.0 — Role-Based Feed & Dashboard Scoping
+
+#### Features — Hybrid Role Scoping
+- **`RoleFamily` model** (`analyzer/models.py`): Stores LLM-generated related job titles per unique set of user titles. Deduplicated by SHA-256 hash, shared across users with identical title sets.
+- **`generate_role_family_task`** (Celery): Async task that calls the LLM (Claude 3.5 Haiku via OpenRouter) to produce 10–15 related job titles for a user's `JobSearchProfile.titles`. Auto-retries with exponential backoff. Triggered automatically via `post_save` signal on `JobSearchProfile`.
+- **Hybrid two-layer role scoping** on 4 endpoints:
+  - `GET /api/v1/feed/insights/` (§30.2)
+  - `GET /api/v1/feed/trending-skills/` (§30.3)
+  - `GET /api/v1/dashboard/skill-gap/` (§30.7)
+  - `GET /api/v1/dashboard/market-insights/` (§30.8)
+- **Layer 1 — LLM Role Map:** Matches jobs whose title contains any of the user's own titles or LLM-generated related titles (`icontains` queries).
+- **Layer 2 — Embedding proximity:** Includes jobs within cosine distance ≤ 0.40 of the user's resume embedding (pgvector `CosineDistance`).
+- **Auto-broadening:** If fewer than 5 jobs match after scoping, the role filter is dropped and all jobs in the country are shown (with `broadened: true` in response).
+- **`?role=all` query param:** Pass on any of the 4 endpoints to disable role scoping entirely and see data for all roles.
+- **`role_filter` response object** added to insights and trending-skills responses: `source_titles`, `related_titles`, `method` (`"llm_map+embedding"` | `"llm_map"` | `"titles_only"` | `"none"`), `scoped` (bool), `broadened` (bool).
+- **Cache keys** now include the user's `titles_hash` for role-differentiated caching.
+
+#### Migration
+- `0034_add_role_family_model.py` — creates `analyzer_rolefamily` table with `titles_hash` unique index.
+
+#### Frontend Notes
+- No breaking changes — existing calls without `?role` continue to work (role scoping applies automatically).
+- To show unscoped data, pass `?role=all`.
+- Use `role_filter.source_titles` / `role_filter.related_titles` to display a label like "Showing results for: Data Analyst + 3 related roles".
+- Add a toggle/button to switch between role-scoped and all-roles views.
 
 ### v0.33.0 — Default Resume System, Chat Fixes & Premium Template Hardening
 

@@ -2233,3 +2233,151 @@ def generate_cover_letter_task(self, cover_letter_id, user_id):
         if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Role Family Generation (hybrid role scoping for feed/insights)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    autoretry_for=(ConnectionError, OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    acks_late=True,
+)
+def generate_role_family_task(self, source_titles: list[str]):
+    """
+    Generate and store a RoleFamily mapping via LLM.
+
+    Given a list of source job titles (from a user's JobSearchProfile),
+    asks the LLM to produce 10-15 related/synonym job titles.  The result
+    is stored in the RoleFamily model, keyed by a SHA-256 hash of the
+    normalised titles so it can be shared across users with the same roles.
+
+    Skips the LLM call if a fresh mapping (< 30 days) already exists.
+    """
+    import json
+    import re
+    import time
+
+    from .models import RoleFamily
+    from .services.ai_providers.factory import get_openai_client, llm_retry
+    from .services.ai_providers.json_repair import repair_json
+
+    if not source_titles:
+        logger.info('generate_role_family_task: empty titles — skipping')
+        return
+
+    titles_hash = RoleFamily.compute_hash(source_titles)
+
+    # Check if a fresh mapping already exists
+    try:
+        existing = RoleFamily.objects.get(titles_hash=titles_hash)
+        age_days = (timezone.now() - existing.generated_at).days
+        if age_days < 30:
+            logger.info(
+                'RoleFamily already fresh (%d days old) for titles=%s — skipping LLM',
+                age_days, source_titles,
+            )
+            return
+    except RoleFamily.DoesNotExist:
+        pass
+
+    # Build prompt
+    titles_str = ', '.join(f'"{t}"' for t in source_titles)
+    user_prompt = (
+        f'Given these job titles from a user\'s resume: [{titles_str}]\n\n'
+        'List 10-15 closely related job titles that:\n'
+        '1. Require similar skills and qualifications\n'
+        '2. A person with these titles would be qualified for or interested in\n'
+        '3. Include common variations, synonyms, and abbreviations '
+        '(e.g. "SDE" for "Software Development Engineer")\n'
+        '4. Span common variations across seniority where the core role is the same '
+        '(e.g. "Senior Data Analyst" if source is "Data Analyst")\n\n'
+        'Return ONLY a JSON array of strings. No explanations, no markdown.\n'
+        'Example: ["Business Analyst", "BI Analyst", "Product Analyst"]'
+    )
+
+    api_key = getattr(settings, 'OPENROUTER_API_KEY', '')
+    model = getattr(settings, 'OPENROUTER_MODEL', 'anthropic/claude-3.5-haiku')
+
+    if not api_key:
+        logger.warning('generate_role_family_task: OPENROUTER_API_KEY not configured')
+        return
+
+    client = get_openai_client()
+    messages = [
+        {
+            'role': 'system',
+            'content': (
+                'You are a job market expert. You know all job title variations, '
+                'synonyms, and how roles relate across industries. '
+                'Return ONLY valid JSON arrays of strings.'
+            ),
+        },
+        {'role': 'user', 'content': user_prompt},
+    ]
+
+    logger.info('RoleFamily LLM call: titles=%s model=%s', source_titles, model)
+    req_start = time.time()
+
+    @llm_retry
+    def _call():
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=512,
+            temperature=0.3,
+            timeout=30,
+        )
+
+    try:
+        response = _call()
+        raw = response.choices[0].message.content.strip()
+        duration = round(time.time() - req_start, 2)
+
+        # Parse JSON array — strip markdown fences if present
+        cleaned = re.sub(r'^```(?:json)?\s*\n?', '', raw)
+        cleaned = re.sub(r'\n?\s*```$', '', cleaned)
+
+        try:
+            related = json.loads(cleaned)
+        except json.JSONDecodeError:
+            repaired = repair_json(cleaned)
+            related = json.loads(repaired)
+
+        if not isinstance(related, list):
+            logger.warning('RoleFamily LLM returned non-list: %s', type(related))
+            related = []
+
+        # Normalise: keep only non-empty strings, deduplicate vs source titles
+        source_lower = {t.strip().lower() for t in source_titles}
+        related = [
+            t.strip() for t in related
+            if isinstance(t, str) and t.strip() and t.strip().lower() not in source_lower
+        ]
+
+        # Upsert
+        RoleFamily.objects.update_or_create(
+            titles_hash=titles_hash,
+            defaults={
+                'source_titles': [t.strip() for t in source_titles],
+                'related_titles': related,
+            },
+        )
+
+        logger.info(
+            'RoleFamily saved: titles=%s related=%d duration=%.2fs',
+            source_titles, len(related), duration,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            'RoleFamily LLM failed: titles=%s error=%s', source_titles, exc,
+        )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)

@@ -37,6 +37,7 @@ from .models import (
     JobSearchProfile,
     Resume,
     ResumeAnalysis,
+    RoleFamily,
 )
 from .serializers_feed import (
     ActivitySerializer,
@@ -120,26 +121,176 @@ def _get_user_skills(user) -> list[str]:
     return sorted(skills)
 
 
-def _trending_skills_raw(days: int = 30, limit: int = 30, country: str = '') -> list[dict]:
+def _get_user_titles(user) -> list[str]:
+    """
+    Return target job titles from the user's default resume's
+    JobSearchProfile.  Falls back to Resume.career_profile['titles'].
+    Returns empty list if nothing is available.
+    """
+    default_resume = Resume.get_default_for_user(user)
+    if default_resume:
+        try:
+            jsp = JobSearchProfile.objects.get(resume=default_resume)
+            if jsp.titles:
+                return [t.strip() for t in jsp.titles if isinstance(t, str) and t.strip()]
+        except JobSearchProfile.DoesNotExist:
+            pass
+        # Fallback to career_profile on the Resume itself
+        cp = default_resume.career_profile
+        if cp and isinstance(cp, dict) and cp.get('titles'):
+            return [t.strip() for t in cp['titles'] if isinstance(t, str) and t.strip()]
+    # Last resort: check all JSPs
+    profiles = JobSearchProfile.objects.filter(resume__user=user).order_by('-updated_at')
+    for p in profiles:
+        if p.titles:
+            return [t.strip() for t in p.titles if isinstance(t, str) and t.strip()]
+    return []
+
+
+def _get_user_embedding(user):
+    """
+    Return the embedding from the user's default resume's
+    JobSearchProfile.  Falls back to the newest JSP embedding.
+    """
+    default_resume = Resume.get_default_for_user(user)
+    if default_resume:
+        try:
+            jsp = JobSearchProfile.objects.get(resume=default_resume)
+            if hasattr(jsp, 'embedding') and jsp.embedding is not None:
+                return jsp.embedding
+        except JobSearchProfile.DoesNotExist:
+            pass
+    # Fallback — newest embedding across all resumes
+    profiles = JobSearchProfile.objects.filter(resume__user=user).order_by('-updated_at')
+    for p in profiles:
+        if hasattr(p, 'embedding') and p.embedding is not None:
+            return p.embedding
+    return None
+
+
+def _build_role_title_q(all_titles: list[str]) -> Q:
+    """
+    Build a Q filter matching DiscoveredJob.title against any of
+    the given titles (case-insensitive substring match).
+    """
+    q = Q()
+    for t in all_titles:
+        t = t.strip()
+        if t and len(t) >= 3:  # skip very short strings
+            q |= Q(title__icontains=t)
+    return q
+
+
+# ── Minimum results threshold for role-scoped queries ──────────────────
+_ROLE_SCOPED_MIN_RESULTS = 5
+
+
+def _get_role_scoped_qs(
+    user, base_qs, *, use_embedding: bool = True,
+    embedding_threshold: float = 0.40,
+):
+    """
+    Filter a DiscoveredJob queryset to role-relevant jobs using a
+    two-layer hybrid strategy:
+
+      Layer 1: LLM Role Map — explicit title matching via RoleFamily
+      Layer 2: Embedding proximity — catches synonyms the map missed
+
+    Returns (filtered_qs, role_info_dict, is_scoped_bool).
+    If no role data is available, returns the original queryset unfiltered.
+
+    Auto-broadens to unfiltered results if the scoped query yields fewer
+    than ``_ROLE_SCOPED_MIN_RESULTS`` results.
+    """
+    user_titles = _get_user_titles(user)
+    if not user_titles:
+        return base_qs, {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}, False
+
+    # ── Layer 1: LLM Role Map ────────────────────────────────────────
+    role_family = RoleFamily.get_or_none(user_titles)
+    related_titles = role_family.related_titles if role_family else []
+    all_titles = user_titles + related_titles
+
+    title_q = _build_role_title_q(all_titles)
+    layer1_qs = base_qs.filter(title_q) if title_q else base_qs.none()
+
+    # ── Layer 2: Embedding proximity ─────────────────────────────────
+    layer2_qs = base_qs.none()
+    has_embedding_layer = False
+
+    if use_embedding:
+        embedding = _get_user_embedding(user)
+        if embedding is not None:
+            try:
+                from pgvector.django import CosineDistance
+                layer1_ids = set(layer1_qs.values_list('id', flat=True)[:500])
+                layer2_qs = (
+                    base_qs
+                    .exclude(id__in=layer1_ids)
+                    .exclude(embedding__isnull=True)
+                    .annotate(distance=CosineDistance('embedding', embedding))
+                    .filter(distance__lte=embedding_threshold)
+                )
+                has_embedding_layer = True
+            except Exception:
+                logger.debug('pgvector not available for role scoping — Layer 1 only')
+
+    # ── Union ────────────────────────────────────────────────────────
+    scoped_qs = (layer1_qs | layer2_qs) if has_embedding_layer else layer1_qs
+
+    # ── Auto-broaden if too few results ──────────────────────────────
+    scoped_count = scoped_qs.count()
+    broadened = False
+    if scoped_count < _ROLE_SCOPED_MIN_RESULTS:
+        scoped_qs = base_qs
+        broadened = True
+        logger.info(
+            'Role-scoped query too few results (%d) for titles=%s — broadened to all',
+            scoped_count, user_titles[:3],
+        )
+
+    method = 'llm_map+embedding' if has_embedding_layer else ('llm_map' if role_family else 'titles_only')
+
+    role_info = {
+        'source_titles': user_titles,
+        'related_titles': related_titles,
+        'method': method,
+        'scoped': not broadened,
+        'broadened': broadened,
+    }
+
+    return scoped_qs, role_info, not broadened
+
+
+def _trending_skills_raw(
+    days: int = 30, limit: int = 30, country: str = '',
+    role_titles_hash: str = '', queryset=None,
+) -> list[dict]:
     """
     Aggregate ``skills_required`` across recent DiscoveredJobs.
     Returns [{'skill': str, 'count': int}] sorted desc by count.
 
     If ``country`` is given, only considers jobs in that country
     (by ``country`` field or location heuristic for India).
+
+    If ``queryset`` is provided, uses it directly (already role-scoped).
+    ``role_titles_hash`` is used only for cache key differentiation.
     """
-    cache_key = f'feed:trending_skills_raw:{days}:{limit}:{country}'
+    cache_key = f'feed:trending_skills_raw:{days}:{limit}:{country}:{role_titles_hash}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    since = timezone.now() - timedelta(days=days)
-    qs = DiscoveredJob.objects.filter(
-        created_at__gte=since,
-        skills_required__isnull=False,
-    )
-    if country:
-        qs = _filter_by_country(qs, country)
+    if queryset is not None:
+        qs = queryset.filter(skills_required__isnull=False)
+    else:
+        since = timezone.now() - timedelta(days=days)
+        qs = DiscoveredJob.objects.filter(
+            created_at__gte=since,
+            skills_required__isnull=False,
+        )
+        if country:
+            qs = _filter_by_country(qs, country)
 
     jobs = qs.values_list('skills_required', flat=True)
 
@@ -156,9 +307,16 @@ def _trending_skills_raw(days: int = 30, limit: int = 30, country: str = '') -> 
     return result
 
 
-def _prev_period_skills(days: int = 30, limit: int = 50, country: str = '') -> dict[str, int]:
-    """Skills from the *previous* period for growth % calculation."""
-    cache_key = f'feed:prev_skills:{days}:{limit}:{country}'
+def _prev_period_skills(
+    days: int = 30, limit: int = 50, country: str = '',
+    role_titles_hash: str = '', role_title_q: Q | None = None,
+) -> dict[str, int]:
+    """Skills from the *previous* period for growth % calculation.
+
+    Accepts an optional ``role_title_q`` Q object to scope by role titles,
+    and ``role_titles_hash`` for cache key differentiation.
+    """
+    cache_key = f'feed:prev_skills:{days}:{limit}:{country}:{role_titles_hash}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -172,6 +330,8 @@ def _prev_period_skills(days: int = 30, limit: int = 50, country: str = '') -> d
     )
     if country:
         qs = _filter_by_country(qs, country)
+    if role_title_q:
+        qs = qs.filter(role_title_q)
 
     jobs = qs.values_list('skills_required', flat=True)
 
@@ -448,11 +608,15 @@ class FeedInsightsView(APIView):
     - Top skills, top companies, top locations
     - Employment-type / remote-policy / seniority breakdowns
 
+    **Role-aware** (hybrid LLM map + embedding): by default scopes
+    aggregations to jobs matching the user's target roles from their
+    resume.  Pass ``?role=all`` to see unfiltered market data.
+
     Geography-aware: scoped to the user's country by default.
     Pass ``?country=`` to filter for a specific country, or
     ``?country=all`` to see global data.
 
-    Cached per-country for 60 minutes.
+    Cached per-country per-role for 60 minutes.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -463,7 +627,14 @@ class FeedInsightsView(APIView):
         country = country_param if country_param else user_country
         is_global = country.lower() == 'all'
 
-        cache_key = f'feed:insights:{country.lower()}'
+        # Role param: 'all' = no role filter, '' = auto from resume
+        role_param = request.query_params.get('role', '').strip()
+        skip_role_scope = role_param.lower() == 'all'
+
+        # Compute cache key incorporating role
+        user_titles = _get_user_titles(request.user) if not skip_role_scope else []
+        titles_hash = RoleFamily.compute_hash(user_titles) if user_titles else 'all'
+        cache_key = f'feed:insights:{country.lower()}:{titles_hash}'
         cached = cache.get(cache_key)
         if cached is not None:
             return Response(cached)
@@ -472,6 +643,12 @@ class FeedInsightsView(APIView):
         qs = DiscoveredJob.objects.filter(created_at__gte=since)
         if not is_global:
             qs = _filter_by_country(qs, country)
+
+        # ── Apply role scoping ──────────────────────────────────────────
+        if not skip_role_scope:
+            qs, role_info, is_scoped = _get_role_scoped_qs(request.user, qs)
+        else:
+            role_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
 
         total = qs.count()
 
@@ -482,11 +659,27 @@ class FeedInsightsView(APIView):
         if avg_salary is not None:
             avg_salary = int(avg_salary)
 
-        # Top skills
+        # Top skills (role-scoped)
         user_skills = set(_get_user_skills(request.user))
         effective_country = '' if is_global else country
-        trending = _trending_skills_raw(days=30, limit=20, country=effective_country)
-        prev_skills = _prev_period_skills(days=30, limit=50, country=effective_country)
+        trending = _trending_skills_raw(
+            days=30, limit=20, country=effective_country,
+            role_titles_hash=titles_hash, queryset=qs,
+        )
+
+        # For growth %, build the role title Q to pass to prev_period
+        role_title_q = None
+        if not skip_role_scope and user_titles:
+            role_family = RoleFamily.get_or_none(user_titles)
+            related = role_family.related_titles if role_family else []
+            all_t = user_titles + related
+            role_title_q = _build_role_title_q(all_t)
+            # Note: embedding layer not used for prev period (perf tradeoff)
+
+        prev_skills = _prev_period_skills(
+            days=30, limit=50, country=effective_country,
+            role_titles_hash=titles_hash, role_title_q=role_title_q,
+        )
 
         top_skills = []
         for item in trending:
@@ -540,6 +733,7 @@ class FeedInsightsView(APIView):
 
         data = {
             'country': country if not is_global else 'all',
+            'role_filter': role_info,
             'total_jobs_last_30d': total,
             'avg_salary_usd': avg_salary,
             'top_skills': top_skills,
@@ -562,6 +756,10 @@ class FeedTrendingSkillsView(APIView):
     """
     Compare the user's skills against market demand.
 
+    **Role-aware**: by default scopes skill aggregation to jobs matching
+    the user's target roles (hybrid LLM map + embedding).  Pass
+    ``?role=all`` to see the full market.
+
     Returns three buckets:
     - ``matches``: skills the user has that are in demand
     - ``gaps``: in-demand skills the user is missing
@@ -579,9 +777,33 @@ class FeedTrendingSkillsView(APIView):
         country_param = request.query_params.get('country', '').strip()
         user_country = _get_user_country(request.user)
         country = country_param if country_param else user_country
-        effective_country = '' if country.lower() == 'all' else country
+        is_global = country.lower() == 'all'
+        effective_country = '' if is_global else country
 
-        trending = _trending_skills_raw(days=30, limit=30, country=effective_country)
+        # Role param
+        role_param = request.query_params.get('role', '').strip()
+        skip_role_scope = role_param.lower() == 'all'
+
+        user_titles = _get_user_titles(request.user) if not skip_role_scope else []
+        titles_hash = RoleFamily.compute_hash(user_titles) if user_titles else 'all'
+
+        # Build role-scoped queryset for trending aggregation
+        since = timezone.now() - timedelta(days=30)
+        qs = DiscoveredJob.objects.filter(
+            created_at__gte=since,
+            skills_required__isnull=False,
+        )
+        if effective_country:
+            qs = _filter_by_country(qs, effective_country)
+
+        role_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
+        if not skip_role_scope:
+            qs, role_info, _ = _get_role_scoped_qs(request.user, qs)
+
+        trending = _trending_skills_raw(
+            days=30, limit=30, country=effective_country,
+            role_titles_hash=titles_hash, queryset=qs,
+        )
         trending_set = {t['skill'] for t in trending}
         trending_map = {t['skill']: t['count'] for t in trending}
 
@@ -613,6 +835,7 @@ class FeedTrendingSkillsView(APIView):
         match_pct = round(len(matches) / max(len(trending), 1) * 100, 1)
 
         data = {
+            'role_filter': role_info,
             'matches': matches,
             'gaps': gaps,
             'niche': niche,
@@ -859,6 +1082,9 @@ class DashboardSkillGapView(APIView):
     Returns ``[{skill, user_score, market_score}]`` for a radar chart.
     User score = 100 if skill is in their profile, 0 otherwise.
     Market score = normalised demand (0-100).
+
+    **Role-aware**: scoped to the user's target roles by default.
+    Pass ``?role=all`` for full market.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -868,9 +1094,30 @@ class DashboardSkillGapView(APIView):
         user_country = _get_user_country(request.user)
         country_param = request.query_params.get('country', '').strip()
         country = country_param if country_param else user_country
-        effective_country = '' if country.lower() == 'all' else country
+        is_global = country.lower() == 'all'
+        effective_country = '' if is_global else country
 
-        trending = _trending_skills_raw(days=30, limit=12, country=effective_country)
+        role_param = request.query_params.get('role', '').strip()
+        skip_role_scope = role_param.lower() == 'all'
+
+        user_titles = _get_user_titles(request.user) if not skip_role_scope else []
+        titles_hash = RoleFamily.compute_hash(user_titles) if user_titles else 'all'
+
+        # Build role-scoped queryset
+        since = timezone.now() - timedelta(days=30)
+        qs = DiscoveredJob.objects.filter(
+            created_at__gte=since,
+            skills_required__isnull=False,
+        )
+        if effective_country:
+            qs = _filter_by_country(qs, effective_country)
+        if not skip_role_scope:
+            qs, _, _ = _get_role_scoped_qs(request.user, qs)
+
+        trending = _trending_skills_raw(
+            days=30, limit=12, country=effective_country,
+            role_titles_hash=titles_hash, queryset=qs,
+        )
 
         if not trending:
             return Response([])
@@ -907,6 +1154,9 @@ class DashboardMarketInsightsView(APIView):
 
     Weekly insight widget — a short summary of market trends.
     Returns structured data the frontend can render as a card.
+
+    **Role-aware**: scoped to the user's target roles by default.
+    Pass ``?role=all`` for full market.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ReadOnlyThrottle]
@@ -917,7 +1167,12 @@ class DashboardMarketInsightsView(APIView):
         country = country_param if country_param else user_country
         is_global = country.lower() == 'all'
 
-        cache_key = f'dashboard:market_insights:{country.lower()}'
+        role_param = request.query_params.get('role', '').strip()
+        skip_role_scope = role_param.lower() == 'all'
+        user_titles = _get_user_titles(request.user) if not skip_role_scope else []
+        titles_hash = RoleFamily.compute_hash(user_titles) if user_titles else 'all'
+
+        cache_key = f'dashboard:market_insights:{country.lower()}:{titles_hash}'
         cached = cache.get(cache_key)
         if cached is not None:
             return Response(cached)
@@ -935,6 +1190,11 @@ class DashboardMarketInsightsView(APIView):
             qs_this = _filter_by_country(qs_this, country)
             qs_last = _filter_by_country(qs_last, country)
 
+        # Apply role scoping to both periods
+        if not skip_role_scope:
+            qs_this, _, _ = _get_role_scoped_qs(request.user, qs_this)
+            qs_last, _, _ = _get_role_scoped_qs(request.user, qs_last)
+
         this_week_count = qs_this.count()
         last_week_count = qs_last.count()
 
@@ -943,7 +1203,10 @@ class DashboardMarketInsightsView(APIView):
             if last_week_count else 0.0
         )
 
-        trending = _trending_skills_raw(days=7, limit=5, country='' if is_global else country)
+        trending = _trending_skills_raw(
+            days=7, limit=5, country='' if is_global else country,
+            role_titles_hash=titles_hash, queryset=qs_this,
+        )
         top_skill = trending[0]['skill'] if trending else None
 
         data = {

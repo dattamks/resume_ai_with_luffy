@@ -156,7 +156,7 @@ resume_ai_with_luffy/
 │   │                          #   GeneratedResume, JobSearchProfile, JobAlert, DiscoveredJob,
 │   │                          #   JobMatch, JobAlertRun, CrawlSource, SentAlert, Notification,
 │   │                          #   ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate,
-│   │                          #   ResumeChat, ResumeChatMessage
+│   │                          #   ResumeChat, ResumeChatMessage, RoleFamily
 │   ├── views.py               #   All analyzer API views (analyze, analyses, resumes, dashboard,
 │   │                          #   share, generate, job alerts, notifications, version history,
 │   │                          #   interview prep, cover letter, templates)
@@ -165,8 +165,8 @@ resume_ai_with_luffy/
 │   ├── views_health.py        #   Health check endpoint
 │   ├── serializers.py         #   DRF serializers for all analyzer models
 │   ├── tasks.py               #   Celery tasks (analysis, PDF gen, resume gen, job crawl,
-│   │                          #   interview prep, cover letter, cleanup, flush tokens)
-│   ├── signals.py             #   File cleanup signals (post_delete for Resume, ResumeAnalysis)
+│   │                          #   interview prep, cover letter, role family gen, cleanup, flush tokens)
+│   ├── signals.py             #   File cleanup signals + role family generation on JSP save
 │   ├── urls.py                #   URL routing for /api/v1/* analyzer endpoints
 │   ├── admin.py               #   Django admin for all analyzer models
 │   └── services/              #   Business logic modules:
@@ -174,6 +174,7 @@ resume_ai_with_luffy/
 │       ├── pdf_extractor.py   #     PDF text extraction (pdfplumber)
 │       ├── jd_fetcher.py      #     JD URL scraping (requests + BeautifulSoup + Firecrawl)
 │       ├── resume_understanding.py#  Combined resume parsing + career profile at upload (LLM)
+│       ├── resume_parser.py   #     (Legacy) Structured resume data extraction
 │       ├── resume_generator.py#     LLM-based resume rewriting
 │       ├── pdf_report.py      #     Analysis report PDF generation
 │       ├── template_registry.py#    Resume template → renderer mapping
@@ -186,8 +187,10 @@ resume_ai_with_luffy/
 │       ├── resume_chat_service.py#  Conversational builder session logic
 │       ├── interview_prep.py  #     Interview prep from DB question bank (instant, no LLM)
 │       ├── cover_letter.py    #     Cover letter generation
+│       ├── job_search_profile.py#   Resume → job search profile extraction
+│       ├── job_matcher.py     #     (Legacy) Job matching with relevance scoring
 │       ├── embedding_service.py#    Text embedding generation
-│       ├── embedding_matcher.py#    Vector similarity matching (pgvector)
+│       ├── embedding_matcher.py#    Vector similarity matching only (pgvector, no LLM fallback)
 │       └── ai_providers/      #     LLM provider abstraction:
 │           ├── factory.py     #       get_ai_provider() → configured provider
 │           └── openrouter_provider.py # OpenRouter API client
@@ -1015,6 +1018,7 @@ extract_job_search_profile_task   2        15s       After alert created
 crawl_jobs_for_alert_task         1        30s       Beat schedule / manual
 match_jobs_task                   1        15s       After crawl done
 generate_cover_letter_task        2        15s       API request
+generate_role_family_task         2        30s exp   JSP post_save signal
 cleanup_stale_analyses            0        —         Beat: every 15 min
 flush_expired_tokens              0        —         Beat: daily
 send_weekly_digest_task           0        —         Beat: Monday 9 AM UTC

@@ -53,8 +53,26 @@ class TopCompanySerializer(serializers.Serializer):
     job_count = serializers.IntegerField()
 
 
+class RoleFilterSerializer(serializers.Serializer):
+    """Role scoping metadata included in insights/trending responses."""
+    source_titles = serializers.ListField(
+        child=serializers.CharField(), help_text='User\'s target titles from resume',
+    )
+    related_titles = serializers.ListField(
+        child=serializers.CharField(), help_text='LLM-generated related titles',
+    )
+    method = serializers.CharField(
+        help_text='Scoping method: llm_map+embedding | llm_map | titles_only | none',
+    )
+    scoped = serializers.BooleanField(help_text='Whether role scoping was applied')
+    broadened = serializers.BooleanField(
+        help_text='True if auto-broadened due to too few role-scoped results',
+    )
+
+
 class InsightsSerializer(serializers.Serializer):
     """Composite response for GET /api/v1/feed/insights/."""
+    role_filter = RoleFilterSerializer()
     total_jobs_last_30d = serializers.IntegerField()
     avg_salary_usd = serializers.IntegerField(allow_null=True)
     top_skills = TrendingSkillSerializer(many=True)
@@ -77,6 +95,7 @@ class SkillGapItemSerializer(serializers.Serializer):
 
 class TrendingVsUserSerializer(serializers.Serializer):
     """Response for GET /api/v1/feed/trending-skills/."""
+    role_filter = RoleFilterSerializer()
     matches = SkillGapItemSerializer(many=True, help_text='Skills you have that are in demand')
     gaps = SkillGapItemSerializer(many=True, help_text='In-demand skills you\'re missing')
     niche = SkillGapItemSerializer(many=True, help_text='Skills you have that aren\'t trending')

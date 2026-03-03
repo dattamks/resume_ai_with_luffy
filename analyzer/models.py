@@ -816,6 +816,64 @@ class CrawlSource(models.Model):
         return f"[{status}] {self.name} ({self.get_source_type_display()})"
 
 
+class RoleFamily(models.Model):
+    """
+    LLM-generated mapping of related job titles for a set of source roles.
+
+    Shared across users — keyed by a hash of sorted, lowercased source
+    titles so that two users with the same target roles (e.g. both
+    "Data Analyst") reuse one record instead of duplicating LLM calls.
+
+    Used by feed/insights/trending-skills endpoints to scope aggregations
+    to role-relevant jobs (Layer 1 of the hybrid role-matching strategy).
+    """
+
+    titles_hash = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text='SHA-256 of sorted, lower-cased source titles — deduplication key.',
+    )
+    source_titles = models.JSONField(
+        default=list,
+        help_text='Original titles from JobSearchProfile, e.g. ["Data Analyst", "BI Analyst"].',
+    )
+    related_titles = models.JSONField(
+        default=list,
+        help_text='LLM-generated related titles, e.g. ["Business Analyst", "Product Analyst", ...].',
+    )
+    generated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-generated_at']
+        verbose_name = 'Role Family'
+        verbose_name_plural = 'Role Families'
+
+    def __str__(self):
+        src = ', '.join(self.source_titles[:3])
+        extra = f' +{len(self.source_titles) - 3}' if len(self.source_titles) > 3 else ''
+        return f"RoleFamily: {src}{extra} → {len(self.related_titles)} related"
+
+    @staticmethod
+    def compute_hash(titles: list[str]) -> str:
+        """Deterministic hash for a list of role titles."""
+        import hashlib
+        normalised = sorted(t.strip().lower() for t in titles if t.strip())
+        return hashlib.sha256('|'.join(normalised).encode()).hexdigest()
+
+    @classmethod
+    def get_or_none(cls, titles: list[str]):
+        """Look up an existing RoleFamily for the given title set."""
+        if not titles:
+            return None
+        h = cls.compute_hash(titles)
+        try:
+            return cls.objects.get(titles_hash=h)
+        except cls.DoesNotExist:
+            return None
+
+
 class JobSearchProfile(models.Model):
     """
     LLM-extracted job search criteria from a resume.

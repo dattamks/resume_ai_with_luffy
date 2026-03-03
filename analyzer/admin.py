@@ -131,7 +131,27 @@ class CompanyCareerPageAdmin(admin.ModelAdmin):
 
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
 
-from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun, CrawlSource  # noqa: E402
+from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun, CrawlSource, RoleFamily  # noqa: E402
+
+
+@admin.register(RoleFamily)
+class RoleFamilyAdmin(admin.ModelAdmin):
+    list_display = ('id', 'source_titles_short', 'related_count', 'generated_at', 'created_at')
+    search_fields = ('source_titles', 'related_titles', 'titles_hash')
+    readonly_fields = ('titles_hash', 'source_titles', 'related_titles', 'generated_at', 'created_at')
+    list_per_page = 50
+
+    @admin.display(description='Source Titles')
+    def source_titles_short(self, obj):
+        titles = obj.source_titles or []
+        text = ', '.join(titles[:3])
+        if len(titles) > 3:
+            text += f' +{len(titles) - 3}'
+        return text
+
+    @admin.display(description='Related')
+    def related_count(self, obj):
+        return len(obj.related_titles or [])
 
 
 @admin.register(JobSearchProfile)

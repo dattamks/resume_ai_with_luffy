@@ -5,75 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.38.0] — 2026-03-03
+## [0.38.0] — 2026-03-05
 
-### Ingest Upsert Fix & Data Cleanup
+### Role-Based Feed & Dashboard Scoping
 
-#### Fixed — Job Ingest Upsert Blocked by DRF Validator (`analyzer/serializers_ingest.py`)
-- `DiscoveredJobIngestSerializer` had DRF's auto-generated `UniqueTogetherValidator` for `(source, external_id)` which rejected duplicate pairs at validation time — before the `update_or_create()` in `create()` ever ran.
-- Fix: added `validators = []` to `Meta` to disable the auto-generated validator. The serializer's `create()` method intentionally uses `update_or_create()` for upsert semantics, so the DRF-level uniqueness check was counterproductive.
-- Both `POST /api/v1/ingest/jobs/` and `POST /api/v1/ingest/jobs/bulk/` are now truly idempotent — re-pushing a job with the same `(source, external_id)` updates the existing record instead of returning a 400 error.
+#### Added — RoleFamily Model & LLM Task
+- New `RoleFamily` model stores LLM-generated related job titles per unique title set (SHA-256 deduplicated, shared across users).
+- New Celery task `generate_role_family_task` calls Claude 3.5 Haiku to produce 10–15 related titles. Auto-retries (2x) with exponential backoff.
+- `post_save` signal on `JobSearchProfile` triggers role family generation when titles change.
+- Migration: `0034_add_role_family_model.py`.
 
-#### Data — Purged Legacy Firecrawl Jobs
-- Deleted all 554 `DiscoveredJob` records with `source='firecrawl'` to allow a clean re-sync from the crawler bot.
-- No cascade impact — zero `JobMatch` rows were linked to these jobs.
+#### Added — Hybrid Two-Layer Role Scoping
+- **Layer 1 — LLM Role Map:** Filters jobs by `title__icontains` against user titles + LLM-related titles.
+- **Layer 2 — Embedding proximity:** Includes jobs within cosine distance ≤ 0.40 of user's resume embedding.
+- **Auto-broadening:** Drops role filter if < 5 results, marks `broadened: true` in response.
+- Applied to 4 endpoints: `feed/insights/`, `feed/trending-skills/`, `dashboard/skill-gap/`, `dashboard/market-insights/`.
 
----
+#### Added — `?role=all` Query Param
+- Pass `?role=all` on any of the 4 scoped endpoints to disable role scoping and see all roles.
 
-## [0.37.0] — 2026-03-03
-
-### Generated Resumes Are First-Class Resumes
-
-#### Added — Auto-Create Resume from GeneratedResume (`analyzer/tasks.py`)
-- New helper `_create_resume_from_generated()`: when a resume generation (analysis-based or chat builder) completes, a full `Resume` record is automatically created from the output.
-- The auto-created Resume has `processing_status=done`, pre-populated `parsed_content`, `career_profile`, and `resume_text` — no second LLM call needed.
-- SHA-256 deduplication: if the generated file hash matches an existing Resume for the same user, the system links to the existing record instead of creating a duplicate.
-- Auto-default: if the user has no default resume, the auto-created Resume is set as default.
-- `JobSearchProfile` auto-created from career profile (titles, skills, seniority, locations).
-- `ResumeVersion` entry created for version tracking.
-- `compute_resume_embedding_task` chained for pgvector similarity matching.
-- Best-effort: if auto-creation fails, the generated resume itself is still marked as done.
-
-#### Added — Resume FK on GeneratedResume (`analyzer/models.py`)
-- New `resume` FK on `GeneratedResume` → `Resume` (nullable, SET_NULL).
-- Migration: `0032_add_resume_fk_to_generated_resume.py`.
-
-#### Added — Builder Task Auto-Creates Resume (`analyzer/tasks.py`)
-- `render_builder_resume_task` now also calls `_create_resume_from_generated()` after successful render.
-
-#### Added — Helper Functions (`analyzer/tasks.py`)
-- `_build_career_profile(resume_content, analysis)`: derives career profile (titles, skills, seniority, industries, locations, experience_years) from structured resume content.
-- `_resume_content_to_text(resume_content)`: converts structured JSON to plain text for embedding computation.
-
-#### Changed — Serializer (`analyzer/serializers.py`)
-- `GeneratedResumeSerializer` now includes `resume` field (UUID, read-only).
-
-#### Added — Tests (`analyzer/tests/test_generated_resume_linkage.py`)
-- 27 new tests: unit tests for `_build_career_profile` and `_resume_content_to_text`, integration tests for auto-creation (happy path, dedup, default handling, DOCX→PDF, best-effort error handling, embedding chaining), serializer tests, full task integration tests for both generation and builder tasks.
+#### Added — `role_filter` Response Object
+- New `role_filter` object in insights and trending-skills responses: `source_titles`, `related_titles`, `method`, `scoped`, `broadened`.
+- Cache keys now include `titles_hash` for role-differentiated caching.
 
 #### Documentation
-- `FRONTEND_API_GUIDE.md` updated: version bumped to v0.37.0, `resume` field added to all GeneratedResume response schemas, TypeScript interface updated, auto-creation behavior documented in §19 and §29.6, changelog entries added.
-
----
-
-## [0.36.0] — 2026-03-03
-
-### Code Cleanup — Deprecated Module Removal
-
-#### Removed — Deprecated Service Modules
-- Deleted `analyzer/services/resume_parser.py` — functionality consolidated into `resume_understanding.py`.
-- Deleted `analyzer/services/job_search_profile.py` — functionality consolidated into `resume_understanding.py`.
-- Deleted `analyzer/services/job_matcher.py` — functionality consolidated into `embedding_matcher.py`.
-- Removed all imports and references from production code (`tasks.py`, `analyzer.py`, `embedding_matcher.py`, `resume_understanding.py`).
-- Updated/removed affected tests in `test_resume_parser.py` and `test_job_alerts.py`.
-
-#### Added — PostgreSQL Development Setup (`README.md`)
-- Full local development setup instructions for PostgreSQL + pgvector + Redis.
-- Docker, Ubuntu, and macOS installation paths.
-- Seed commands and Celery run instructions.
-
-#### Documentation
-- `ARCHITECTURE_FLOW.md` updated: removed references to deleted modules.
+- `FRONTEND_API_GUIDE.md` §30.2, §30.3, §30.7, §30.8 updated with `?role` param, `role_filter` response, and hybrid scoping explanation.
+- `ARCHITECTURE_FLOW.md` updated: `RoleFamily` in model list, `generate_role_family_task` in Celery table, signals description.
 
 ---
 
