@@ -9,7 +9,7 @@
 | 🔴 IMMEDIATE | Next sprint — implement now | 0 (all done) |
 | 🟡 P2 | Important — implement soon | 0 (all done) |
 | 🔵 P3 | Important — plan for later | 1 |
-| ⚪ DEFERRED | Backlog — revisit in future | 12 |
+| ⚪ DEFERRED | Backlog — revisit in future | 10 |
 
 ---
 
@@ -689,16 +689,16 @@ FRONTEND_URL=https://<frontend>.up.railway.app
 
 > API endpoints & models needed to power the in-app feed/home page.
 
-- [ ] 🔵 **Personalized Job Opportunities** — `GET /api/v1/feed/jobs/` endpoint returning top matching `DiscoveredJob` records ranked by `JobSearchProfile` embedding similarity; paginated, filterable by remote/location/seniority
-- [ ] 🔵 **Career Insights & Market Intelligence** — `GET /api/v1/feed/insights/` endpoint aggregating trending skills, top hiring companies, avg salary by role/location from `DiscoveredJob` data; cache daily
-- [ ] 🔵 **Trending vs Your Profile** — `GET /api/v1/feed/trending-skills/` endpoint comparing user's `JobSearchProfile.skills` against trending skills from recent `DiscoveredJob.skills_required`; returns matches, gaps, and growth %
-- [ ] 🔵 **Job Alert & Interview Prep Hub** — `GET /api/v1/feed/hub/` composite endpoint returning active `JobAlert` summary + pending `InterviewPrep` + recent `CoverLetter` in one call
-- [ ] 🔵 **Active Job Alerts Summary** — included in hub endpoint; per-alert stats: match count this week, last run status, health indicator (0 matches = suggest broadening)
-- [ ] 🔵 **Upcoming Interview Preps** — included in hub endpoint; list `InterviewPrep` with status=done linked to recent `JobMatch` entries with feedback=applied
+- [x] 🔵 **Personalized Job Opportunities** — `GET /api/v1/feed/jobs/` endpoint returning top matching `DiscoveredJob` records ranked by `JobSearchProfile` embedding similarity; paginated, filterable by remote/location/seniority *(v0.35.0 — `FeedJobsView` in `views_feed.py`)*
+- [x] 🔵 **Career Insights & Market Intelligence** — `GET /api/v1/feed/insights/` endpoint aggregating trending skills, top hiring companies, avg salary by role/location from `DiscoveredJob` data; cache daily *(v0.35.0 — `FeedInsightsView` in `views_feed.py`)*
+- [x] 🔵 **Trending vs Your Profile** — `GET /api/v1/feed/trending-skills/` endpoint comparing user's `JobSearchProfile.skills` against trending skills from recent `DiscoveredJob.skills_required`; returns matches, gaps, and growth % *(v0.35.0 — `FeedTrendingSkillsView` in `views_feed.py`)*
+- [x] 🔵 **Job Alert & Interview Prep Hub** — `GET /api/v1/feed/hub/` composite endpoint returning active `JobAlert` summary + pending `InterviewPrep` + recent `CoverLetter` in one call *(v0.35.0 — `FeedHubView` in `views_feed.py`)*
+- [x] 🔵 **Active Job Alerts Summary** — included in hub endpoint; per-alert stats: match count this week, last run status, health indicator (0 matches = suggest broadening) *(v0.35.0)*
+- [x] 🔵 **Upcoming Interview Preps** — included in hub endpoint; list `InterviewPrep` with status=done linked to recent `JobMatch` entries with feedback=applied *(v0.35.0)*
 - [ ] 🔵 **Applied Jobs Tracker** — new `JobApplication` model (FK to `DiscoveredJob` + User, status enum: applied/interviewing/offered/rejected/withdrawn, notes, applied_at); `GET/POST /api/v1/applications/`
-- [ ] 🔵 **Personalized Recommendations** — `GET /api/v1/feed/recommendations/` endpoint; AI-suggested next actions based on resume gaps, missing trending skills, unused features (no interview prep yet, etc.)
+- [x] 🔵 **Personalized Recommendations** — `GET /api/v1/feed/recommendations/` endpoint; AI-suggested next actions based on resume gaps, missing trending skills, unused features (no interview prep yet, etc.) *(v0.35.0 — `FeedRecommendationsView` in `views_feed.py`)*
 - [ ] ⚪ **Referral & Connections** — `ReferralCode` model (user, code, uses, max_uses, bonus_credits); `GET/POST /api/v1/referrals/`; credit reward on referred user's first analysis
-- [ ] ⚪ **Onboarding / Empty States** — `GET /api/v1/feed/onboarding/` endpoint returning user completion checklist (has_resume, has_analysis, has_alert, has_interview_prep, has_cover_letter) + suggested next step
+- [x] ⚪ **Onboarding / Empty States** — `GET /api/v1/feed/onboarding/` endpoint returning user completion checklist (has_resume, has_analysis, has_alert, has_interview_prep, has_cover_letter) + suggested next step *(v0.35.0 — `FeedOnboardingView` in `views_feed.py`)*
 
 ---
 
@@ -742,14 +742,14 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 
 #### Backend Changes
 
-- [ ] **New merged prompt** — Combine `RESUME_PARSE_PROMPT_TEMPLATE` (from `resume_parser.py`) and `_PROMPT_TEMPLATE` (from `job_search_profile.py`) into a single prompt that returns both structured resume data AND career profile in one JSON response. New file: `analyzer/services/resume_understanding.py`
-- [ ] **New Celery task: `process_resume_upload_task(resume_id)`** — Runs automatically on upload. Pipeline: extract PDF text → call merged LLM prompt → save parsed_content + career profile → compute embedding. Chains: `compute_resume_embedding_task`
-- [ ] **Move `parsed_content` to Resume model** — Currently lives on `ResumeAnalysis` (per-analysis). Should be per-resume since it describes the resume itself, not the resume-vs-JD comparison. Add `Resume.parsed_content` (JSONField, null=True) and `Resume.processing_status` (pending/processing/done/failed)
-- [ ] **Trigger on upload** — In `AnalyzeResumeView.post()`, after resume save, dispatch `process_resume_upload_task.delay(resume.id)` if resume is new (not a duplicate hash). Also trigger from any future standalone upload endpoint.
-- [ ] **Update `extract_job_search_profile_task`** — Remove LLM call. Instead, read from `Resume.parsed_content` career profile fields and save to `JobSearchProfile`. Becomes a pure DB copy.
-- [ ] **Update `compute_resume_embedding_task`** — No change, but now chains from `process_resume_upload_task` instead of `extract_job_search_profile_task`
-- [ ] **Deprecate standalone `resume_parser.py`** — Functionality merged into `resume_understanding.py`
-- [ ] **Deprecate standalone `job_search_profile.py` LLM call** — Profile data comes from upload-time parse
+- [x] **New merged prompt** — Combine `RESUME_PARSE_PROMPT_TEMPLATE` (from `resume_parser.py`) and `_PROMPT_TEMPLATE` (from `job_search_profile.py`) into a single prompt that returns both structured resume data AND career profile in one JSON response. New file: `analyzer/services/resume_understanding.py` *(v0.35.0)*
+- [x] **New Celery task: `process_resume_upload_task(resume_id)`** — Runs automatically on upload. Pipeline: extract PDF text → call merged LLM prompt → save parsed_content + career profile → compute embedding. Chains: `compute_resume_embedding_task` *(v0.35.0)*
+- [x] **Move `parsed_content` to Resume model** — Currently lives on `ResumeAnalysis` (per-analysis). Should be per-resume since it describes the resume itself, not the resume-vs-JD comparison. Add `Resume.parsed_content` (JSONField, null=True) and `Resume.processing_status` (pending/processing/done/failed) *(v0.35.0)*
+- [x] **Trigger on upload** — In `AnalyzeResumeView.post()`, after resume save, dispatch `process_resume_upload_task.delay(resume.id)` if resume is new (not a duplicate hash). Also trigger from any future standalone upload endpoint. *(v0.35.0)*
+- [x] **Update `extract_job_search_profile_task`** — Remove LLM call. Instead, read from `Resume.parsed_content` career profile fields and save to `JobSearchProfile`. Becomes a pure DB copy. *(v0.35.0)*
+- [x] **Update `compute_resume_embedding_task`** — No change, but now chains from `process_resume_upload_task` instead of `extract_job_search_profile_task` *(v0.35.0)*
+- [ ] **Deprecate standalone `resume_parser.py`** — Functionality merged into `resume_understanding.py` *(superseded but file still exists)*
+- [ ] **Deprecate standalone `job_search_profile.py` LLM call** — Profile data comes from upload-time parse *(superseded but file still exists)*
 
 #### Endpoints Impacted
 
@@ -771,9 +771,9 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 
 #### Backend Changes
 
-- [ ] **Remove `STEP_RESUME_PARSE` from `analyzer.py`** — Delete `_step_resume_parse` method. Remove from `_STEPS` list. Pipeline goes from 5 steps → 4 steps.
-- [ ] **Update `_step_parse_result`** — If analysis needs `parsed_content`, read from `analysis.resume.parsed_content` instead of running a separate LLM call
-- [ ] **Keep backward compat** — `ResumeAnalysis.parsed_content` can remain as a denormalized copy (populated from `Resume.parsed_content` during `_step_parse_result`) or become a read-through property
+- [x] **Remove `STEP_RESUME_PARSE` from `analyzer.py`** — Delete `_step_resume_parse` method. Remove from `_STEPS` list. Pipeline goes from 5 steps → 4 steps. *(v0.35.0)*
+- [x] **Update `_step_parse_result`** — If analysis needs `parsed_content`, read from `analysis.resume.parsed_content` instead of running a separate LLM call *(v0.35.0)*
+- [x] **Keep backward compat** — `ResumeAnalysis.parsed_content` can remain as a denormalized copy (populated from `Resume.parsed_content` during `_step_parse_result`) or become a read-through property *(v0.35.0)*
 
 #### Endpoints Impacted
 
@@ -792,12 +792,12 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 
 #### Backend Changes
 
-- [ ] **New model: `InterviewQuestion`** — Fields: `category` (behavioral/technical/situational/role_specific/gap_based), `question` (TextField), `why_asked` (TextField), `sample_answer_template` (TextField with `{role}`, `{company}`, `{skill}` placeholders), `difficulty` (easy/medium/hard), `tags` (JSONField — skill/keyword tags), `roles` (JSONField — applicable role patterns), `is_active` (bool), `created_at`
-- [ ] **Seed data: management command `load_interview_questions`** — Populate 100-200 curated questions covering all categories. Tagged by common roles (software engineer, data analyst, product manager, etc.) and skills (Python, SQL, leadership, etc.)
-- [ ] **Rewrite `interview_prep.py` service** — Replace LLM call with DB query: filter `InterviewQuestion` by `analysis.jd_role` (match against `roles` JSON), `analysis.keyword_analysis.missing_keywords` (match against `tags`), section scores < 70 (gap_based category). Return 10-15 questions. Fill `sample_answer_template` placeholders with analysis data.
-- [ ] **Simplify `generate_interview_prep_task`** — No longer async LLM call. Becomes synchronous DB lookup. Can run inline in the view (no Celery needed).
-- [ ] **Update `InterviewPrepView`** — Return 200 with results immediately instead of 202 + polling
-- [ ] **Remove `InterviewPrepStatusView`** — No longer needed (no async processing)
+- [x] **New model: `InterviewQuestion`** — Fields: `category` (behavioral/technical/situational/role_specific/gap_based), `question` (TextField), `why_asked` (TextField), `sample_answer_template` (TextField with `{role}`, `{company}`, `{skill}` placeholders), `difficulty` (easy/medium/hard), `tags` (JSONField — skill/keyword tags), `roles` (JSONField — applicable role patterns), `is_active` (bool), `created_at` *(v0.35.0 — migration 0031)*
+- [x] **Seed data: management command `load_interview_questions`** — Populate 100-200 curated questions covering all categories. Tagged by common roles (software engineer, data analyst, product manager, etc.) and skills (Python, SQL, leadership, etc.) *(v0.35.0)*
+- [x] **Rewrite `interview_prep.py` service** — Replace LLM call with DB query: filter `InterviewQuestion` by `analysis.jd_role` (match against `roles` JSON), `analysis.keyword_analysis.missing_keywords` (match against `tags`), section scores < 70 (gap_based category). Return 10-15 questions. Fill `sample_answer_template` placeholders with analysis data. *(v0.35.0 — `generate_interview_prep_from_db()`)*
+- [x] **Simplify `generate_interview_prep_task`** — No longer async LLM call. Becomes synchronous DB lookup. Can run inline in the view (no Celery needed). *(v0.35.0)*
+- [x] **Update `InterviewPrepView`** — Return 200 with results immediately instead of 202 + polling *(v0.35.0)*
+- [x] **Remove `InterviewPrepStatusView`** — No longer needed (no async processing) *(v0.35.0)*
 
 #### Endpoints Impacted
 
@@ -817,8 +817,8 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 
 #### Backend Changes
 
-- [ ] **Remove `BulkAnalyzeView`** from `analyzer/views.py`
-- [ ] **Remove URL** `path('analyze/bulk/', ...)` from `analyzer/urls.py`
+- [x] **Remove `BulkAnalyzeView`** from `analyzer/views.py` *(v0.35.0)*
+- [x] **Remove URL** `path('analyze/bulk/', ...)` from `analyzer/urls.py` *(v0.35.0)*
 
 #### Endpoints Impacted
 
@@ -836,8 +836,8 @@ Job search profile→ 0 LLM calls (already extracted at upload)
 
 #### Backend Changes
 
-- [ ] **Remove `_fallback_llm_matching()`** from `embedding_matcher.py`
-- [ ] **Deprecate / remove `job_matcher.py`** — No longer called from anywhere
+- [x] **Remove `_fallback_llm_matching()`** from `embedding_matcher.py` *(v0.35.0)*
+- [ ] **Deprecate / remove `job_matcher.py`** — No longer called from anywhere *(file still exists, still imported in tests)*
 - [ ] **Ensure dev environments use PostgreSQL** — Document Docker-based local PostgreSQL setup as required
 
 #### Endpoints Impacted

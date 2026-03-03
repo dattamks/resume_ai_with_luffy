@@ -1,7 +1,7 @@
 # Frontend–Backend Gap Analysis & Prioritized Backlog
 
-> **Generated:** 2026-02-27 &nbsp;|&nbsp; **Backend version:** v0.21.0
-> Items audited against the live codebase. P0/P1/P2 all implemented in v0.21.0. P3 items remain as TODO.
+> **Generated:** 2026-02-27 &nbsp;|&nbsp; **Updated:** 2026-03-03 &nbsp;|&nbsp; **Backend version:** v0.35.0
+> All P0, P1, and P2 items are now **implemented**. P3 items remain as backlog.
 
 ---
 
@@ -41,49 +41,43 @@ Items 6 & 18 are the same (aggregated missing keywords). Items 7 & 19 are the sa
 
 ---
 
-### P0 — Critical (Fake data visible to users)
+### P0 — Critical ✅ ALL DONE
 
-| # | Item | Feasibility | Effort | Notes |
-|---|------|-------------|--------|-------|
-| 15 | **first_name / last_name writable on PUT /auth/me/** | Easy — add 2 fields to `UpdateUserSerializer` | **XS** | Frontend submits these but they silently revert on reload. Quick serializer fix. |
-| 5/17 | **keyword_match_percent in score_trend** | Easy — extract from existing `scores` JSONField | **XS** | Data already in DB. Just add `keyword_match_percent` to the score_trend loop in `DashboardStatsView`. |
-| 6/18 | **Aggregated top missing keywords** | Easy — aggregate from existing `keyword_analysis` JSONField | **S** | Data is per-analysis in `keyword_analysis.missing_keywords[]`. Aggregate top-N across recent analyses with `Counter`. |
-| 7/19 | **Credit usage history (monthly)** | Easy — aggregate from `WalletTransaction` model | **S** | Group `WalletTransaction` by month for debit types. Add to dashboard stats response. |
-
-> **Subtotal: 4 items, ~3 hours total**
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| 15 | **first_name / last_name writable on PUT /auth/me/** | ✅ DONE | `UpdateUserSerializer` includes `first_name`, `last_name` in fields |
+| 5/17 | **keyword_match_percent in score_trend** | ✅ DONE | `DashboardStatsView` extracts `scores.get('keyword_match_percent')` into each `score_trend` item |
+| 6/18 | **Aggregated top missing keywords** | ✅ DONE | Aggregated via `Counter` from last 20 analyses, returned as `top_missing_keywords` (top 10) |
+| 7/19 | **Credit usage history (monthly)** | ✅ DONE | `WalletTransaction` grouped by month and type via ORM, returned as `credit_usage` |
 
 ---
 
-### P1 — High (Core feature gaps)
+### P1 — High ✅ ALL DONE
 
-| # | Item | Feasibility | Effort | Notes |
-|---|------|-------------|--------|-------|
-| 4 | **DELETE /generated-resumes/\<id\>/** | Easy — add detail view with destroy mixin | **S** | Model exists, just needs a `DestroyAPIView` route + user ownership check. Also delete file from R2. |
-| 21 | **Server-side search/filter/sort on analyses** | Easy — add `django-filter` + `SearchFilter` + `OrderingFilter` to `AnalysisListView` | **S** | DRF has built-in filter backends. Add `?search=`, `?status=`, `?sort=`, `?score_min=`, `?score_max=`. |
-| 22 | **Server-side search/filter/sort on resumes** | Easy — same pattern as #21 for `ResumeListView` | **XS** | Add `SearchFilter` on `original_filename` + `OrderingFilter`. |
-| 27 | **Payment history pagination** | Easy — switch from manual `[:limit]` to DRF `PageNumberPagination` | **XS** | Replace the manual limit/slice in `PaymentHistoryView` with standard DRF pagination. |
-| 20 | **Job alert total_matches count** | Easy — annotate queryset with `Count('matches')` | **XS** | Add `total_matches` annotation to `JobAlertListCreateView` queryset + serializer field. |
-| 24 | **Bulk delete resumes** | Easy — same pattern as existing `AnalysisBulkDeleteView` | **S** | Accept `{ids: [...]}`, validate ownership, delete files from R2, cascade-check active analyses. |
-| 13 | **Weekly job match count** | Moderate — aggregate `JobMatch` created in last 7 days | **S** | Add to dashboard stats or as a field on job alert serializer. `JobMatch.objects.filter(created_at__gte=7d).count()`. |
-
-> **Subtotal: 7 items, ~8 hours total**
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| 4 | **DELETE /generated-resumes/\<id\>/** | ✅ DONE | `GeneratedResumeDeleteView` in `views.py`, routed in `urls.py` |
+| 21 | **Server-side search/filter/sort on analyses** | ✅ DONE | `AnalysisListView` has `SearchFilter` + `OrderingFilter` backends |
+| 22 | **Server-side search/filter/sort on resumes** | ✅ DONE | `ResumeListView` has `SearchFilter` + `OrderingFilter` backends |
+| 27 | **Payment history pagination** | ✅ DONE | `PaymentHistoryView` uses `PageNumberPagination` with `page_size=20` |
+| 20 | **Job alert total_matches count** | ✅ DONE | `JobAlertSerializer.total_matches` via `SerializerMethodField`, queryset annotated with `Count('matches')` |
+| 24 | **Bulk delete resumes** | ✅ DONE | `ResumeBulkDeleteView` at `POST /resumes/bulk-delete/` |
+| 13 | **Weekly job match count** | ✅ DONE | `weekly_job_matches` in `DashboardStatsView` filters last 7 days |
 
 ---
 
-### P2 — Medium (Significant UX improvement)
+### P2 — Medium ✅ ALL DONE
 
-| # | Item | Feasibility | Effort | Notes |
-|---|------|-------------|--------|-------|
-| 2 | **Social links (website/GitHub/LinkedIn)** | Easy — add 3 URLFields to `UserProfile` + expose in serializer | **S** | New fields on `UserProfile`, add to `UpdateUserSerializer`. Migration + tests. |
-| 1 | **Avatar upload endpoint** | Moderate — change `avatar_url` from URLField to `ImageField`, add upload endpoint | **M** | Need: `ImageField` on UserProfile, upload view with size/type validation, R2 storage, `Pillow` for image processing. Keep URL fallback for Google OAuth. |
-| 16 | **avatar_url writable** | Tied to #1 — depends on avatar upload approach | **—** | If #1 is implemented, this is included. If skipping #1, allow setting `avatar_url` as a writable URL field (easier, less safe). |
-| 11 | **Resume health / staleness check** | Easy — compute from `Resume.uploaded_at` | **S** | Add `days_since_update` computed field to resume serializer. Frontend can show "Resume not updated in N days" from real data. Also add `last_analyzed_at` from most recent analysis. |
-| 31 | **Dedicated comparison endpoint** | Moderate — new view returning 2+ analyses side-by-side | **M** | `GET /api/analyses/compare/?ids=1,2` — validate ownership, return both analyses in a structured diff-friendly format. Saves frontend from 2 separate API calls + loading all analyses for dropdown. |
-| 32 | **Social share ("Share Score")** | Easy — share analysis already exists, just needs a lightweight score-only variant | **S** | Add a `GET /api/shared/<token>/summary/` returning only `{score, grade, role, name}` for social card preview. Or generate an OG-image URL. Existing share infra handles auth/tokens. |
-| 30 | **Export wallet/transaction data (CSV)** | Easy — stream `WalletTransaction` as CSV | **S** | New `GET /api/auth/wallet/transactions/export/` that returns `text/csv`. Same pattern as GDPR export but wallet-only. |
-| 12 | **Industry benchmark (percentile)** | Moderate — requires statistical computation across all users | **M** | Compute percentile rank of user's avg ATS score vs all users' scores. Cache result (expensive query). `PERCENT_RANK()` window function or Python computation. Privacy-safe since it's anonymous aggregation. |
-
-> **Subtotal: 8 items, ~25 hours total**
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| 2 | **Social links (website/GitHub/LinkedIn)** | ✅ DONE | `UserProfile` has `website_url`, `github_url`, `linkedin_url` fields, exposed in `UpdateUserSerializer` |
+| 1 | **Avatar upload endpoint** | ✅ DONE | `AvatarUploadView` at `POST /auth/avatar/`, validates JPEG/PNG/WebP, max 2 MB, R2 storage |
+| 16 | **avatar_url writable** | ✅ DONE | Included in avatar upload implementation |
+| 11 | **Resume health / staleness check** | ✅ DONE | `ResumeSerializer` has `days_since_upload` + `last_analyzed_at` computed fields |
+| 31 | **Dedicated comparison endpoint** | ✅ DONE | `AnalysisCompareView` at `GET /analyses/compare/?ids=`, supports 2–5 analyses |
+| 32 | **Social share ("Share Score")** | ✅ DONE | `SharedAnalysisSummaryView` at `GET /shared/<token>/summary/` for social card previews |
+| 30 | **Export wallet/transaction data (CSV)** | ✅ DONE | `WalletTransactionExportView` at `GET /auth/wallet/transactions/export/`, returns `text/csv` |
+| 12 | **Industry benchmark (percentile)** | ✅ DONE | Percentile rank computed in `DashboardStatsView`, returned as `industry_benchmark_percentile` |
 
 ---
 
