@@ -932,13 +932,12 @@ class DiscoveredJob(models.Model):
 
     SOURCE_FIRECRAWL = 'firecrawl'
     SOURCE_USER_ANALYSIS = 'user_analysis'
-    SOURCE_CHOICES = [
-        (SOURCE_FIRECRAWL, 'Firecrawl'),
-        (SOURCE_USER_ANALYSIS, 'User Analysis'),
-    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    source = models.CharField(max_length=30, choices=SOURCE_CHOICES, db_index=True)
+    source = models.CharField(
+        max_length=30, db_index=True,
+        help_text='Origin of the job posting (e.g. "firecrawl", "user_analysis").',
+    )
     external_id = models.CharField(
         max_length=255,
         help_text='Unique job ID from the source API',
