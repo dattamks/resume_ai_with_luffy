@@ -937,3 +937,47 @@ class DashboardActivityView(APIView):
         }
         serializer = ActivitySerializer(data)
         return Response(serializer.data)
+
+
+class DashboardActivityHistoryView(APIView):
+    """
+    GET /api/v1/dashboard/activity/history/
+
+    Daily activity history for the authenticated user.
+    Powers a GitHub-style activity heatmap or timeline.
+
+    Query params:
+        - ``days`` (int, default 90, max 365) — how many days of history
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request):
+        from .models import UserActivity
+
+        try:
+            days = min(max(int(request.query_params.get('days', 90)), 1), 365)
+        except (ValueError, TypeError):
+            days = 90
+
+        since = timezone.now().date() - timedelta(days=days)
+
+        rows = (
+            UserActivity.objects
+            .filter(user=request.user, date__gte=since)
+            .order_by('-date')
+            .values('date', 'action_count', 'actions')
+        )
+
+        streak_days, actions_this_month = UserActivity.get_streak(request.user)
+
+        data = {
+            'streak_days': streak_days,
+            'actions_this_month': actions_this_month,
+            'days': list(rows),
+            'total_days_active': len(rows),
+        }
+
+        from .serializers_feed import ActivityHistorySerializer
+        serializer = ActivityHistorySerializer(data)
+        return Response(serializer.data)

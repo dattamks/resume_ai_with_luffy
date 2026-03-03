@@ -8,6 +8,7 @@ from django.urls import path
 
 from .views_feed import (
     DashboardActivityView,
+    DashboardActivityHistoryView,
     DashboardMarketInsightsView,
     DashboardSkillGapView,
     FeedHubView,
@@ -33,4 +34,5 @@ dashboard_extra_urlpatterns = [
     path('skill-gap/', DashboardSkillGapView.as_view(), name='dashboard-skill-gap'),
     path('market-insights/', DashboardMarketInsightsView.as_view(), name='dashboard-market-insights'),
     path('activity/', DashboardActivityView.as_view(), name='dashboard-activity'),
+    path('activity/history/', DashboardActivityHistoryView.as_view(), name='dashboard-activity-history'),
 ]

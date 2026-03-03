@@ -6559,6 +6559,58 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 
 ---
 
+### 30.10 GET `/api/v1/dashboard/activity/history/` — Daily Activity History
+
+🔒 Requires auth. Returns per-day activity breakdown for a GitHub-style heatmap or timeline.
+
+**Query params:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `days` | int | 90 | How many days of history (max 365) |
+
+**Response (200):**
+
+```json
+{
+  "streak_days": 7,
+  "actions_this_month": 23,
+  "total_days_active": 12,
+  "days": [
+    {
+      "date": "2026-03-03",
+      "action_count": 4,
+      "actions": {
+        "login": 1,
+        "analysis": 2,
+        "resume_gen": 1
+      }
+    },
+    {
+      "date": "2026-03-02",
+      "action_count": 1,
+      "actions": {
+        "login": 1
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `streak_days` | int | Consecutive days of activity ending today/yesterday |
+| `actions_this_month` | int | Total actions in the current calendar month |
+| `total_days_active` | int | Number of days with ≥1 action in the requested range |
+| `days` | array | Per-day entries, newest first |
+| `days[].date` | string | Calendar date (YYYY-MM-DD) |
+| `days[].action_count` | int | Total actions on this date |
+| `days[].actions` | object | Breakdown by type: `login`, `analysis`, `resume_gen`, `interview_prep`, `cover_letter`, `job_alert_run`, `builder_finalize` |
+
+**Frontend usage:** Activity heatmap (like GitHub contribution graph), activity timeline, or detailed history view.
+
+---
+
 ### TypeScript Types (Feed)
 
 ```typescript
@@ -6682,6 +6734,17 @@ interface MarketInsights {
 interface ActivityStreak {
   streak_days: number;
   actions_this_month: number;
+}
+
+interface ActivityHistoryDay {
+  date: string;              // "YYYY-MM-DD"
+  action_count: number;
+  actions: Record<string, number>;  // e.g. { login: 1, analysis: 2 }
+}
+
+interface ActivityHistory extends ActivityStreak {
+  total_days_active: number;
+  days: ActivityHistoryDay[];
 }
 ```
 
@@ -7139,6 +7202,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/dashboard/skill-gap/` | ✅ | Readonly (120/hr) | Skill radar chart data |
 | GET | `/api/v1/dashboard/market-insights/` | ✅ | Readonly (120/hr) | Weekly trend card (cached 60 min) |
 | GET | `/api/v1/dashboard/activity/` | ✅ | Readonly (120/hr) | Activity streak + monthly actions |
+| GET | `/api/v1/dashboard/activity/history/` | ✅ | Readonly (120/hr) | Daily activity history (heatmap data) |
 | **Share** |||||
 | GET | `/api/v1/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
 | GET | `/api/v1/shared/<uuid:token>/summary/` | ❌ | Anon (60/hr IP) | Lightweight score summary for social cards |

@@ -155,3 +155,23 @@ class ActivitySerializer(serializers.Serializer):
     """Response for GET /api/v1/dashboard/activity/."""
     streak_days = serializers.IntegerField()
     actions_this_month = serializers.IntegerField()
+
+
+class ActivityHistoryDaySerializer(serializers.Serializer):
+    """One day in the activity history timeline."""
+    date = serializers.DateField()
+    action_count = serializers.IntegerField()
+    actions = serializers.DictField(
+        child=serializers.IntegerField(),
+        help_text='Breakdown by action type, e.g. {"analysis": 2, "login": 1}',
+    )
+
+
+class ActivityHistorySerializer(serializers.Serializer):
+    """Response for GET /api/v1/dashboard/activity/history/."""
+    streak_days = serializers.IntegerField()
+    actions_this_month = serializers.IntegerField()
+    days = ActivityHistoryDaySerializer(many=True)
+    total_days_active = serializers.IntegerField(
+        help_text='Number of days with at least one action in the requested range',
+    )
