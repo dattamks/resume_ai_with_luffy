@@ -5920,6 +5920,82 @@ Render it with a Markdown component (e.g. `react-markdown`) instead of plain tex
 | 404 | Session not found or not active |
 | 500 | LLM call failed (returns fallback "Sorry, try again" message) |
 
+### 29.2.1 Submit Step Action (Guided Mode)
+
+For sessions using **guided mode** (`mode: "guided"`), use this endpoint instead of `/message/`. Submits the user's action/answer for the current step.
+
+```
+POST /api/v1/resume-chat/<uuid:id>/submit/
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Request body:**
+
+```json
+{
+  "action": "continue",
+  "payload": {
+    "name": "John Doe",
+    "email": "john@example.com",
+    "phone": "+91-9876543210"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | ✅ | Action type (e.g. `"continue"`, `"skip"`, `"back"`) |
+| `payload` | object | ❌ | Step-specific data (fields vary per step). Omit or `{}` for actions like `"skip"`. |
+
+**Response — 200 OK:**
+
+```json
+{
+  "messages": [
+    {
+      "id": "msg-uuid",
+      "role": "user",
+      "content": "John Doe, john@example.com, +91-9876543210",
+      "ui_spec": null,
+      "extracted_data": { "name": "John Doe", "email": "john@example.com" },
+      "step": "contact",
+      "created_at": "2026-03-01T10:01:00Z"
+    },
+    {
+      "id": "msg-uuid-2",
+      "role": "assistant",
+      "content": "Got it! Now let’s add your **work experience**...",
+      "ui_spec": null,
+      "extracted_data": null,
+      "step": "experience",
+      "created_at": "2026-03-01T10:01:01Z"
+    }
+  ],
+  "current_step": "experience",
+  "step_number": 3,
+  "total_steps": 11,
+  "status": "active"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `messages` | array | New messages created (user echo + assistant response) |
+| `current_step` | string | The step the session is now on |
+| `step_number` | int | Current step number (1-based) |
+| `total_steps` | int | Total steps in the guided flow |
+| `status` | string | `"active"` or `"completed"` |
+
+**Error responses:**
+
+| Status | Condition |
+|--------|----------|
+| 404 | Session not found or not active |
+| 500 | Error processing step |
+
+> **Text mode sessions** should use `POST /resume-chat/<id>/message/` (§29.2) instead. Calling `/submit/` on a text-mode session will still work but is not the intended flow.
+
 ### 29.3 List Sessions
 
 ```
@@ -6221,6 +6297,90 @@ Endpoints powering the in-app home/feed page, market insights, and dashboard ext
 
 ---
 
+### 30.0 In-App Notifications
+
+Notification bell/badge endpoints. Stored in the `Notification` model.
+
+#### GET `/api/v1/notifications/` — List Notifications
+
+🔒 Requires auth. Paginated list of the user's in-app notifications, newest first.
+
+**Response (200):**
+
+```json
+{
+  "count": 42,
+  "next": "https://api.example.com/api/v1/notifications/?page=2",
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-...",
+      "title": "New job matches found!",
+      "body": "3 new jobs match your Data Analyst alert.",
+      "link": "/job-alerts/a1b2c3d4/matches",
+      "is_read": false,
+      "notification_type": "job_match",
+      "metadata": { "alert_id": "a1b2c3d4-...", "match_count": 3 },
+      "created_at": "2026-03-03T06:00:00Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | uuid | Notification ID |
+| `title` | string | Short title |
+| `body` | string | Description text |
+| `link` | string | Relative URL for deep-linking (click handler) |
+| `is_read` | bool | Whether the user has read this notification |
+| `notification_type` | string | `"job_match"`, `"analysis_done"`, `"resume_generated"`, or `"system"` |
+| `metadata` | object | Type-specific data (alert ID, match count, etc.) |
+| `created_at` | datetime | When the notification was created |
+
+#### GET `/api/v1/notifications/unread-count/` — Unread Badge Count
+
+🔒 Requires auth. Lightweight endpoint for the notification bell badge.
+
+**Response (200):**
+
+```json
+{ "unread_count": 5 }
+```
+
+**Frontend usage:** Poll this on route changes or every 60 seconds to update the bell badge. Use the count to show a red dot / number.
+
+#### POST `/api/v1/notifications/mark-read/` — Mark Read
+
+🔒 Requires auth. Mark a single notification or all notifications as read.
+
+**Request — mark one:**
+
+```json
+{ "notification_id": "a1b2c3d4-..." }
+```
+
+**Request — mark all:**
+
+```json
+{ "mark_all": true }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `notification_id` | uuid | One of these | Mark a specific notification as read |
+| `mark_all` | bool | is required | Mark ALL unread notifications as read |
+
+**Response (200):**
+
+```json
+{ "marked_read": 5 }
+```
+
+`marked_read` is the number of notifications that were actually updated (were previously unread).
+
+---
+
 ### 30.1 GET `/api/v1/feed/jobs/` — Personalised Job Feed
 
 🔒 Requires auth. Returns jobs ranked by **pgvector embedding similarity** against the user's `JobSearchProfile`. Falls back to recency ordering when no profile embedding exists.
@@ -6327,7 +6487,14 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 {
   "country": "India",
   "total_jobs_last_30d": 1523,
-  "avg_salary_usd": 72000,
+  "total_jobs_role_specific": 487,
+  "salary_currency": "INR",
+  "avg_salary_role": 1850000,
+  "avg_salary_by_seniority": {
+    "senior": 2800000,
+    "mid": 1600000,
+    "junior": 900000
+  },
   "top_skills": [
     {
       "skill": "python",
@@ -6376,9 +6543,12 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `total_jobs_role_specific` | int | Job count from the narrow role-scoped queryset only |
+| `salary_currency` | string | ISO 4217 currency code derived from user's country (e.g. `"INR"`, `"EUR"`) |
+| `avg_salary_role` | int \| null | Average salary (role-scoped) converted to `salary_currency`. `null` if no salary data |
+| `avg_salary_by_seniority` | object \| null | `{ "senior": int, "mid": int, … }` — average salary per seniority level in `salary_currency` |
 | `top_skills[].you_have` | bool | Whether the user's profile includes this skill |
 | `top_skills[].growth_pct` | float | % change vs previous 30-day period |
-| `avg_salary_usd` | int \| null | Average of `salary_min_usd` across jobs with salary data |
 | `role_filter.source_titles` | string[] | User's own job titles (from `JobSearchProfile`) |
 | `role_filter.related_titles` | string[] | LLM-generated related titles used for scoping |
 | `role_filter.method` | string | Scoping method used: `"llm_map+embedding"`, `"llm_map"`, `"titles_only"`, or `"none"` |
@@ -6615,6 +6785,8 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 ```json
 {
   "country": "India",
+  "salary_currency": "INR",
+  "avg_salary_role": 1850000,
   "jobs_this_week": 245,
   "jobs_last_week": 198,
   "growth_pct": 23.7,
@@ -6630,6 +6802,8 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `salary_currency` | string | ISO 4217 currency code for the user's country |
+| `avg_salary_role` | int \| null | Average salary (role-scoped) in `salary_currency` |
 | `trend` | `"up"` \| `"down"` \| `"flat"` | Direction of job volume change |
 | `growth_pct` | float | % change vs last week |
 
@@ -6758,16 +6932,28 @@ interface TrendingVsUser {
   match_pct: number;
 }
 
+interface RoleFilter {
+  source_titles: string[];
+  related_titles: string[];
+  method: 'llm_map+embedding' | 'llm_map' | 'titles_only' | 'none';
+  scoped: boolean;
+  broadened: boolean;
+}
+
 interface InsightsResponse {
   country: string;              // country scope applied
   total_jobs_last_30d: number;
-  avg_salary_usd: number | null;
+  total_jobs_role_specific: number;
+  salary_currency: string;      // ISO 4217 (e.g. "INR", "EUR")
+  avg_salary_role: number | null;
+  avg_salary_by_seniority: Record<string, number> | null;
   top_skills: TrendingSkill[];
   top_companies: { company: string; job_count: number }[];
   top_locations: { location: string; job_count: number }[];
   employment_type_breakdown: Record<string, number>;
   remote_policy_breakdown: Record<string, number>;
   seniority_breakdown: Record<string, number>;
+  role_filter: RoleFilter;
 }
 
 interface HubAlertSummary {
@@ -6818,6 +7004,8 @@ interface SkillGapRadarItem {
 
 interface MarketInsights {
   country: string;              // country scope applied
+  salary_currency: string;      // ISO 4217 (e.g. "INR", "EUR")
+  avg_salary_role: number | null;
   jobs_this_week: number;
   jobs_last_week: number;
   growth_pct: number;
@@ -7223,7 +7411,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/auth/wallet/transactions/export/` | ✅ | User (200/hr) | Download transactions as CSV |
 | POST | `/api/v1/auth/wallet/topup/` | ✅ | User (200/hr) | ~~Buy credit packs~~ DEPRECATED — use Razorpay (§21) |
 | GET | `/api/v1/auth/plans/` | ❌ | Anon (60/hr IP) | List active plans |
-| POST | `/api/v1/auth/plans/subscribe/` | ✅ | User (200/hr) | Switch plan (upgrade/downgrade) |
+| POST | `/api/v1/auth/plans/subscribe/` | ✅ | User (200/hr) | Downgrade to free plan (402 if target plan is paid — use Razorpay) |
 | **Razorpay Payments** |||||
 | POST | `/api/v1/auth/payments/subscribe/` | ✅ | Payment (30/hr) | Create Razorpay subscription |
 | POST | `/api/v1/auth/payments/subscribe/verify/` | ✅ | Payment (30/hr) | Verify subscription payment |
@@ -7285,7 +7473,7 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/job-alerts/<uuid:id>/matches/` | ✅ | Readonly (120/hr) | List matches (paginated) |
 | POST | `/api/v1/job-alerts/<uuid:id>/matches/<uuid:match_id>/feedback/` | ✅ | Readonly (120/hr) | Submit match feedback |
 | POST | `/api/v1/job-alerts/<uuid:id>/run/` | ✅ | Analyze (10/hr) | Trigger manual alert run |
-| **Feed & Analytics** |||||
+| **Notifications** |||||\n| GET | `/api/v1/notifications/` | ✅ | Readonly (120/hr) | Paginated notification list (§30.0) |\n| GET | `/api/v1/notifications/unread-count/` | ✅ | Readonly (120/hr) | Unread badge count (§30.0) |\n| POST | `/api/v1/notifications/mark-read/` | ✅ | Write (60/hr) | Mark one or all notifications as read (§30.0) |\n| **Feed & Analytics** |||||
 | GET | `/api/v1/feed/jobs/` | ✅ | Readonly (120/hr) | Personalised job feed (pgvector similarity). Supports `relevance_min`, `ordering` |
 | GET | `/api/v1/feed/insights/` | ✅ | Readonly (120/hr) | Market intelligence (cached 60 min). Role-aware: `?role=all` to disable |
 | GET | `/api/v1/feed/trending-skills/` | ✅ | Readonly (120/hr) | User skills vs market demand. Role-aware: `?role=all` to disable |

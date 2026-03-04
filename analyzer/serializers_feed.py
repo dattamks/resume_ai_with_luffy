@@ -72,9 +72,16 @@ class RoleFilterSerializer(serializers.Serializer):
 
 class InsightsSerializer(serializers.Serializer):
     """Composite response for GET /api/v1/feed/insights/."""
+    country = serializers.CharField()
     role_filter = RoleFilterSerializer()
     total_jobs_last_30d = serializers.IntegerField()
-    avg_salary_usd = serializers.IntegerField(allow_null=True)
+    total_jobs_role_specific = serializers.IntegerField()
+    salary_currency = serializers.CharField(help_text='ISO 4217 currency code')
+    avg_salary_role = serializers.IntegerField(allow_null=True)
+    avg_salary_by_seniority = serializers.DictField(
+        allow_null=True,
+        help_text='Per-seniority average salary in salary_currency',
+    )
     top_skills = TrendingSkillSerializer(many=True)
     top_companies = TopCompanySerializer(many=True)
     top_locations = serializers.ListField(child=serializers.DictField())

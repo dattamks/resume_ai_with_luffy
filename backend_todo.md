@@ -702,6 +702,53 @@ FRONTEND_URL=https://<frontend>.up.railway.app
 
 ---
 
+## ✅ Feed Insights Rework — Role-Accurate Market Snapshot
+
+> **Goal:** Make `GET /api/v1/feed/insights/` return data that is meaningful for the user's specific role, not polluted by unrelated roles when auto-broadened. Also fix the salary representation to be useful (country currency, role-level, seniority-level).
+>
+> **Status:** ✅ Done (v0.40.0)
+
+### 1. Dual job counts
+
+- [x] 🔴 **Add `total_jobs_role_specific`** — count from narrow `role_qs` (role-matched jobs only). Keep existing `total_jobs_last_30d` as the overall market size. Frontend can show "47 Data Analyst jobs out of 1,523 total".
+
+### 2. Salary rework
+
+- [x] 🔴 **Replace `avg_salary_usd` with role-scoped, local-currency salary** — current field averages across ALL roles and ALL seniority levels in USD, which is meaningless.
+  - **`avg_salary_role`** — average `salary_min_usd` from narrow `role_qs` only, converted to user's country currency.
+  - **`avg_salary_by_seniority`** — breakdown by seniority level from narrow `role_qs`: `{"junior": X, "mid": Y, "senior": Z}`, in local currency.
+  - **`salary_currency`** — ISO 4217 code (e.g. `"INR"`, `"USD"`, `"EUR"`) derived from user's profile country.
+  - **Currency conversion** — maintain a simple `COUNTRY_TO_CURRENCY` and `USD_EXCHANGE_RATES` mapping (hardcoded or from env). Convert at response time. Rates don't need to be real-time for salary estimates.
+  - **Remove `avg_salary_usd`** — deprecated; replaced by the above fields.
+
+### 3. Role-scope all aggregations (not just skills)
+
+- [x] 🔴 **Use narrow `role_qs` for all aggregations when broadened** — currently only `top_skills` uses the role-scoped queryset. Fix:
+  - `top_companies` — use `role_qs` so it shows companies hiring for the user's role
+  - `top_locations` — use `role_qs` so it shows where the user's role is in demand
+  - `employment_type_breakdown` — use `role_qs` (e.g. Data Analyst may be mostly full-time)
+  - `remote_policy_breakdown` — use `role_qs`
+  - `seniority_breakdown` — use `role_qs`
+  - Same pattern: `skills_qs = role_qs if (role_qs is not None and role_qs.exists()) else qs`
+
+### 4. Documentation
+
+- [x] 🟡 **Update FRONTEND_API_GUIDE.md §30.2** — document new response shape: `total_jobs_role_specific`, `avg_salary_role`, `avg_salary_by_seniority`, `salary_currency`. Remove `avg_salary_usd`. Update example JSON and field table.
+- [x] 🟡 **Update CHANGELOG.md** — entry for the insights rework.
+
+---
+
+## ✅ Documentation Gaps — Guide Fixes
+
+> Gaps reported by frontend team after reading FRONTEND_API_GUIDE.md.
+> **Status:** ✅ Done (v0.40.0)
+
+- [x] 🔴 **Document notification feed endpoints** — `GET /api/v1/notifications/`, `GET /api/v1/notifications/unread-count/`, `POST /api/v1/notifications/mark-read/` are live in the backend (`analyzer/views.py` — `NotificationListView`, `NotificationUnreadCountView`, `NotificationMarkReadView`) but completely missing from the guide. Add new section with request/response shapes + add to §32 quick-reference table.
+- [x] 🟡 **Document `/resume-chat/<id>/submit/` endpoint** — listed in §32 quick-reference table but §29 has no subsection documenting the request body (`{"action": "continue", "payload": {...}}`), response shape (`messages`, `current_step`, `step_number`, `total_steps`, `status`), or error codes. Add §29.X with full docs.
+- [x] 🟡 **Clarify `plans/subscribe` vs `payments/subscribe` in §32** — both are correctly documented but the §32 quick-reference description for `plans/subscribe/` says "Switch plan (upgrade/downgrade)" which is misleading — it only handles free-tier downgrades (returns 402 for paid plans). Fix description to "Downgrade to free plan (402 if target plan is paid)".
+
+---
+
 ## 🔴 Architecture Simplification — Reduce LLM Calls & Moving Parts
 
 > **Goal:** Cut LLM prompts from 6 to 2, move resume understanding to upload time, make interview prep DB-based, remove redundant endpoints. Every user action should produce value with minimal latency.
@@ -958,3 +1005,7 @@ Each phase is independently deployable. Recommended order: **A → B → C → D
 | `InterviewQuestion` model, seed data, filtering | C |
 | `InterviewPrepView` returns 200 with instant results | C |
 | Embedding matcher returns `[]` when no embedding (no fallback) | E |
+
+
+
+

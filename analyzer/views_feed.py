@@ -28,6 +28,7 @@ from rest_framework.views import APIView
 
 from accounts.throttles import ReadOnlyThrottle
 
+from .currency import convert_usd, get_currency_for_country
 from .models import (
     CoverLetter,
     DiscoveredJob,
@@ -656,23 +657,44 @@ class FeedInsightsView(APIView):
         else:
             role_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
 
-        total = qs.count()
+        # Determine the best queryset for role-specific aggregations.
+        # When broadened, role_qs is the narrow (pre-broadened) set;
+        # use it for aggregations so unrelated roles don't pollute data.
+        agg_qs = role_qs if (role_qs is not None and role_qs.exists()) else qs
 
-        # Average salary (only jobs with salary data)
-        avg_salary = qs.filter(
+        total = qs.count()
+        total_role = agg_qs.count() if agg_qs is not qs else total
+
+        # ── Currency ────────────────────────────────────────────────────
+        salary_currency = get_currency_for_country(country if not is_global else '')
+
+        # ── Salary: role-level average ──────────────────────────────────
+        avg_salary_usd = agg_qs.filter(
             salary_min_usd__isnull=False,
         ).aggregate(avg=Avg('salary_min_usd'))['avg']
-        if avg_salary is not None:
-            avg_salary = int(avg_salary)
+        avg_salary_role = convert_usd(avg_salary_usd, salary_currency)
+
+        # ── Salary: by seniority level ──────────────────────────────────
+        seniority_salary_rows = (
+            agg_qs.filter(
+                salary_min_usd__isnull=False,
+                seniority_level__gt='',
+            )
+            .values('seniority_level')
+            .annotate(avg=Avg('salary_min_usd'))
+        )
+        avg_salary_by_seniority = {
+            row['seniority_level']: convert_usd(row['avg'], salary_currency)
+            for row in seniority_salary_rows
+        }
 
         # Top skills — use the narrow role-scoped queryset when
         # broadened to avoid polluting skills with unrelated roles.
         user_skills = set(_get_user_skills(request.user))
         effective_country = '' if is_global else country
-        skills_qs = role_qs if (role_qs is not None and role_qs.exists()) else qs
         trending = _trending_skills_raw(
             days=30, limit=20, country=effective_country,
-            role_titles_hash=titles_hash, queryset=skills_qs,
+            role_titles_hash=titles_hash, queryset=agg_qs,
         )
 
         # For growth %, build the role title Q to pass to prev_period
@@ -703,37 +725,37 @@ class FeedInsightsView(APIView):
                 'you_have': item['skill'] in user_skills,
             })
 
-        # Top companies
+        # Top companies (role-scoped)
         top_companies = list(
-            qs.filter(company__gt='')
+            agg_qs.filter(company__gt='')
             .values('company')
             .annotate(job_count=Count('id'))
             .order_by('-job_count')[:10]
         )
 
-        # Top locations
+        # Top locations (role-scoped)
         top_locations = list(
-            qs.filter(location__gt='')
+            agg_qs.filter(location__gt='')
             .values('location')
             .annotate(job_count=Count('id'))
             .order_by('-job_count')[:10]
         )
 
-        # Breakdowns
+        # Breakdowns (role-scoped)
         emp_breakdown = dict(
-            qs.filter(employment_type__gt='')
+            agg_qs.filter(employment_type__gt='')
             .values_list('employment_type')
             .annotate(c=Count('id'))
             .order_by('-c')
         )
         remote_breakdown = dict(
-            qs.filter(remote_policy__gt='')
+            agg_qs.filter(remote_policy__gt='')
             .values_list('remote_policy')
             .annotate(c=Count('id'))
             .order_by('-c')
         )
         seniority_breakdown = dict(
-            qs.filter(seniority_level__gt='')
+            agg_qs.filter(seniority_level__gt='')
             .values_list('seniority_level')
             .annotate(c=Count('id'))
             .order_by('-c')
@@ -743,7 +765,10 @@ class FeedInsightsView(APIView):
             'country': country if not is_global else 'all',
             'role_filter': role_info,
             'total_jobs_last_30d': total,
-            'avg_salary_usd': avg_salary,
+            'total_jobs_role_specific': total_role,
+            'salary_currency': salary_currency,
+            'avg_salary_role': avg_salary_role,
+            'avg_salary_by_seniority': avg_salary_by_seniority,
             'top_skills': top_skills,
             'top_companies': top_companies,
             'top_locations': top_locations,
@@ -1221,12 +1246,19 @@ class DashboardMarketInsightsView(APIView):
         )
 
         # Use narrow role-scoped queryset for skill aggregation
-        skills_qs = role_qs_this if (role_qs_this is not None and role_qs_this.exists()) else qs_this
+        agg_qs = role_qs_this if (role_qs_this is not None and role_qs_this.exists()) else qs_this
         trending = _trending_skills_raw(
             days=7, limit=5, country='' if is_global else country,
-            role_titles_hash=titles_hash, queryset=skills_qs,
+            role_titles_hash=titles_hash, queryset=agg_qs,
         )
         top_skill = trending[0]['skill'] if trending else None
+
+        # Currency-converted role-level average salary
+        salary_currency = get_currency_for_country(country if not is_global else '')
+        avg_usd = agg_qs.filter(
+            salary_min_usd__isnull=False,
+        ).aggregate(avg=Avg('salary_min_usd'))['avg']
+        avg_salary_role = convert_usd(avg_usd, salary_currency)
 
         data = {
             'country': country if not is_global else 'all',
@@ -1236,6 +1268,8 @@ class DashboardMarketInsightsView(APIView):
             'trend': 'up' if growth > 0 else ('down' if growth < 0 else 'flat'),
             'top_skill_this_week': top_skill,
             'top_skills': trending,
+            'salary_currency': salary_currency,
+            'avg_salary_role': avg_salary_role,
         }
 
         cache.set(cache_key, data, timeout=3600)  # 60 min

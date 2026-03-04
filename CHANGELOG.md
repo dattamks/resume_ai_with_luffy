@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.40.0] — 2026-03-03
+
+### Feed Insights Rework — Salary, Counts & Documentation Gaps
+
+#### Added — Currency Conversion Module (`analyzer/currency.py`)
+- `_COUNTRY_CURRENCY`: maps 60+ country names → ISO 4217 currency codes.
+- `_USD_RATES`: ~40 USD-to-local conversion rates, overridable via `SALARY_USD_RATES` env var (JSON).
+- `get_currency_for_country(country)`: returns currency code, falls back to `"USD"`.
+- `convert_usd(amount_usd, currency)`: converts and rounds to nearest int.
+
+#### Changed — `FeedInsightsView` (`analyzer/views_feed.py`)
+- **Dual job counts:** response now includes both `total_jobs_last_30d` (broadened) and `total_jobs_role_specific` (narrow role queryset).
+- **Salary rework:** replaced `avg_salary_usd` with:
+  - `salary_currency` — ISO 4217 code derived from user's country.
+  - `avg_salary_role` — average salary scoped to role, converted to local currency.
+  - `avg_salary_by_seniority` — `{ "senior": int, "mid": int, … }` per-seniority averages in local currency.
+- **Aggregation scoping:** `top_companies`, `top_locations`, `employment_type_breakdown`, `remote_policy_breakdown`, `seniority_breakdown` now all use the narrow role-scoped queryset (`agg_qs`), not the broadened queryset.
+
+#### Changed — `DashboardMarketInsightsView` (`analyzer/views_feed.py`)
+- Added `salary_currency` and `avg_salary_role` to response.
+- All aggregations (skills, salary) use narrow role-scoped queryset.
+
+#### Added — Documentation: Notification Endpoints (`FRONTEND_API_GUIDE.md` §30.0)
+- `GET /api/v1/notifications/` — paginated notification list with field table.
+- `GET /api/v1/notifications/unread-count/` — unread badge count.
+- `POST /api/v1/notifications/mark-read/` — mark one (`notification_id`) or all (`mark_all: true`).
+
+#### Added — Documentation: Resume-Chat Submit (`FRONTEND_API_GUIDE.md` §29.2.1)
+- `POST /api/v1/resume-chat/<id>/submit/` — full request body, response shape, field tables, error codes.
+
+#### Fixed — Documentation: Plans/Subscribe Description (`FRONTEND_API_GUIDE.md` §32)
+- Corrected `plans/subscribe` description: "Downgrade to free plan (402 if target plan is paid)".
+- Added 3 notification endpoint rows to quick-reference table.
+
+#### Changed — Documentation: §30.2 & §30.8 Response Shapes
+- §30.2 response example and field table updated to reflect new salary/count fields.
+- §30.8 market-insights response now includes `salary_currency` and `avg_salary_role`.
+- TypeScript `InsightsResponse` interface updated.
+
+---
+
 ## [0.39.0] — 2026-03-03
 
 ### Standardized Error Responses & Feed Skills Fix
