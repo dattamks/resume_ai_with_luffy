@@ -87,7 +87,7 @@ Return ONLY valid JSON following this exact schema:
     "industry": "<industry or domain the role belongs to, e.g. 'FinTech', 'Healthcare', or empty string if unclear>",
     "extra_details": "<2-4 sentence summary of other important JD details: location, benefits, team size, work model, etc.>"
   }},
-  "overall_grade": "<letter grade A, B, C, D, or F based on overall resume quality and JD match>",
+  "overall_grade": "<EXACTLY one of: A, B, C, D, F — no plus/minus modifiers>",
   "scores": {{
     "generic_ats": <integer 0-100, general ATS compatibility score>,
     "workday_ats": <integer 0-100, simulated Workday ATS score based on Workday parsing behavior>,
@@ -129,6 +129,7 @@ Return ONLY valid JSON following this exact schema:
 }}
 
 Rules:
+- overall_grade must be EXACTLY one of A, B, C, D, or F. Never use + or - modifiers (e.g. B+ or A- are NOT allowed)
 - sentence_suggestions: flag ALL weak sentences, maximum 10
 - section_feedback: cover every section present in the resume
 - quick_wins: always return exactly 3
@@ -171,11 +172,11 @@ def validate_ai_response(data: dict) -> None:
                 f'got {type(data[field]).__name__}'
             )
 
-    # Validate overall_grade
-    grade = data['overall_grade'].upper().strip()
+    # Validate overall_grade — strip +/- modifiers LLMs sometimes add
+    grade = data['overall_grade'].upper().strip().rstrip('+-')
     if grade not in _VALID_GRADES:
         raise ValueError(f'AI response "overall_grade" must be one of {_VALID_GRADES}, got "{grade}"')
-    data['overall_grade'] = grade  # normalize to uppercase
+    data['overall_grade'] = grade  # normalize to uppercase base letter
 
     # Validate scores sub-fields (all must be integers 0-100)
     scores = data['scores']

@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.42.1] — 2026-03-04
+
+### Fix — LLM Grade Validation Rejects `B+`/`A-` Modifiers
+
+#### Fixed — Grade Normalization (`analyzer/services/ai_providers/base.py`)
+- **Root cause**: LLM returned `"B+"` as `overall_grade`, but validation only accepted `{A, B, C, D, F}`, causing analysis to fail with `AI response "overall_grade" must be one of {'A', 'B', 'D', 'C', 'F'}, got "B+"`.
+- **Prompt tightened**: Schema description changed from vague `"<letter grade A, B, C, D, or F …>"` to explicit `"<EXACTLY one of: A, B, C, D, F — no plus/minus modifiers>"`.
+- **New rule added**: `overall_grade must be EXACTLY one of A, B, C, D, or F. Never use + or - modifiers (e.g. B+ or A- are NOT allowed)`.
+- **Defence in depth**: Validation now strips `+`/`-` with `.rstrip('+-')` so if the LLM still slips, `B+` → `B` instead of a hard failure.
+
+#### Updated — LLM Behaviour Docs (`docs/llm_behaviour.md`)
+- Synced prompt template and schema with current code (added `job_metadata`, boundary markers, tightened grade constraint).
+
+---
+
 ## [0.42.0] — 2026-03-04
 
 ### Admin Daily Digest — Automated Platform Metrics Email
