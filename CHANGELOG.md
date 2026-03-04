@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.42.0] — 2026-03-04
+
+### Admin Daily Digest — Automated Platform Metrics Email
+
+#### Added — `compute_digest_metrics()` Service (`analyzer/services/admin_digest.py`)
+- Aggregates ~40 metrics across 11 categories (users, revenue, credits, analyses, resumes, LLM usage, job alerts, feature usage, news feed, notifications, infrastructure) for the last 24 hours.
+- All timestamps use IST for display.
+
+#### Added — `send_admin_digest_task` Celery Task (`analyzer/tasks.py`)
+- Periodic task scheduled twice daily: **9:00 AM IST** (3:30 UTC) + **11:00 PM IST** (17:30 UTC).
+- Sends to all emails in `ADMIN_DIGEST_EMAILS` env var (comma-separated).
+- Uses `admin-daily-digest` EmailTemplate from DB.
+- Graceful per-recipient failure handling — one failure doesn't block others.
+
+#### Added — `admin-daily-digest` EmailTemplate
+- Full HTML email with 11 color-coded sections, metric cards, and tables.
+- Plain-text fallback with all metrics.
+- Added to `seed_email_templates` management command.
+
+#### Added — Configuration
+- `ADMIN_DIGEST_EMAILS` env var — comma-separated admin email addresses.
+- Two Celery Beat entries: `admin-digest-morning` (9 AM IST), `admin-digest-night` (11 PM IST).
+
+#### Added — Tests (`analyzer/tests/test_admin_digest.py`)
+- 34 tests across 4 classes: metrics aggregation (20), Celery task (6), settings (2), schedule (6).
+
+---
+
 ## [0.41.0] — 2026-03-04
 
 ### News Feed — Ingest & Serve Career/Tech News

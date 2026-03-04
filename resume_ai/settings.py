@@ -222,6 +222,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'analyzer.tasks.send_weekly_digest_task',
         'schedule': crontab(hour=9, minute=0, day_of_week='monday'),  # Monday 9 AM UTC
     },
+    'admin-digest-morning': {
+        'task': 'analyzer.tasks.send_admin_digest_task',
+        'schedule': crontab(hour=3, minute=30),   # 9:00 AM IST daily
+    },
+    'admin-digest-night': {
+        'task': 'analyzer.tasks.send_admin_digest_task',
+        'schedule': crontab(hour=17, minute=30),  # 11:00 PM IST daily
+    },
 }
 
 # DRF
@@ -347,6 +355,11 @@ EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@resumeai.app')
+
+# Admin daily digest — comma-separated recipient emails
+ADMIN_DIGEST_EMAILS = [
+    e.strip() for e in config('ADMIN_DIGEST_EMAILS', default='').split(',') if e.strip()
+]
 
 # Frontend URL — used for constructing password reset links etc.
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')

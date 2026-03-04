@@ -738,6 +738,30 @@ FRONTEND_URL=https://<frontend>.up.railway.app
 
 ---
 
+## ✅ Admin Daily Digest — Automated Platform Metrics Email
+
+> Twice-daily email (9 AM + 11 PM IST) with ~40 metrics across 11 categories to admin recipients.
+> **Status:** ✅ Done (v0.42.0)
+
+### Service
+- [x] `compute_digest_metrics()` — aggregates users, revenue, credits, analyses, resumes, LLM, job alerts, features, news, notifications, infra for last 24h.
+
+### Celery Task
+- [x] `send_admin_digest_task` — sends to `ADMIN_DIGEST_EMAILS` env var recipients.
+- [x] Celery Beat: `admin-digest-morning` (9 AM IST), `admin-digest-night` (11 PM IST).
+
+### Email Template
+- [x] `admin-daily-digest` — HTML + plaintext, 11 color-coded sections.
+- [x] Added to `seed_email_templates` command.
+
+### Configuration
+- [x] `ADMIN_DIGEST_EMAILS` env var — comma-separated emails.
+
+### Tests
+- [x] 34 tests in `analyzer/tests/test_admin_digest.py` (4 classes).
+
+---
+
 ## ✅ News Feed — Ingest & Serve Career/Tech News
 
 > Crawler bot pushes news snippets to i-Luffy; frontend consumes a paginated, filtered news feed.

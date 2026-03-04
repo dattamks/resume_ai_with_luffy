@@ -2381,3 +2381,120 @@ def generate_role_family_task(self, source_titles: list[str]):
         )
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc)
+
+
+# ── Admin Daily Digest ───────────────────────────────────────────────────────
+
+
+@shared_task(ignore_result=True)
+def send_admin_digest_task():
+    """
+    Periodic task (Celery Beat, twice daily — 9 AM + 11 PM IST):
+    Compute 40+ platform metrics and email them to ADMIN_DIGEST_EMAILS.
+    """
+    from accounts.email_utils import send_templated_email
+    from .services.admin_digest import compute_digest_metrics
+
+    recipients = getattr(settings, 'ADMIN_DIGEST_EMAILS', [])
+    if not recipients:
+        logger.warning('send_admin_digest_task: ADMIN_DIGEST_EMAILS is empty — skipping')
+        return
+
+    try:
+        metrics = compute_digest_metrics()
+    except Exception:
+        logger.exception('send_admin_digest_task: failed to compute metrics')
+        return
+
+    # Flatten metrics into template context
+    ctx = {
+        'report_time_ist': metrics['report_time_ist'],
+        'period': metrics['period'],
+        # Users
+        'new_signups': metrics['users']['new_signups'],
+        'total_users': metrics['users']['total_users'],
+        'dau': metrics['users']['dau'],
+        'plan_distribution': metrics['users']['plan_distribution'],
+        'auth_providers': metrics['users']['auth_providers'],
+        # Revenue
+        'captured_count': metrics['revenue']['captured_count'],
+        'captured_total_inr': metrics['revenue']['captured_total_inr'],
+        'failed_payments': metrics['revenue']['failed_payments'],
+        'new_subscriptions': metrics['revenue']['new_subscriptions'],
+        'subscription_status': metrics['revenue']['subscription_status'],
+        'webhooks_received': metrics['revenue']['webhooks_received'],
+        # Credits
+        'plan_credits_granted': metrics['credits']['plan_credits_granted'],
+        'topup_credits': metrics['credits']['topup_credits'],
+        'credits_consumed': metrics['credits']['credits_consumed'],
+        'credits_refunded': metrics['credits']['credits_refunded'],
+        'admin_adjustments': metrics['credits']['admin_adjustments'],
+        'zero_balance_users': metrics['credits']['zero_balance_users'],
+        # Analyses
+        'analyses_total': metrics['analyses']['total'],
+        'analyses_done': metrics['analyses']['done'],
+        'analyses_failed': metrics['analyses']['failed'],
+        'analyses_processing': metrics['analyses']['processing'],
+        'analyses_pending': metrics['analyses']['pending'],
+        'avg_ats_score': metrics['analyses']['avg_ats_score'],
+        'avg_overall_grade': metrics['analyses']['avg_overall_grade'],
+        # Resumes
+        'resumes_uploaded': metrics['resumes']['uploaded'],
+        'resume_processing_status': metrics['resumes']['processing_status'],
+        'resumes_generated': metrics['resumes']['generated'],
+        'generated_by_format': metrics['resumes']['generated_by_format'],
+        'builder_sessions': metrics['resumes']['builder_sessions'],
+        'builder_by_status': metrics['resumes']['builder_by_status'],
+        # LLM
+        'llm_total_calls': metrics['llm']['total_calls'],
+        'llm_by_purpose': metrics['llm']['by_purpose'],
+        'llm_prompt_tokens': metrics['llm']['prompt_tokens'],
+        'llm_completion_tokens': metrics['llm']['completion_tokens'],
+        'llm_total_tokens': metrics['llm']['total_tokens'],
+        'llm_cost_usd': metrics['llm']['estimated_cost_usd'],
+        'llm_avg_duration': metrics['llm']['avg_duration_sec'],
+        'llm_failed': metrics['llm']['failed'],
+        'llm_failure_rate': metrics['llm']['failure_rate_pct'],
+        # Job Alerts
+        'alert_runs': metrics['job_alerts']['alert_runs'],
+        'jobs_discovered': metrics['job_alerts']['jobs_discovered'],
+        'jobs_matched': metrics['job_alerts']['jobs_matched'],
+        'new_discovered_jobs': metrics['job_alerts']['new_discovered_jobs'],
+        'new_matches': metrics['job_alerts']['new_matches'],
+        'avg_relevance_score': metrics['job_alerts']['avg_relevance_score'],
+        'alerts_sent_email': metrics['job_alerts']['alerts_sent_email'],
+        'alerts_sent_in_app': metrics['job_alerts']['alerts_sent_in_app'],
+        'active_alerts_total': metrics['job_alerts']['active_alerts_total'],
+        # Features
+        'interview_preps': metrics['features']['interview_preps'],
+        'cover_letters': metrics['features']['cover_letters'],
+        'total_actions_today': metrics['features']['total_actions_today'],
+        'action_breakdown': metrics['features']['action_breakdown'],
+        # News
+        'news_synced': metrics['news']['synced_today'],
+        'news_by_category': metrics['news']['by_category'],
+        'news_flagged': metrics['news']['flagged'],
+        'news_unapproved': metrics['news']['unapproved'],
+        # Notifications
+        'notifications_created': metrics['notifications']['created_today'],
+        'unread_total': metrics['notifications']['unread_total'],
+        'contact_submissions': metrics['notifications']['contact_submissions'],
+        # Infra
+        'stale_crawl_sources': metrics['infra']['stale_crawl_sources'],
+        'total_crawl_sources': metrics['infra']['total_crawl_sources'],
+    }
+
+    sent = 0
+    for email_addr in recipients:
+        try:
+            send_templated_email(
+                slug='admin-daily-digest',
+                recipient=email_addr,
+                context=ctx,
+                fail_silently=False,
+            )
+            sent += 1
+        except Exception:
+            logger.exception('Admin digest failed for %s', email_addr)
+
+    logger.info('Admin digest sent to %d/%d recipients', sent, len(recipients))

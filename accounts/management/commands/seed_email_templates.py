@@ -610,6 +610,446 @@ https://iluffy.in
 
 Privacy: https://iluffy.in/privacy | Terms: https://iluffy.in/terms''',
     },
+    {
+        'slug': 'admin-daily-digest',
+        'name': 'Admin Daily Digest',
+        'category': 'admin',
+        'description': 'Sent twice daily (9 AM + 11 PM IST) to ADMIN_DIGEST_EMAILS with platform metrics.',
+        'subject': '{{ app_name }} Admin Digest — {{ report_time_ist }}',
+        'html_body': '''\
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Daily Digest</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f4f4f7;">
+    <tr>
+      <td align="center" style="padding:24px 0;">
+        <table role="presentation" width="680" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1a56db 0%,#0f3a8e 100%);padding:24px 32px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;">i-Luffy Admin Digest</h1>
+              <p style="margin:6px 0 0;color:#c7d7f5;font-size:13px;">{{ report_time_ist }} &middot; {{ period }}</p>
+            </td>
+          </tr>
+
+          <tr><td style="padding:0 32px;">
+
+          <!-- ━━ 1. Users & Signups ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #1a56db;padding-bottom:6px;">
+                <h2 style="margin:0;color:#1a56db;font-size:16px;">1. Users &amp; Signups</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="25%" style="padding:8px 12px;background:#f0f5ff;border-radius:6px;text-align:center;">
+                <div style="font-size:24px;font-weight:700;color:#1a56db;">{{ new_signups }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">New Signups</div>
+              </td>
+              <td width="4%"></td>
+              <td width="25%" style="padding:8px 12px;background:#f0f5ff;border-radius:6px;text-align:center;">
+                <div style="font-size:24px;font-weight:700;color:#1a56db;">{{ total_users }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Total Users</div>
+              </td>
+              <td width="4%"></td>
+              <td width="25%" style="padding:8px 12px;background:#f0f5ff;border-radius:6px;text-align:center;">
+                <div style="font-size:24px;font-weight:700;color:#1a56db;">{{ dau }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">DAU (today)</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 2. Revenue & Payments ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #059669;padding-bottom:6px;">
+                <h2 style="margin:0;color:#059669;font-size:16px;">2. Revenue &amp; Payments</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="30%" style="padding:8px 12px;background:#ecfdf5;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#059669;">&#8377;{{ captured_total_inr }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Revenue ({{ captured_count }} payments)</div>
+              </td>
+              <td width="4%"></td>
+              <td width="20%" style="padding:8px 12px;background:#fef2f2;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#dc2626;">{{ failed_payments }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Failed</div>
+              </td>
+              <td width="4%"></td>
+              <td width="20%" style="padding:8px 12px;background:#ecfdf5;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#059669;">{{ new_subscriptions }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">New Subs</div>
+              </td>
+              <td width="4%"></td>
+              <td width="18%" style="padding:8px 12px;background:#f0f5ff;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#1a56db;">{{ webhooks_received }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Webhooks</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 3. Credit Economy ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #7c3aed;padding-bottom:6px;">
+                <h2 style="margin:0;color:#7c3aed;font-size:16px;">3. Credit Economy</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;font-size:13px;color:#374151;">
+            <tr>
+              <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;">Plan credits granted</td>
+              <td style="padding:6px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;color:#059669;">+{{ plan_credits_granted }}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;">Top-up credits</td>
+              <td style="padding:6px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;color:#059669;">+{{ topup_credits }}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;">Credits consumed</td>
+              <td style="padding:6px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;color:#dc2626;">-{{ credits_consumed }}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;">Refunded</td>
+              <td style="padding:6px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;color:#f59e0b;">+{{ credits_refunded }}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;">Users at zero balance</td>
+              <td style="padding:6px 0;text-align:right;font-weight:600;color:#6b7280;">{{ zero_balance_users }}</td>
+            </tr>
+          </table>
+
+          <!-- ━━ 4. Resume Analyses ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #ea580c;padding-bottom:6px;">
+                <h2 style="margin:0;color:#ea580c;font-size:16px;">4. Resume Analyses</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="16%" style="padding:8px 6px;background:#fff7ed;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#ea580c;">{{ analyses_total }}</div>
+                <div style="font-size:10px;color:#6b7280;">Total</div>
+              </td>
+              <td width="3%"></td>
+              <td width="16%" style="padding:8px 6px;background:#ecfdf5;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#059669;">{{ analyses_done }}</div>
+                <div style="font-size:10px;color:#6b7280;">Done</div>
+              </td>
+              <td width="3%"></td>
+              <td width="16%" style="padding:8px 6px;background:#fef2f2;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#dc2626;">{{ analyses_failed }}</div>
+                <div style="font-size:10px;color:#6b7280;">Failed</div>
+              </td>
+              <td width="3%"></td>
+              <td width="18%" style="padding:8px 6px;background:#f0f5ff;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#1a56db;">{{ avg_ats_score }}</div>
+                <div style="font-size:10px;color:#6b7280;">Avg ATS</div>
+              </td>
+              <td width="3%"></td>
+              <td width="18%" style="padding:8px 6px;background:#f0f5ff;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#1a56db;">{{ avg_overall_grade }}</div>
+                <div style="font-size:10px;color:#6b7280;">Avg Grade</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 5. Resume Uploads & Generation ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #0891b2;padding-bottom:6px;">
+                <h2 style="margin:0;color:#0891b2;font-size:16px;">5. Resumes &amp; Builder</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="30%" style="padding:8px 12px;background:#ecfeff;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#0891b2;">{{ resumes_uploaded }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Uploaded</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#ecfeff;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#0891b2;">{{ resumes_generated }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Generated</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#ecfeff;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#0891b2;">{{ builder_sessions }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Builder Sessions</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 6. LLM Usage & Cost ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #be185d;padding-bottom:6px;">
+                <h2 style="margin:0;color:#be185d;font-size:16px;">6. LLM Usage &amp; Cost</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="22%" style="padding:8px 8px;background:#fdf2f8;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#be185d;">{{ llm_total_calls }}</div>
+                <div style="font-size:10px;color:#6b7280;">Calls</div>
+              </td>
+              <td width="3%"></td>
+              <td width="22%" style="padding:8px 8px;background:#fdf2f8;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#be185d;">{{ llm_total_tokens }}</div>
+                <div style="font-size:10px;color:#6b7280;">Tokens</div>
+              </td>
+              <td width="3%"></td>
+              <td width="22%" style="padding:8px 8px;background:#fdf2f8;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#be185d;">${{ llm_cost_usd }}</div>
+                <div style="font-size:10px;color:#6b7280;">Cost</div>
+              </td>
+              <td width="3%"></td>
+              <td width="22%" style="padding:8px 8px;background:#fef2f2;border-radius:6px;text-align:center;">
+                <div style="font-size:20px;font-weight:700;color:#dc2626;">{{ llm_failure_rate }}%</div>
+                <div style="font-size:10px;color:#6b7280;">Fail Rate</div>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px;font-size:12px;color:#6b7280;">
+            <tr>
+              <td>Avg duration: {{ llm_avg_duration }}s &middot; Failed: {{ llm_failed }}</td>
+            </tr>
+          </table>
+
+          <!-- ━━ 7. Job Alerts & Matching ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #4f46e5;padding-bottom:6px;">
+                <h2 style="margin:0;color:#4f46e5;font-size:16px;">7. Job Alerts &amp; Matching</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;font-size:13px;color:#374151;">
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">Alert runs</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ alert_runs }}</td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">Jobs discovered</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ jobs_discovered }}</td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">Jobs matched</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ jobs_matched }}</td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">New discovered jobs (DB)</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ new_discovered_jobs }}</td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">Avg relevance score</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ avg_relevance_score }}</td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">Alerts sent (email / in-app)</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ alerts_sent_email }} / {{ alerts_sent_in_app }}</td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;">Active alerts (total)</td>
+              <td style="padding:5px 0;text-align:right;font-weight:600;">{{ active_alerts_total }}</td>
+            </tr>
+          </table>
+
+          <!-- ━━ 8. Feature Usage ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #d97706;padding-bottom:6px;">
+                <h2 style="margin:0;color:#d97706;font-size:16px;">8. Feature Usage</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="30%" style="padding:8px 12px;background:#fffbeb;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#d97706;">{{ interview_preps }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Interview Preps</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#fffbeb;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#d97706;">{{ cover_letters }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Cover Letters</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#fffbeb;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#d97706;">{{ total_actions_today }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Total Actions</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 9. News Feed ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #0d9488;padding-bottom:6px;">
+                <h2 style="margin:0;color:#0d9488;font-size:16px;">9. News Feed (Crawler)</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="30%" style="padding:8px 12px;background:#f0fdfa;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#0d9488;">{{ news_synced }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Synced Today</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#fef2f2;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#dc2626;">{{ news_flagged }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Flagged</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#fffbeb;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#d97706;">{{ news_unapproved }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Unapproved</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 10. Notifications & Contact ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #6366f1;padding-bottom:6px;">
+                <h2 style="margin:0;color:#6366f1;font-size:16px;">10. Notifications &amp; Contact</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;">
+            <tr>
+              <td width="30%" style="padding:8px 12px;background:#eef2ff;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#6366f1;">{{ notifications_created }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Created Today</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#eef2ff;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#6366f1;">{{ unread_total }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Unread (all)</div>
+              </td>
+              <td width="4%"></td>
+              <td width="30%" style="padding:8px 12px;background:#fef2f2;border-radius:6px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:#dc2626;">{{ contact_submissions }}</div>
+                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Contact Forms</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- ━━ 11. Infrastructure ━━ -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+            <tr>
+              <td style="border-bottom:2px solid #64748b;padding-bottom:6px;">
+                <h2 style="margin:0;color:#64748b;font-size:16px;">11. Infrastructure</h2>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:12px;font-size:13px;color:#374151;">
+            <tr>
+              <td style="padding:5px 0;border-bottom:1px solid #f3f4f6;">Stale crawl sources (not crawled in 24h)</td>
+              <td style="padding:5px 0;text-align:right;border-bottom:1px solid #f3f4f6;font-weight:600;">{{ stale_crawl_sources }} / {{ total_crawl_sources }}</td>
+            </tr>
+          </table>
+
+          </td></tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f4f4f7;padding:20px 32px;text-align:center;margin-top:24px;">
+              <p style="margin:0;color:#9a9ab0;font-size:12px;">&copy; 2026 <a href="https://iluffy.in" style="color:#9a9ab0;text-decoration:none;">{{ app_name }}</a>. Admin Digest.</p>
+              <p style="margin:6px 0 0;color:#9a9ab0;font-size:11px;">This email is sent twice daily (9 AM &amp; 11 PM IST) to platform administrators.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>''',
+        'plain_text_body': '''\
+{{ app_name }} — Admin Daily Digest
+{{ report_time_ist }} | {{ period }}
+================================================
+
+1. USERS & SIGNUPS
+  New signups: {{ new_signups }}
+  Total users: {{ total_users }}
+  DAU (today): {{ dau }}
+
+2. REVENUE & PAYMENTS
+  Revenue: INR {{ captured_total_inr }} ({{ captured_count }} captured)
+  Failed payments: {{ failed_payments }}
+  New subscriptions: {{ new_subscriptions }}
+  Webhooks received: {{ webhooks_received }}
+
+3. CREDIT ECONOMY
+  Plan credits granted: +{{ plan_credits_granted }}
+  Top-up credits: +{{ topup_credits }}
+  Credits consumed: -{{ credits_consumed }}
+  Refunded: +{{ credits_refunded }}
+  Users at zero balance: {{ zero_balance_users }}
+
+4. RESUME ANALYSES
+  Total: {{ analyses_total }}
+  Done: {{ analyses_done }} | Failed: {{ analyses_failed }}
+  Avg ATS: {{ avg_ats_score }} | Avg Grade: {{ avg_overall_grade }}
+
+5. RESUMES & BUILDER
+  Uploaded: {{ resumes_uploaded }}
+  Generated: {{ resumes_generated }}
+  Builder sessions: {{ builder_sessions }}
+
+6. LLM USAGE & COST
+  Calls: {{ llm_total_calls }}
+  Tokens: {{ llm_total_tokens }} (prompt: {{ llm_prompt_tokens }}, completion: {{ llm_completion_tokens }})
+  Cost: ${{ llm_cost_usd }}
+  Failure rate: {{ llm_failure_rate }}% ({{ llm_failed }} failed)
+  Avg duration: {{ llm_avg_duration }}s
+
+7. JOB ALERTS & MATCHING
+  Alert runs: {{ alert_runs }}
+  Jobs discovered: {{ jobs_discovered }}
+  Jobs matched: {{ jobs_matched }}
+  New discovered jobs: {{ new_discovered_jobs }}
+  Avg relevance: {{ avg_relevance_score }}
+  Alerts sent: {{ alerts_sent_email }} email, {{ alerts_sent_in_app }} in-app
+  Active alerts: {{ active_alerts_total }}
+
+8. FEATURE USAGE
+  Interview preps: {{ interview_preps }}
+  Cover letters: {{ cover_letters }}
+  Total actions today: {{ total_actions_today }}
+
+9. NEWS FEED (CRAWLER)
+  Synced today: {{ news_synced }}
+  Flagged: {{ news_flagged }}
+  Unapproved: {{ news_unapproved }}
+
+10. NOTIFICATIONS & CONTACT
+  Created today: {{ notifications_created }}
+  Unread (all): {{ unread_total }}
+  Contact forms: {{ contact_submissions }}
+
+11. INFRASTRUCTURE
+  Stale crawl sources: {{ stale_crawl_sources }} / {{ total_crawl_sources }}
+
+================================================
+i-Luffy Admin Digest — sent twice daily (9 AM & 11 PM IST)''',
+    },
 ]
 
 
