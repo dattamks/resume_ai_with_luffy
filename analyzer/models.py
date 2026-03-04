@@ -2211,3 +2211,128 @@ class NewsSnippet(models.Model):
 
     def __str__(self):
         return f"[{self.category}] {self.headline[:80]}"
+
+
+# ── Normalised Skill Catalogue ──────────────────────────────────────────────
+
+
+class Skill(models.Model):
+    """
+    Normalised skill master table.
+
+    Aggregates skill data from ``DiscoveredJob.skills_required``,
+    ``DiscoveredJob.skills_nice_to_have``, ``JobSearchProfile.skills``,
+    and ``Analysis.keyword_analysis``.  Job-count fields are periodically
+    refreshed by the ``aggregate_skills`` management command.
+
+    Skills that appear across crawled job listings are auto-created; the
+    ``description`` field can be LLM-generated via the management command.
+    """
+
+    # ── Category choices ─────────────────────────────────────────────────
+    CATEGORY_LANGUAGE = 'language'
+    CATEGORY_FRAMEWORK = 'framework'
+    CATEGORY_TOOL = 'tool'
+    CATEGORY_CLOUD = 'cloud'
+    CATEGORY_DATA = 'data'
+    CATEGORY_DEVOPS = 'devops'
+    CATEGORY_DESIGN = 'design'
+    CATEGORY_SOFT = 'soft'
+    CATEGORY_SECURITY = 'security'
+    CATEGORY_MOBILE = 'mobile'
+    CATEGORY_AI_ML = 'ai_ml'
+    CATEGORY_OTHER = 'other'
+    CATEGORY_CHOICES = [
+        (CATEGORY_LANGUAGE, 'Programming Language'),
+        (CATEGORY_FRAMEWORK, 'Framework / Library'),
+        (CATEGORY_TOOL, 'Tool / Platform'),
+        (CATEGORY_CLOUD, 'Cloud / Infrastructure'),
+        (CATEGORY_DATA, 'Data / Database'),
+        (CATEGORY_DEVOPS, 'DevOps / CI-CD'),
+        (CATEGORY_DESIGN, 'Design / UX'),
+        (CATEGORY_SOFT, 'Soft Skill'),
+        (CATEGORY_SECURITY, 'Security'),
+        (CATEGORY_MOBILE, 'Mobile'),
+        (CATEGORY_AI_ML, 'AI / Machine Learning'),
+        (CATEGORY_OTHER, 'Other'),
+    ]
+
+    # ── Core fields ──────────────────────────────────────────────────────
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=100, unique=True, db_index=True,
+        help_text='Canonical lowercase skill name (e.g. "python", "kubernetes").',
+    )
+    display_name = models.CharField(
+        max_length=100,
+        help_text='Pretty display name (e.g. "Python", "Kubernetes").',
+    )
+    description = models.TextField(
+        blank=True,
+        help_text='LLM-generated description of what this skill is.',
+    )
+    category = models.CharField(
+        max_length=20, choices=CATEGORY_CHOICES,
+        default=CATEGORY_OTHER, db_index=True,
+        help_text='Skill category for grouping / filtering.',
+    )
+    aliases = models.JSONField(
+        default=list, blank=True,
+        help_text='Alternate names for dedup (e.g. ["k8s", "kube"] → kubernetes).',
+    )
+
+    # ── Role associations ────────────────────────────────────────────────
+    roles = models.JSONField(
+        default=list, blank=True,
+        help_text='Common roles that use this skill, e.g. ["backend engineer", "devops"].',
+    )
+
+    # ── Demand / job-count fields (refreshed by aggregate_skills) ────────
+    job_count_5y = models.PositiveIntegerField(
+        default=0,
+        help_text='Jobs mentioning this skill in the last 5 years.',
+    )
+    job_count_1y = models.PositiveIntegerField(
+        default=0,
+        help_text='Jobs mentioning this skill in the last 1 year.',
+    )
+    job_count_30d = models.PositiveIntegerField(
+        default=0,
+        help_text='Jobs mentioning this skill in the last 30 days.',
+    )
+    growth_pct = models.FloatField(
+        null=True, blank=True,
+        help_text='Demand growth %: (count_30d - prev_30d) / prev_30d * 100.',
+    )
+    avg_salary_usd = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text='Average salary (USD) for jobs requiring this skill.',
+    )
+
+    # ── Flags ────────────────────────────────────────────────────────────
+    is_trending = models.BooleanField(
+        default=False, db_index=True,
+        help_text='Set by aggregate_skills for top-demand skills.',
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    # ── Metadata ─────────────────────────────────────────────────────────
+    last_aggregated_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='When job counts were last refreshed.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-job_count_30d', 'name']
+        verbose_name = 'Skill'
+        verbose_name_plural = 'Skills'
+        indexes = [
+            models.Index(fields=['category', '-job_count_30d']),
+            models.Index(fields=['is_trending', '-job_count_30d']),
+            models.Index(fields=['is_active', '-job_count_30d']),
+        ]
+
+    def __str__(self):
+        return self.display_name or self.name

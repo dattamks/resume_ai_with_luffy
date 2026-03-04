@@ -376,3 +376,49 @@ class NewsSnippetAdmin(admin.ModelAdmin):
     def headline_short(self, obj):
         return obj.headline[:80] + ('...' if len(obj.headline) > 80 else '')
 
+
+# ── Skill Catalogue ────────────────────────────────────────────────────────
+from .models import Skill  # noqa: E402
+
+
+@admin.register(Skill)
+class SkillAdmin(admin.ModelAdmin):
+    list_display = (
+        'display_name', 'name', 'category', 'job_count_30d',
+        'job_count_1y', 'job_count_5y', 'growth_pct_display',
+        'is_trending', 'is_active', 'last_aggregated_at',
+    )
+    list_filter = ('category', 'is_trending', 'is_active')
+    search_fields = ('name', 'display_name', 'aliases', 'description')
+    readonly_fields = ('id', 'created_at', 'updated_at', 'last_aggregated_at')
+    list_per_page = 50
+    ordering = ('-job_count_30d',)
+    list_editable = ('is_trending', 'is_active')
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'display_name', 'description', 'category', 'aliases'),
+        }),
+        ('Roles', {
+            'fields': ('roles',),
+        }),
+        ('Demand Stats', {
+            'fields': (
+                'job_count_30d', 'job_count_1y', 'job_count_5y',
+                'growth_pct', 'avg_salary_usd',
+            ),
+        }),
+        ('Flags', {
+            'fields': ('is_trending', 'is_active'),
+        }),
+        ('Metadata', {
+            'fields': ('id', 'last_aggregated_at', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    @admin.display(description='Growth %')
+    def growth_pct_display(self, obj):
+        if obj.growth_pct is None:
+            return '—'
+        return f'{obj.growth_pct:+.1f}%'
+

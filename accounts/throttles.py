@@ -3,10 +3,10 @@ Custom DRF throttle classes for i-Luffy.
 
 Scopes (configured in settings.DEFAULT_THROTTLE_RATES):
     anon      – unauthenticated IP-based          (default 60/hr)
-    user      – authenticated per-user (global)    (default 200/hr)
-    analyze   – resume analysis writes             (default 10/hr)
-    readonly  – authenticated read-only endpoints  (default 120/hr)
-    write     – authenticated write endpoints      (default 60/hr)
+    user      – authenticated per-user (global)    (default 500/hr)
+    analyze   – resume analysis writes             (default 20/hr)
+    readonly  – authenticated read-only endpoints  (default 1000/hr)
+    write     – authenticated write endpoints      (default 150/hr)
     auth      – auth-related anon endpoints        (default 20/hr)
 
 All throttle classes inherit from ``_HeaderAwareMixin`` which stashes

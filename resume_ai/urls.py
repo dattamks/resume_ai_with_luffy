@@ -5,6 +5,7 @@ from django.conf.urls.static import static
 
 from analyzer.views_health import health_check
 from analyzer.urls_feed import feed_urlpatterns, dashboard_extra_urlpatterns
+from analyzer.urls_skills import skills_urlpatterns
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -13,6 +14,7 @@ urlpatterns = [
     path('api/v1/ingest/', include('analyzer.urls_ingest')),
     path('api/v1/feed/', include((feed_urlpatterns, 'feed'))),
     path('api/v1/dashboard/', include((dashboard_extra_urlpatterns, 'dashboard-extra'))),
+    path('api/v1/skills/', include((skills_urlpatterns, 'skills'))),
     path('api/v1/', include('analyzer.urls')),
     path('', include('django_prometheus.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
