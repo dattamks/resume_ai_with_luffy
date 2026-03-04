@@ -5,6 +5,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.43.0] — 2026-03-04
+
+### LLM Response Resilience — Coercion, Auto-Retry, Free Retries
+
+Production analysis failures (12 total, 5 from schema validation) revealed that LLM
+responses frequently contain fixable mistakes (wrong grade format, missing optional
+fields, string scores). This release adds 5 layers of defence.
+
+#### Added — `coerce_ai_response()` (P0) (`analyzer/services/ai_providers/base.py`)
+- Best-effort fix-up that runs **before** strict validation.
+- Inserts safe defaults for missing `job_metadata`, `ats_disclaimers`, `keyword_analysis`, `formatting_flags`, `sentence_suggestions`, `summary`, `quick_wins`.
+- Coerces string scores (`"72"`) to int, clamps out-of-range scores to `[0, 100]`.
+- Fills missing sub-fields in `section_feedback` entries (`ats_flags`, `feedback`, `score`).
+- Auto-assigns `priority` to `quick_wins` entries missing it.
+- Logs all applied fixes for audit trail.
+- Returns list of fix descriptions for downstream tracking.
+
+#### Added — Auto-Retry on Validation Failure (P1) (`analyzer/services/ai_providers/openrouter_provider.py`)
+- Up to 1 automatic retry (2 total attempts) when schema validation fails after coercion.
+- Retries use the same prompt — LLM non-determinism means the second response usually passes.
+- Token usage is accumulated across retries for accurate cost tracking.
+
+#### Added — `LLMValidationError` Exception (P2) (`analyzer/services/ai_providers/base.py`)
+- Custom `ValueError` subclass that carries `raw_response` for debugging.
+- `_step_llm_call` in `analyzer.py` now saves `raw_response` to `LLMResponse` record on failure.
+- Previously, failed analyses had no raw response saved — making debugging impossible.
+
+#### Changed — Free Retry for System Faults (P3) (`analyzer/views.py`)
+- `RetryAnalysisView` now detects system-fault errors (prefixed with `"AI response"`, `"OpenRouter returned"`, etc.).
+- System-fault retries skip credit deduction — user is not charged for LLM mistakes.
+- Capped at `MAX_FREE_RETRIES = 2` per analysis to prevent abuse.
+- Response includes `free_retry: true/false` so frontend can show appropriate messaging.
+
+#### Added — `retry_count` Field (`analyzer/models.py`)
+- New `PositiveSmallIntegerField` on `ResumeAnalysis` tracking user-initiated retries.
+- Migration: `0036_add_retry_count_to_analysis`.
+
+#### Added — Truncated Output Detection (P4) (`analyzer/services/ai_providers/openrouter_provider.py`)
+- Checks `finish_reason == 'length'` from OpenRouter API response.
+- Logs warning when output is truncated due to `max_tokens` limit.
+- Truncated responses still go through JSON repair + coercion pipeline.
+
+#### Added — Tests (`analyzer/tests/test_ai_schema.py`)
+- 19 new tests: 15 coercion tests, 2 `LLMValidationError` tests, 2 full-pipeline tests.
+- Total: **43 tests** (up from 24) covering validation, coercion, and error handling.
+
+---
+
 ## [0.42.1] — 2026-03-04
 
 ### Fix — LLM Grade Validation Rejects `B+`/`A-` Modifiers

@@ -5,7 +5,7 @@ import time
 
 from django.conf import settings
 
-from .base import AIProvider, SYSTEM_PROMPT, validate_ai_response
+from .base import AIProvider, SYSTEM_PROMPT, validate_ai_response, coerce_ai_response, LLMValidationError
 from .json_repair import repair_json
 
 logger = logging.getLogger('analyzer')
@@ -39,6 +39,9 @@ class OpenRouterProvider(AIProvider):
             )
         return _do_call()
 
+    # Maximum schema-validation retries (same prompt, new LLM call)
+    _MAX_VALIDATION_RETRIES = 1
+
     def analyze(self, resume_text: str, job_description: str) -> dict:
         prompt = self._build_prompt(resume_text, job_description)
         max_tokens = getattr(settings, 'AI_MAX_TOKENS', 8192)
@@ -48,61 +51,108 @@ class OpenRouterProvider(AIProvider):
             {'role': 'user', 'content': prompt},
         ]
 
-        logger.info('OpenRouter: sending request — model=%s', self.model)
-        req_start = time.time()
+        last_exc: Exception | None = None
+        total_usage: dict = {}
+        total_elapsed: float = 0.0
+        last_raw: str = ''
 
-        response = self._call_llm(messages, max_tokens)
+        for attempt in range(1 + self._MAX_VALIDATION_RETRIES):
+            if attempt > 0:
+                logger.warning(
+                    'OpenRouter: validation retry %d/%d — re-calling LLM',
+                    attempt, self._MAX_VALIDATION_RETRIES,
+                )
 
-        elapsed = time.time() - req_start
-        logger.info('OpenRouter: response received in %.2fs', elapsed)
+            logger.info('OpenRouter: sending request — model=%s (attempt %d)', self.model, attempt + 1)
+            req_start = time.time()
 
-        # Extract token usage from API response
-        usage = {}
-        if hasattr(response, 'usage') and response.usage:
-            usage = {
-                'prompt_tokens': getattr(response.usage, 'prompt_tokens', None),
-                'completion_tokens': getattr(response.usage, 'completion_tokens', None),
-                'total_tokens': getattr(response.usage, 'total_tokens', None),
-            }
-            logger.info(
-                'OpenRouter token usage: prompt=%s completion=%s total=%s',
-                usage.get('prompt_tokens'), usage.get('completion_tokens'), usage.get('total_tokens'),
-            )
+            response = self._call_llm(messages, max_tokens)
 
-        raw = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
-        if not raw:
-            raise ValueError(
-                'OpenRouter returned an empty response (content moderation refusal or empty choices).'
-            )
+            elapsed = time.time() - req_start
+            total_elapsed += elapsed
+            logger.info('OpenRouter: response received in %.2fs', elapsed)
 
-        # Strip markdown code fences (```json ... ```) that LLMs often wrap around JSON
-        fence_match = _MD_FENCE_RE.match(raw)
-        if fence_match:
-            raw = fence_match.group(1).strip()
+            # ── P4: Detect truncated output ──
+            finish_reason = None
+            if response.choices:
+                finish_reason = getattr(response.choices[0], 'finish_reason', None)
+            if finish_reason == 'length':
+                logger.warning(
+                    'OpenRouter: output truncated (finish_reason=length, max_tokens=%d). '
+                    'Will attempt JSON repair.',
+                    max_tokens,
+                )
 
-        # Try to parse JSON — repair if needed
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning('OpenRouter returned non-JSON, attempting repair...')
-            repaired_str = repair_json(raw)
+            # Extract token usage from API response
+            usage = {}
+            if hasattr(response, 'usage') and response.usage:
+                usage = {
+                    'prompt_tokens': getattr(response.usage, 'prompt_tokens', None),
+                    'completion_tokens': getattr(response.usage, 'completion_tokens', None),
+                    'total_tokens': getattr(response.usage, 'total_tokens', None),
+                }
+                logger.info(
+                    'OpenRouter token usage: prompt=%s completion=%s total=%s',
+                    usage.get('prompt_tokens'), usage.get('completion_tokens'), usage.get('total_tokens'),
+                )
+                # Accumulate usage across retries
+                for k in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                    prev = total_usage.get(k) or 0
+                    cur = usage.get(k) or 0
+                    total_usage[k] = prev + cur
+
+            raw = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
+            if not raw:
+                raise LLMValidationError(
+                    'OpenRouter returned an empty response (content moderation refusal or empty choices).',
+                    raw_response='',
+                )
+            last_raw = raw
+
+            # Strip markdown code fences (```json ... ```) that LLMs often wrap around JSON
+            fence_match = _MD_FENCE_RE.match(raw)
+            if fence_match:
+                raw = fence_match.group(1).strip()
+
+            # Try to parse JSON — repair if needed
             try:
-                data = json.loads(repaired_str)
+                data = json.loads(raw)
             except json.JSONDecodeError:
-                logger.error('OpenRouter JSON repair failed (raw length=%d)', len(raw))
-                raise ValueError('OpenRouter returned non-JSON response and repair failed.')
+                logger.warning('OpenRouter returned non-JSON, attempting repair...')
+                repaired_str = repair_json(raw)
+                try:
+                    data = json.loads(repaired_str)
+                except json.JSONDecodeError:
+                    logger.error('OpenRouter JSON repair failed (raw length=%d)', len(raw))
+                    last_exc = LLMValidationError(
+                        'OpenRouter returned non-JSON response and repair failed.',
+                        raw_response=last_raw,
+                    )
+                    continue  # retry
 
-        try:
-            validate_ai_response(data)
-        except ValueError as exc:
-            logger.error('OpenRouter response failed schema validation: %s (raw length=%d)', exc, len(raw))
-            raise
+            # ── P0: Coerce before validating ──
+            coerce_fixes = coerce_ai_response(data)
 
-        return {
-            'parsed': data,
-            'raw': raw,
-            'prompt': json.dumps(messages),
-            'model': self.model,
-            'duration': elapsed,
-            'usage': usage,
-        }
+            try:
+                validate_ai_response(data)
+            except ValueError as exc:
+                logger.error(
+                    'OpenRouter response failed schema validation (attempt %d): %s',
+                    attempt + 1, exc,
+                )
+                last_exc = LLMValidationError(str(exc), raw_response=last_raw)
+                continue  # retry
+
+            # Success — return result
+            return {
+                'parsed': data,
+                'raw': last_raw,
+                'prompt': json.dumps(messages),
+                'model': self.model,
+                'duration': total_elapsed,
+                'usage': total_usage if total_usage else usage,
+                'coerce_fixes': coerce_fixes,
+            }
+
+        # All attempts exhausted — raise last error with raw response attached
+        raise last_exc

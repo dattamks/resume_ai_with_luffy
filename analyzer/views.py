@@ -194,9 +194,22 @@ class RetryAnalysisView(APIView):
     """
     POST /api/v1/analyses/<id>/retry/
     Retry a failed or interrupted analysis from its last incomplete step.
+
+    System-fault retries (validation errors, non-JSON responses) are free
+    up to MAX_FREE_RETRIES. Other retries deduct credits normally.
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [AnalyzeThrottle]
+
+    MAX_FREE_RETRIES = 2  # free retries for system-caused failures
+
+    # Error prefixes that indicate system fault (not user's fault)
+    _SYSTEM_FAULT_PREFIXES = (
+        'AI response',            # validation errors
+        'OpenRouter returned',    # non-JSON, empty response
+        'Luffy returned',         # legacy provider errors
+        'No parsed LLM response', # missing parsed result
+    )
 
     def post(self, request, pk):
         from django.db import transaction
@@ -224,45 +237,66 @@ class RetryAnalysisView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-            # ── Credit check for retry — deduct upfront ──
-            try:
-                credit_result = deduct_credits(
-                    request.user,
-                    'resume_analysis',
-                    description=f'Retry analysis #{analysis.id}',
-                    reference_id=str(analysis.id),
+            # Determine if this is a system-fault retry (free) or user retry (charged)
+            is_system_fault = any(
+                analysis.error_message.startswith(prefix)
+                for prefix in self._SYSTEM_FAULT_PREFIXES
+            ) if analysis.error_message else False
+
+            free_retry = is_system_fault and analysis.retry_count < self.MAX_FREE_RETRIES
+            credit_result = None
+
+            if free_retry:
+                logger.info(
+                    'Free retry for analysis id=%s (system fault, retry #%d): %s',
+                    analysis.id, analysis.retry_count + 1,
+                    analysis.error_message[:100],
                 )
-            except InsufficientCreditsError as e:
-                return Response(
-                    {
-                        'detail': 'Insufficient credits.',
-                        'balance': e.balance,
-                        'cost': e.cost,
-                    },
-                    status=status.HTTP_402_PAYMENT_REQUIRED,
-                )
+            else:
+                # ── Credit check for retry — deduct upfront ──
+                try:
+                    credit_result = deduct_credits(
+                        request.user,
+                        'resume_analysis',
+                        description=f'Retry analysis #{analysis.id}',
+                        reference_id=str(analysis.id),
+                    )
+                except InsufficientCreditsError as e:
+                    return Response(
+                        {
+                            'detail': 'Insufficient credits.',
+                            'balance': e.balance,
+                            'cost': e.cost,
+                        },
+                        status=status.HTTP_402_PAYMENT_REQUIRED,
+                    )
 
             logger.info('Retrying analysis id=%s from step=%s', analysis.id, analysis.pipeline_step)
 
             # Reset status to processing but keep pipeline_step (so it resumes from there)
             analysis.status = ResumeAnalysis.STATUS_PROCESSING
             analysis.error_message = ''
-            analysis.credits_deducted = True
-            analysis.save(update_fields=['status', 'error_message', 'credits_deducted'])
+            analysis.retry_count = (analysis.retry_count or 0) + 1
+            if not free_retry:
+                analysis.credits_deducted = True
+            analysis.save(update_fields=['status', 'error_message', 'credits_deducted', 'retry_count'])
 
         # Dispatch to Celery worker
         run_analysis_task.delay(analysis.id, request.user.id)
 
-        return Response(
-            {
-                'id': analysis.id,
-                'status': analysis.status,
-                'pipeline_step': analysis.pipeline_step,
-                'credits_used': credit_result['cost'],
-                'balance': credit_result['balance_after'],
-            },
-            status=status.HTTP_202_ACCEPTED,
-        )
+        response_data = {
+            'id': analysis.id,
+            'status': analysis.status,
+            'pipeline_step': analysis.pipeline_step,
+            'free_retry': free_retry,
+        }
+        if credit_result:
+            response_data['credits_used'] = credit_result['cost']
+            response_data['balance'] = credit_result['balance_after']
+        else:
+            response_data['credits_used'] = 0
+
+        return Response(response_data, status=status.HTTP_202_ACCEPTED)
 
 
 class AnalysisListView(ListAPIView):

@@ -6,6 +6,7 @@ from ..models import ResumeAnalysis, LLMResponse
 from .pdf_extractor import PDFExtractor
 from .jd_fetcher import JDFetcher
 from .ai_providers.factory import get_ai_provider
+from .ai_providers.base import LLMValidationError
 
 logger = logging.getLogger('analyzer')
 
@@ -176,6 +177,14 @@ class ResumeAnalyzer:
 
         try:
             result = self.ai_provider.analyze(analysis.resume_text, analysis.resolved_jd)
+        except LLMValidationError as exc:
+            # P2: Save raw response for debugging even on validation failure
+            llm_resp.status = LLMResponse.STATUS_FAILED
+            llm_resp.error_message = str(exc)
+            if exc.raw_response:
+                llm_resp.raw_response = exc.raw_response
+            llm_resp.save(update_fields=['status', 'error_message', 'raw_response'])
+            raise ValueError(str(exc)) from exc
         except ValueError as exc:
             llm_resp.status = LLMResponse.STATUS_FAILED
             llm_resp.error_message = str(exc)

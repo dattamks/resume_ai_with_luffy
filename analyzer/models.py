@@ -424,6 +424,10 @@ class ResumeAnalysis(models.Model):
         default=False,
         help_text='Whether credits were deducted for this analysis. Prevents double-deduction on Celery redelivery.',
     )
+    retry_count = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='Number of user-initiated retries. Free retries for system faults are capped at MAX_FREE_RETRIES.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

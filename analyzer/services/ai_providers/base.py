@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from abc import ABC, abstractmethod
 
@@ -157,6 +158,164 @@ _REQUIRED_SCORES_FIELDS = {'generic_ats', 'workday_ats', 'greenhouse_ats', 'keyw
 _REQUIRED_KEYWORD_ANALYSIS_FIELDS = {'matched_keywords', 'missing_keywords', 'recommended_to_add'}
 _VALID_GRADES = {'A', 'B', 'C', 'D', 'F'}
 
+# Default values for fields that can be safely synthesized
+_DEFAULT_JOB_METADATA = {
+    'job_title': '', 'company': '', 'skills': '',
+    'experience_years': None, 'industry': '', 'extra_details': '',
+}
+_DEFAULT_ATS_DISCLAIMERS = {
+    'workday': (
+        'Simulated score based on known Workday parsing behavior. '
+        'Not affiliated with or endorsed by Workday Inc.'
+    ),
+    'greenhouse': (
+        'Simulated score based on known Greenhouse parsing behavior. '
+        'Not affiliated with or endorsed by Greenhouse Software.'
+    ),
+}
+
+
+# ── Custom exception ─────────────────────────────────────────────────────
+
+class LLMValidationError(ValueError):
+    """Raised when LLM output fails schema validation. Carries the raw response for debugging."""
+
+    def __init__(self, message: str, raw_response: str | None = None):
+        super().__init__(message)
+        self.raw_response = raw_response
+
+
+# ── Coercion (best-effort fix before strict validation) ──────────────────
+
+def coerce_ai_response(data: dict) -> list[str]:
+    """
+    Best-effort fix-up of common LLM response mistakes.
+    Mutates *data* in place. Returns a list of human-readable fixes applied
+    (for logging). Runs BEFORE validate_ai_response().
+    """
+    fixes: list[str] = []
+
+    # ── Top-level missing fields: insert safe defaults ──
+    if 'job_metadata' not in data or not isinstance(data.get('job_metadata'), dict):
+        data['job_metadata'] = dict(_DEFAULT_JOB_METADATA)
+        fixes.append('Inserted default job_metadata')
+    else:
+        # Fill missing sub-fields inside job_metadata
+        for k, v in _DEFAULT_JOB_METADATA.items():
+            if k not in data['job_metadata']:
+                data['job_metadata'][k] = v
+                fixes.append(f'Inserted default job_metadata.{k}')
+
+    if 'ats_disclaimers' not in data or not isinstance(data.get('ats_disclaimers'), dict):
+        data['ats_disclaimers'] = dict(_DEFAULT_ATS_DISCLAIMERS)
+        fixes.append('Inserted default ats_disclaimers')
+
+    for list_field in ('formatting_flags', 'sentence_suggestions', 'section_feedback'):
+        if list_field not in data or not isinstance(data.get(list_field), list):
+            data[list_field] = []
+            fixes.append(f'Inserted empty {list_field}')
+
+    if 'summary' not in data or not isinstance(data.get('summary'), str):
+        data['summary'] = ''
+        fixes.append('Inserted empty summary')
+
+    if 'overall_grade' not in data or not isinstance(data.get('overall_grade'), str):
+        data['overall_grade'] = 'C'  # conservative default
+        fixes.append('Inserted default overall_grade "C"')
+
+    # ── Scores: coerce strings to ints, fill missing sub-fields ──
+    if 'scores' not in data or not isinstance(data.get('scores'), dict):
+        data['scores'] = {}
+        fixes.append('Inserted empty scores dict')
+
+    scores = data['scores']
+    for k in _REQUIRED_SCORES_FIELDS:
+        v = scores.get(k)
+        if v is None:
+            scores[k] = 50  # neutral default
+            fixes.append(f'Inserted default scores.{k}=50')
+        elif isinstance(v, str):
+            try:
+                scores[k] = int(float(v))
+                fixes.append(f'Coerced scores.{k} from string "{v}" to int')
+            except (ValueError, TypeError):
+                scores[k] = 50
+                fixes.append(f'Replaced unparseable scores.{k}="{v}" with 50')
+        elif isinstance(v, (int, float)):
+            # Clamp to valid range
+            clamped = max(0, min(100, int(v)))
+            if clamped != int(v):
+                fixes.append(f'Clamped scores.{k} from {v} to {clamped}')
+                scores[k] = clamped
+
+    # ── keyword_analysis: fill missing sub-fields ──
+    if 'keyword_analysis' not in data or not isinstance(data.get('keyword_analysis'), dict):
+        data['keyword_analysis'] = {
+            'matched_keywords': [], 'missing_keywords': [], 'recommended_to_add': [],
+        }
+        fixes.append('Inserted default keyword_analysis')
+    else:
+        kw = data['keyword_analysis']
+        for k in _REQUIRED_KEYWORD_ANALYSIS_FIELDS:
+            if k not in kw or not isinstance(kw.get(k), list):
+                kw[k] = []
+                fixes.append(f'Inserted empty keyword_analysis.{k}')
+
+    # ── quick_wins: ensure at least 1 placeholder ──
+    if 'quick_wins' not in data or not isinstance(data.get('quick_wins'), list):
+        data['quick_wins'] = []
+        fixes.append('Inserted empty quick_wins')
+
+    if len(data['quick_wins']) == 0:
+        data['quick_wins'] = [
+            {'priority': 1, 'action': 'Review resume for missing keywords from the job description'},
+        ]
+        fixes.append('Inserted placeholder quick_win (LLM returned 0)')
+
+    # Fill missing keys in quick_wins entries
+    for i, qw in enumerate(data['quick_wins']):
+        if not isinstance(qw, dict):
+            data['quick_wins'][i] = {'priority': i + 1, 'action': str(qw)}
+            fixes.append(f'Converted quick_wins[{i}] to dict')
+        else:
+            if 'priority' not in qw:
+                qw['priority'] = i + 1
+                fixes.append(f'Inserted quick_wins[{i}].priority={i + 1}')
+            if 'action' not in qw:
+                qw['action'] = 'Review and improve this area of your resume'
+                fixes.append(f'Inserted placeholder quick_wins[{i}].action')
+
+    # ── section_feedback entries: fill missing keys ──
+    for i, entry in enumerate(data.get('section_feedback', [])):
+        if not isinstance(entry, dict):
+            continue
+        if 'ats_flags' not in entry or not isinstance(entry.get('ats_flags'), list):
+            entry['ats_flags'] = []
+            fixes.append(f'Inserted empty section_feedback[{i}].ats_flags')
+        if 'feedback' not in entry or not isinstance(entry.get('feedback'), list):
+            entry['feedback'] = []
+            fixes.append(f'Inserted empty section_feedback[{i}].feedback')
+        if 'section_name' not in entry:
+            entry['section_name'] = f'Section {i + 1}'
+            fixes.append(f'Inserted placeholder section_feedback[{i}].section_name')
+        # Coerce score from string
+        score_val = entry.get('score')
+        if isinstance(score_val, str):
+            try:
+                entry['score'] = int(float(score_val))
+                fixes.append(f'Coerced section_feedback[{i}].score from string')
+            except (ValueError, TypeError):
+                entry['score'] = 50
+                fixes.append(f'Replaced unparseable section_feedback[{i}].score with 50')
+        elif score_val is None:
+            entry['score'] = 50
+            fixes.append(f'Inserted default section_feedback[{i}].score=50')
+
+    if fixes:
+        logger.info('Coercion applied %d fix(es): %s', len(fixes), '; '.join(fixes))
+
+    return fixes
+
 
 def validate_ai_response(data: dict) -> None:
     """
@@ -172,8 +331,10 @@ def validate_ai_response(data: dict) -> None:
                 f'got {type(data[field]).__name__}'
             )
 
-    # Validate overall_grade — strip +/- modifiers LLMs sometimes add
-    grade = data['overall_grade'].upper().strip().rstrip('+-')
+    # Validate overall_grade — normalize common LLM noise:
+    # strip whitespace, quotes, +/- modifiers, trailing punctuation
+    grade = data['overall_grade'].strip().strip('"\'').strip()
+    grade = re.sub(r'[\s+\-./]+$', '', grade).upper()
     if grade not in _VALID_GRADES:
         raise ValueError(f'AI response "overall_grade" must be one of {_VALID_GRADES}, got "{grade}"')
     data['overall_grade'] = grade  # normalize to uppercase base letter
