@@ -14,6 +14,8 @@ from .views_ingest import (
     JobIngestView, JobBulkIngestView,
     CrawlSourceListView, CrawlSourceUpdateView,
     IngestPingView,
+    NewsSnippetIngestView, NewsSnippetBulkIngestView,
+    NewsSnippetDeactivateView,
 )
 
 urlpatterns = [
@@ -38,4 +40,9 @@ urlpatterns = [
     # Crawl Sources
     path('crawl-sources/', CrawlSourceListView.as_view(), name='ingest-crawl-sources'),
     path('crawl-sources/<uuid:pk>/', CrawlSourceUpdateView.as_view(), name='ingest-crawl-source-update'),
+
+    # News Snippets
+    path('news/', NewsSnippetIngestView.as_view(), name='ingest-news'),
+    path('news/bulk/', NewsSnippetBulkIngestView.as_view(), name='ingest-news-bulk'),
+    path('news/deactivate/', NewsSnippetDeactivateView.as_view(), name='ingest-news-deactivate'),
 ]

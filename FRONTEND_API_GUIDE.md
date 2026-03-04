@@ -6880,6 +6880,107 @@ Pass `?country=` to filter for a specific country, or `?country=all` for global 
 
 ---
 
+### 30.11 GET `/api/v1/feed/news/` — News Feed
+
+🔒 Requires auth. Paginated list of career & tech news snippets synced from the Crawler Bot. Only active, approved, non-flagged snippets are returned.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | int | 1 | Page number |
+| `page_size` | int | 20 | Items per page (max 50) |
+| `category` | string | — | Filter by category slug (see enum below) |
+| `region` | string | — | Filter by region (e.g. `"India"`, `"US"`, `"Global"`) |
+| `sentiment` | string | — | `"positive"`, `"neutral"`, or `"negative"` |
+| `search` | string | — | Free-text search across headline, summary, and tags |
+
+**Response (200):**
+
+```json
+{
+  "count": 142,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 8,
+  "results": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "uuid": "c3d4e5f6-a7b8-9012-cdef-345678901234",
+      "headline": "TCS Announces Mega Hiring Drive for 2026",
+      "summary": "TCS plans to hire 40,000 freshers in 2026, focusing on AI and cloud skills.",
+      "source_url": "https://economictimes.com/tech/tcs-hiring-2026",
+      "source_name": "Economic Times",
+      "author": "Rajesh Kumar",
+      "image_url": "https://example.com/tcs-hiring.jpg",
+      "published_at": "2026-03-04T08:30:00Z",
+      "category": "hiring",
+      "tags": ["TCS", "hiring", "freshers", "India"],
+      "sentiment": "positive",
+      "relevance_score": 9,
+      "region": "India",
+      "company_mentions": ["TCS", "Infosys", "Wipro"],
+      "industry": "IT",
+      "created_at": "2026-03-04T09:00:00Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `count` | int | Total matching snippets |
+| `page` | int | Current page number |
+| `page_size` | int | Items per page |
+| `total_pages` | int | Total number of pages |
+| `results[].id` | UUID | i-Luffy internal ID |
+| `results[].uuid` | UUID | Crawler bot source ID |
+| `results[].headline` | string | Article headline |
+| `results[].summary` | string | LLM-generated 2-3 sentence summary |
+| `results[].source_url` | URL | Link to original article |
+| `results[].source_name` | string | Publication name |
+| `results[].image_url` | URL | Article image |
+| `results[].published_at` | datetime \| null | Article publication date |
+| `results[].category` | string | Category slug (see enum below) |
+| `results[].tags` | string[] | Article tags |
+| `results[].sentiment` | string | `"positive"`, `"neutral"`, `"negative"` |
+| `results[].relevance_score` | int | 1-10 relevance score |
+| `results[].region` | string | Geographic focus |
+| `results[].company_mentions` | string[] | Companies referenced |
+| `results[].industry` | string | Industry sector |
+
+**News category slugs:**
+
+| Slug | Label |
+|------|-------|
+| `hiring` | Hiring & Job Market |
+| `layoffs` | Layoffs & Restructuring |
+| `skill_demand` | Tech Skill Demand |
+| `salary` | Salary & Compensation |
+| `funding` | Startup & Funding |
+| `tech_news` | Tech News & Releases |
+| `ai_automation` | AI & Automation |
+| `trending_tech` | Trending Tech |
+| `job_tips` | Job Tips & Career Advice |
+| `dev_community` | Developer Community |
+| `big_tech` | Big Tech Moves |
+| `industry_report` | Industry Reports |
+| `visa_policy` | Visa & Immigration |
+
+**Frontend usage:** News feed page with category tabs/chips, search bar, optional region/sentiment filters. Each card shows headline, summary, source, image, and sentiment badge. Link `source_url` to open full article.
+
+---
+
+### 30.12 GET `/api/v1/feed/news/<uuid:id>/` — News Snippet Detail
+
+🔒 Requires auth. Returns a single news snippet by its i-Luffy ID. Only returns active, approved, non-flagged snippets; otherwise returns 404.
+
+**Response (200):** Same shape as a single item in the list `results[]` array above.
+
+**Response (404):** `{ "detail": "News snippet not found." }`
+
+**Frontend usage:** Deep-link / share page for a single news article.
+
+---
+
 ### TypeScript Types (Feed)
 
 ```typescript
@@ -7028,6 +7129,34 @@ interface ActivityHistoryDay {
 interface ActivityHistory extends ActivityStreak {
   total_days_active: number;
   days: ActivityHistoryDay[];
+}
+
+interface NewsSnippet {
+  id: string;                  // i-Luffy UUID
+  uuid: string;                // Crawler bot UUID
+  headline: string;
+  summary: string;             // LLM-generated
+  source_url: string;
+  source_name: string;
+  author: string;
+  image_url: string;
+  published_at: string | null;
+  category: string;            // category slug
+  tags: string[];
+  sentiment: 'positive' | 'neutral' | 'negative';
+  relevance_score: number;     // 1-10
+  region: string;
+  company_mentions: string[];
+  industry: string;
+  created_at: string;
+}
+
+interface NewsFeedResponse {
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: NewsSnippet[];
 }
 ```
 
@@ -7480,6 +7609,8 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | GET | `/api/v1/feed/hub/` | ✅ | Readonly (120/hr) | Alerts + preps + cover letters composite |
 | GET | `/api/v1/feed/recommendations/` | ✅ | Readonly (120/hr) | AI-suggested next actions |
 | GET | `/api/v1/feed/onboarding/` | ✅ | Readonly (120/hr) | Completion checklist |
+| GET | `/api/v1/feed/news/` | ✅ | Readonly (120/hr) | Paginated news feed. Filters: `category`, `region`, `sentiment`, `search` (§30.11) |
+| GET | `/api/v1/feed/news/<uuid:id>/` | ✅ | Readonly (120/hr) | Single news snippet detail (§30.12) |
 | **Dashboard** |||||
 | GET | `/api/v1/dashboard/stats/` | ✅ | Readonly (120/hr) | User analytics & trends (cached 5 min) |
 | GET | `/api/v1/dashboard/skill-gap/` | ✅ | Readonly (120/hr) | Skill radar chart data. Role-aware: `?role=all` to disable |

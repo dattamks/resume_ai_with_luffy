@@ -358,3 +358,21 @@ class UserActivityAdmin(admin.ModelAdmin):
     list_per_page = 50
     ordering = ('-date',)
 
+
+# ── News Snippets ───────────────────────────────────────────────────────────
+from .models import NewsSnippet  # noqa: E402
+
+
+@admin.register(NewsSnippet)
+class NewsSnippetAdmin(admin.ModelAdmin):
+    list_display = ('headline_short', 'category', 'sentiment', 'relevance_score', 'region', 'is_active', 'published_at')
+    list_filter = ('category', 'sentiment', 'is_active', 'is_approved', 'is_flagged', 'region')
+    search_fields = ('headline', 'summary', 'source_name', 'source_url')
+    readonly_fields = ('id', 'uuid', 'created_at', 'updated_at')
+    list_per_page = 50
+    ordering = ('-published_at',)
+
+    @admin.display(description='Headline')
+    def headline_short(self, obj):
+        return obj.headline[:80] + ('...' if len(obj.headline) > 80 else '')
+

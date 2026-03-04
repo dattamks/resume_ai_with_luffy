@@ -1,7 +1,8 @@
 # Crawler Bot Ingest API Guide
 
-> **Last updated:** 2026-03-01 &nbsp;|&nbsp; **API version:** v1.0.0
+> **Last updated:** 2026-03-04 &nbsp;|&nbsp; **API version:** v1.1.0
 > Comprehensive technical reference for the external Crawler Bot service integrating with the i-Luffy backend.
+> **v1.1.0** — Added News Snippet sync (Crawler Bot → i-Luffy).
 
 ---
 
@@ -28,6 +29,15 @@ curl -H "X-Crawler-Key: your-secret" https://<backend>.up.railway.app/api/v1/ing
 ```
 Companies → Entities → Career Pages → Jobs
                                        ↑ (jobs can skip steps 1-3)
+```
+
+**6. News snippet sync** (Crawler Bot → i-Luffy):
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/news/bulk/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{ "snippets": [ { "uuid": "...", "headline": "...", "summary": "...", "source_url": "...", "category": "hiring" } ] }'
 ```
 
 **4. Minimum viable job ingest** (no company/entity needed):
@@ -83,6 +93,7 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
 14. [Full Workflow Example](#14-full-workflow-example)
 15. [Environment Variables](#15-environment-variables)
 16. [Quick Reference — All Endpoints](#16-quick-reference--all-endpoints)
+17. [News Snippet Sync (Crawler Bot → i-Luffy)](#17-news-snippet-sync-crawler-bot--i-luffy)
 
 ---
 
@@ -97,6 +108,7 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
 │   Responsibilities:     │                              │   Responsibilities:     │
 │   • Crawl job boards    │                              │   • Store companies     │
 │   • Scrape career pages │                              │   • Store jobs          │
+│   • Crawl news snippets │                              │   • Store news snippets │
 │   • Extract job data    │                              │   • Match to users      │
 │   • Enrich via LLM      │  ◄─────────────────────────  │   • Send notifications  │
 │                         │   GET crawl-sources          │   • Serve frontend      │
@@ -104,6 +116,8 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
 ```
 
 ### Data Flow
+
+#### Job Crawl Flow (i-Luffy → Crawler Bot → i-Luffy)
 
 1. **Crawler Bot** starts a crawl run
 2. Fetches active **Crawl Sources** from the backend (`GET /api/v1/ingest/crawl-sources/`)
@@ -114,6 +128,16 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/bulk/ \
 7. **Ingests career pages** (optional, `POST /api/v1/ingest/career-pages/`)
 8. **Ingests jobs** last (`POST /api/v1/ingest/jobs/` or `/jobs/bulk/`)
 9. Updates `last_crawled_at` on the crawl source (`PATCH /api/v1/ingest/crawl-sources/<id>/`)
+
+#### News Crawl Flow (Crawler Bot → i-Luffy)
+
+1. **Every 30 minutes**, the crawler bot picks the next batch of `NewsQuery` topics
+2. Sends LLM-powered web searches (Gemini :online) for each topic
+3. Filters articles: domain blocklist, relevance scoring, dedup, keyword scan
+4. Stores approved snippets locally in `NewsSnippet` table
+5. **Syncs only new/updated snippets** to i-Luffy (`POST /api/v1/ingest/news/bulk/`)
+6. Sets `last_synced_at` on each successfully synced snippet
+7. Daily expiry task archives snippets > 90 days, sends deactivation to i-Luffy
 
 ### What Happens After Job Ingest (Automatic)
 
@@ -295,6 +319,29 @@ class IngestClient:
         resp = self.session.patch(
             f"{self.base_url}/crawl-sources/{source_id}/",
             json={"last_crawled_at": last_crawled_at},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ── News snippet sync ─────────────────────────────────
+
+    def push_news_snippet(self, data: dict) -> dict:
+        resp = self.session.post(f"{self.base_url}/news/", json=data)
+        resp.raise_for_status()
+        return resp.json()
+
+    def push_news_snippets_bulk(self, snippets: list[dict]) -> dict:
+        resp = self.session.post(
+            f"{self.base_url}/news/bulk/",
+            json={"snippets": snippets},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def deactivate_news_snippets(self, uuids: list[str]) -> dict:
+        resp = self.session.post(
+            f"{self.base_url}/news/deactivate/",
+            json={"uuids": uuids},
         )
         resp.raise_for_status()
         return resp.json()
@@ -707,8 +754,6 @@ Creates or updates a career page keyed on `(entity, url)`.
 
 Creates or updates a `DiscoveredJob` keyed on `(source, external_id)`.
 
-> **Idempotent upsert:** Re-posting a job with the same `(source, external_id)` updates the existing record. The bot can safely re-push jobs with enriched/updated fields without worrying about duplicate errors.
-
 **curl:**
 
 ```bash
@@ -802,7 +847,7 @@ curl -X POST https://<backend>.up.railway.app/api/v1/ingest/jobs/ \
 
 **`POST /api/v1/ingest/jobs/bulk/`**
 
-Ingest up to **500 jobs** in a single request. Uses the same `(source, external_id)` upsert semantics as the single endpoint — duplicates are updated, not rejected.
+Ingest up to **500 jobs** in a single request.
 
 **curl:**
 
@@ -1101,14 +1146,16 @@ For full field-level documentation of all models, see [job_company.md](job_compa
 
 ### Summary
 
-| Model               | Table                           | Upsert Key                                  |
-|----------------------|---------------------------------|---------------------------------------------|
-| `Company`            | `analyzer_company`              | `name`                                      |
-| `CompanyEntity`      | `analyzer_companyentity`        | `(company, display_name, operating_country)` |
-| `CompanyCareerPage`  | `analyzer_companycareerpage`    | `(entity, url)`                             |
-| `DiscoveredJob`      | `analyzer_discoveredjob`        | `(source, external_id)`                     |
-| `CrawlSource`        | `analyzer_crawlsource`         | Admin-managed, read-only via API            |
-| `UserCompanyFollow`  | `analyzer_usercompanyfollow`    | User-facing, not ingested by crawler        |
+| Model               | Table                           | Upsert Key                                  | Sync Direction      |
+|----------------------|---------------------------------|---------------------------------------------|---------------------|
+| `Company`            | `analyzer_company`              | `name`                                      | Bot → i-Luffy       |
+| `CompanyEntity`      | `analyzer_companyentity`        | `(company, display_name, operating_country)` | Bot → i-Luffy       |
+| `CompanyCareerPage`  | `analyzer_companycareerpage`    | `(entity, url)`                             | Bot → i-Luffy       |
+| `DiscoveredJob`      | `analyzer_discoveredjob`        | `(source, external_id)`                     | Bot → i-Luffy       |
+| `CrawlSource`        | `analyzer_crawlsource`         | Admin-managed, read-only via API            | i-Luffy → Bot       |
+| `UserCompanyFollow`  | `analyzer_usercompanyfollow`    | User-facing, not ingested by crawler        | —                   |
+| `NewsSnippet`        | `news_newssnippet`             | `uuid` / `source_url`                       | **Bot → i-Luffy**   |
+| `NewsQuery`          | `news_newsquery`               | `(topic, category)`                         | Internal (admin)    |
 
 ### Enum Reference
 
@@ -1172,6 +1219,32 @@ For full field-level documentation of all models, see [job_company.md](job_compa
 |--------------|---------------------|
 | `job_board`  | Job Board           |
 | `company`    | Company Career Page |
+
+**`news_category` choices (NewsSnippet):**
+
+| Value            | Label                    |
+|------------------|--------------------------|
+| `hiring`         | Hiring & Job Market      |
+| `layoffs`        | Layoffs & Restructuring  |
+| `skill_demand`   | Tech Skill Demand        |
+| `salary`         | Salary & Compensation    |
+| `funding`        | Startup & Funding        |
+| `tech_news`      | Tech News & Releases     |
+| `ai_automation`  | AI & Automation          |
+| `trending_tech`  | Trending Tech            |
+| `job_tips`       | Job Tips & Career Advice |
+| `dev_community`  | Developer Community      |
+| `big_tech`       | Big Tech Moves           |
+| `industry_report`| Industry Reports         |
+| `visa_policy`    | Visa & Immigration       |
+
+**`news_sentiment` choices (NewsSnippet):**
+
+| Value      | Label    |
+|------------|----------|
+| `positive` | Positive |
+| `neutral`  | Neutral  |
+| `negative` | Negative |
 
 ---
 
@@ -1313,3 +1386,285 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 | `POST`  | `/api/v1/ingest/jobs/bulk/`                | Bulk upsert jobs (max 500)            | `X-Crawler-Key` |
 | `GET`   | `/api/v1/ingest/crawl-sources/`            | List active crawl sources             | `X-Crawler-Key` |
 | `PATCH` | `/api/v1/ingest/crawl-sources/<uuid:id>/`  | Update `last_crawled_at`              | `X-Crawler-Key` |
+| `POST`  | `/api/v1/ingest/news/`                     | Upsert a single news snippet          | `X-Crawler-Key` |
+| `POST`  | `/api/v1/ingest/news/bulk/`                | Bulk upsert news snippets (max 200)   | `X-Crawler-Key` |
+| `POST`  | `/api/v1/ingest/news/deactivate/`          | Deactivate expired news snippets      | `X-Crawler-Key` |
+
+---
+
+## 17. News Snippet Sync (Crawler Bot → i-Luffy)
+
+Unlike companies, entities, and jobs — which the **crawler bot** pushes to i-Luffy — news snippets also flow **from the crawler bot to i-Luffy**, but the crawler bot is the **source of truth** for news content.
+
+### 17.1 Overview
+
+The crawler bot crawls news using LLM-powered web search (Gemini :online models). It applies a multi-layer filtering pipeline, stores approved snippets locally, and syncs only the **latest** (newly created or updated) snippets to i-Luffy.
+
+```
+Crawler Bot                                i-Luffy
+┌──────────────────────┐                  ┌──────────────────────┐
+│ NewsQuery (36 topics)│                  │                      │
+│       │              │                  │                      │
+│       ▼              │                  │                      │
+│ LLM Web Search       │                  │                      │
+│       │              │                  │                      │
+│       ▼              │                  │                      │
+│ Filter Pipeline      │                  │                      │
+│ (blocklist, relevance│                  │                      │
+│  dedup, keywords)    │                  │                      │
+│       │              │                  │                      │
+│       ▼              │    POST /news/   │                      │
+│ NewsSnippet (local)  │ ────────────────►│ Store & serve to     │
+│ (last_synced_at)     │    bulk/         │ frontend users       │
+│       │              │                  │                      │
+│       ▼ (daily)      │    POST /news/   │                      │
+│ Expire > 90 days     │ ────────────────►│ Deactivate expired   │
+│                      │    deactivate/   │                      │
+└──────────────────────┘                  └──────────────────────┘
+```
+
+### 17.2 Crawl Schedule
+
+News crawls run **every 30 minutes**, rotating through 36 queries across 13 categories:
+
+| Priority | Queries | Crawl Frequency     | Lookback Window |
+|----------|---------|---------------------|-----------------|
+| HIGH     | ~14     | Every 30 min slot   | 8 hours         |
+| MEDIUM   | ~12     | Every 30 min slot   | 14 hours        |
+| LOW      | ~10     | Every 30 min slot   | 26 hours        |
+
+High-priority queries are picked more frequently. The system uses `last_crawled_at` to rotate through topics fairly.
+
+### 17.3 Upsert a Single News Snippet
+
+**`POST /api/v1/ingest/news/`**
+
+Creates or updates a news snippet. **Upsert key:** `uuid` (primary) or `source_url` (fallback).
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/news/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "headline": "Infosys Plans Major AI Hiring Push in 2026",
+    "summary": "Infosys announced plans to hire 10,000 AI specialists across India in 2026, focusing on generative AI and cloud-native development.",
+    "source_url": "https://economictimes.com/tech/infosys-ai-hiring-2026",
+    "source_name": "Economic Times",
+    "published_at": "2026-03-04T06:00:00Z",
+    "category": "hiring",
+    "tags": ["Infosys", "AI", "hiring", "India"],
+    "sentiment": "positive",
+    "relevance_score": 9,
+    "region": "India",
+    "company_mentions": ["Infosys"],
+    "industry": "IT"
+  }'
+```
+
+**Response `201 Created`:**
+
+```json
+{
+  "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "headline": "Infosys Plans Major AI Hiring Push in 2026",
+  "source_url": "https://economictimes.com/tech/infosys-ai-hiring-2026"
+}
+```
+
+### 17.4 Bulk Upsert News Snippets
+
+**`POST /api/v1/ingest/news/bulk/`**
+
+Ingest up to **200 news snippets** in a single request.
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/news/bulk/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "snippets": [
+      {
+        "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "headline": "TCS Mega Hiring Drive 2026",
+        "summary": "TCS plans to hire 40,000 freshers in 2026...",
+        "source_url": "https://economictimes.com/tech/tcs-hiring",
+        "category": "hiring",
+        "relevance_score": 9,
+        "sentiment": "positive",
+        "region": "India",
+        "tags": ["TCS", "hiring"],
+        "company_mentions": ["TCS"]
+      },
+      {
+        "uuid": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+        "headline": "AI Tool Disrupts Traditional Coding",
+        "summary": "A new AI tool is changing how developers write code...",
+        "source_url": "https://techcrunch.com/ai-coding-tool-2026",
+        "category": "ai_automation",
+        "relevance_score": 8,
+        "sentiment": "neutral",
+        "tags": ["AI", "coding", "tools"]
+      }
+    ]
+  }'
+```
+
+**Request Body:**
+
+```json
+{
+  "snippets": [
+    { /* same fields as single snippet */ },
+    { /* ... */ }
+  ]
+}
+```
+
+**Response `201 Created`:**
+
+```json
+{
+  "ingested": 2,
+  "failed": 0,
+  "results": [
+    { "uuid": "a1b2c3d4-...", "headline": "TCS Mega Hiring Drive 2026" },
+    { "uuid": "b2c3d4e5-...", "headline": "AI Tool Disrupts Traditional Coding" }
+  ],
+  "errors": []
+}
+```
+
+**Response with partial failures:**
+
+```json
+{
+  "ingested": 1,
+  "failed": 1,
+  "results": [
+    { "uuid": "a1b2c3d4-...", "headline": "TCS Mega Hiring Drive 2026" }
+  ],
+  "errors": [
+    {
+      "index": 1,
+      "errors": { "source_url": ["Enter a valid URL."] }
+    }
+  ]
+}
+```
+
+**Limits:**
+
+| Constraint              | Value |
+|-------------------------|-------|
+| Max snippets per bulk   | 200   |
+
+### 17.5 News Snippet Field Reference
+
+| Field              | Type     | Required | Notes                                                              |
+|--------------------|----------|----------|---------------------------------------------------------------------|
+| `uuid`             | UUID     | **Yes**  | Crawler bot's primary key. **Upsert key** on i-Luffy side.         |
+| `headline`         | string   | **Yes**  | Article headline (max 500 chars).                                   |
+| `summary`          | string   | **Yes**  | 2-3 sentence LLM-generated summary.                                |
+| `source_url`       | URL      | **Yes**  | Direct link to original article. Unique.                            |
+| `source_name`      | string   | No       | Publication name (e.g. "TechCrunch", "Economic Times").             |
+| `author`           | string   | No       | Article author if available.                                        |
+| `image_url`        | URL      | No       | Main image URL.                                                     |
+| `published_at`     | datetime | No       | ISO 8601. When the article was published.                           |
+| `category`         | string   | **Yes**  | One of the 13 category slugs (see §17.7).                          |
+| `tags`             | string[] | No       | List of tags: `["AI", "hiring"]`.                                   |
+| `sentiment`        | string   | No       | One of: `positive`, `neutral`, `negative`.                          |
+| `relevance_score`  | integer  | No       | LLM-assigned 1-10 (10 = most relevant). Default 5.                 |
+| `region`           | string   | No       | Geographic focus: "India", "US", "Global", etc.                    |
+| `company_mentions` | string[] | No       | Companies mentioned: `["Google", "TCS"]`.                           |
+| `industry`         | string   | No       | Industry sector: "IT", "Finance", etc.                              |
+| `is_flagged`       | boolean  | No       | Default `false`. True if auto-flagged by crawler.                   |
+| `flag_reason`      | string   | No       | Why flagged (see §17.8). Empty if not flagged.                      |
+| `is_approved`      | boolean  | No       | Default `true`. False = hidden until admin approves.                |
+| `is_active`        | boolean  | No       | Default `true`. False = archived/expired.                           |
+
+### 17.6 Deactivate News Snippets
+
+**`POST /api/v1/ingest/news/deactivate/`**
+
+Mark snippets as inactive on i-Luffy when they expire on the crawler bot (>90 days) or are admin-rejected.
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/news/deactivate/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "uuids": [
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "b2c3d4e5-f6a7-8901-bcde-f23456789012"
+    ]
+  }'
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "deactivated": 2
+}
+```
+
+### 17.7 News Category Choices
+
+| Slug             | Display Label              | Typical Content                                    |
+|------------------|----------------------------|----------------------------------------------------|
+| `hiring`         | Hiring & Job Market        | Mass hiring, job fairs, market trends              |
+| `layoffs`        | Layoffs & Restructuring    | Layoffs, reorgs, downsizing                        |
+| `skill_demand`   | Tech Skill Demand          | In-demand skills, skill gap reports                |
+| `salary`         | Salary & Compensation      | Salary surveys, pay trends, benefits               |
+| `funding`        | Startup & Funding          | Funding rounds, acquisitions, IPOs                 |
+| `tech_news`      | Tech News & Releases       | Product launches, tech announcements               |
+| `ai_automation`  | AI & Automation            | AI tools, automation impact, GenAI                 |
+| `trending_tech`  | Trending Tech              | Emerging tech, frameworks, languages               |
+| `job_tips`       | Job Tips & Career Advice   | Resume tips, interview prep, career growth         |
+| `dev_community`  | Developer Community        | Open source, dev events, community updates         |
+| `big_tech`       | Big Tech Moves             | FAANG/big tech strategy, moves, earnings           |
+| `industry_report`| Industry Reports           | Analyst reports, market research                   |
+| `visa_policy`    | Visa & Immigration         | H1B, work permits, immigration policy              |
+
+### 17.8 Flag Reason Choices
+
+| Value                  | Label                    |
+|------------------------|--------------------------|
+| `""` (empty)           | None                     |
+| `low_relevance`        | Low Relevance Score      |
+| `inappropriate`        | Inappropriate Content    |
+| `spam`                 | Spam / Promotional       |
+| `duplicate`            | Duplicate Content        |
+| `stale`                | Stale / Outdated         |
+| `unverified`           | Unverified Source        |
+| `dead_link`            | Dead Link (404)          |
+| `low_quality_negative` | Low Quality Negative     |
+| `blocked_source`       | Blocked Source Domain    |
+
+### 17.9 What i-Luffy Should Do After Receiving News
+
+When news snippets are ingested, the i-Luffy backend should:
+
+1. **Store** — Upsert into a local `NewsSnippet` table keyed on `uuid`
+2. **Index** — Update search/filter indexes for category, tags, region
+3. **Serve** — Expose via frontend API (list, filter by category, trending, etc.)
+4. **Expire** — When deactivation payloads arrive, set `is_active = False` locally
+
+**i-Luffy does NOT need to:**
+- Crawl news — the crawler bot does that
+- Filter/flag content — already done by the crawler bot's pipeline
+- Re-compute relevance — scores come from the crawler bot's LLM
+
+### 17.10 Sync Behaviour
+
+| Aspect             | Detail                                                        |
+|--------------------|---------------------------------------------------------------|
+| **Direction**      | Crawler Bot → i-Luffy (outbound push)                         |
+| **Trigger**        | After each news crawl run (every 30 minutes)                  |
+| **Selection**      | Only `last_synced_at IS NULL` or `updated_at > last_synced_at`|
+| **Filter**         | Only `is_approved=True, is_active=True, is_flagged=False`     |
+| **Batch size**     | Up to 200 per bulk request                                    |
+| **Deactivation**   | Separate endpoint for expired/removed snippets                |
+| **Idempotent**     | Re-sending same UUID updates existing record                  |
+| **Retention**      | 90 days on crawler bot, synced deactivation to i-Luffy        |

@@ -9,7 +9,7 @@ from rest_framework import serializers
 
 from .models import (
     Company, CompanyEntity, CompanyCareerPage, CrawlSource,
-    DiscoveredJob, UserCompanyFollow,
+    DiscoveredJob, UserCompanyFollow, NewsSnippet,
 )
 
 
@@ -329,5 +329,95 @@ class CompanyCareerPageReadSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'url', 'label', 'country',
             'crawl_frequency', 'is_active', 'last_crawled_at',
+        )
+        read_only_fields = fields
+
+
+# ── News Snippet Ingest ──────────────────────────────────────────────────────
+
+
+class NewsSnippetIngestSerializer(serializers.Serializer):
+    """
+    Upsert a NewsSnippet by ``uuid`` (primary key from crawler bot).
+
+    Falls back to ``source_url`` for dedup if the same article was
+    already ingested from a different crawler run.
+    """
+    uuid = serializers.UUIDField()
+    headline = serializers.CharField(max_length=500)
+    summary = serializers.CharField()
+    source_url = serializers.URLField(max_length=1000)
+    source_name = serializers.CharField(max_length=255, required=False, default='')
+    author = serializers.CharField(max_length=255, required=False, default='')
+    image_url = serializers.URLField(max_length=1000, required=False, default='')
+    published_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    category = serializers.ChoiceField(
+        choices=NewsSnippet.CATEGORY_CHOICES,
+    )
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False, default=list,
+    )
+    sentiment = serializers.ChoiceField(
+        choices=NewsSnippet.SENTIMENT_CHOICES,
+        required=False, default=NewsSnippet.SENTIMENT_NEUTRAL,
+    )
+    relevance_score = serializers.IntegerField(
+        min_value=1, max_value=10, required=False, default=5,
+    )
+    region = serializers.CharField(max_length=100, required=False, default='')
+    company_mentions = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False, default=list,
+    )
+    industry = serializers.CharField(max_length=100, required=False, default='')
+    is_flagged = serializers.BooleanField(required=False, default=False)
+    flag_reason = serializers.CharField(max_length=30, required=False, default='')
+    is_approved = serializers.BooleanField(required=False, default=True)
+    is_active = serializers.BooleanField(required=False, default=True)
+
+    def create(self, validated_data):
+        snippet_uuid = validated_data.pop('uuid')
+        source_url = validated_data.get('source_url')
+
+        # Try upsert by uuid first, then fallback to source_url
+        snippet, _created = NewsSnippet.objects.update_or_create(
+            uuid=snippet_uuid,
+            defaults=validated_data,
+        )
+        # If a different record already has this source_url, merge
+        if not _created:
+            return snippet
+
+        # Check if source_url collision with a different uuid
+        existing_by_url = (
+            NewsSnippet.objects
+            .filter(source_url=source_url)
+            .exclude(uuid=snippet_uuid)
+            .first()
+        )
+        if existing_by_url:
+            # Update the existing record's uuid to the new one and delete the dup
+            for field, value in validated_data.items():
+                setattr(existing_by_url, field, value)
+            existing_by_url.uuid = snippet_uuid
+            existing_by_url.save()
+            snippet.delete()
+            return existing_by_url
+
+        return snippet
+
+
+class NewsSnippetReadSerializer(serializers.ModelSerializer):
+    """Read-only serializer for serving news to the frontend."""
+
+    class Meta:
+        model = NewsSnippet
+        fields = (
+            'id', 'uuid', 'headline', 'summary', 'source_url',
+            'source_name', 'author', 'image_url', 'published_at',
+            'category', 'tags', 'sentiment', 'relevance_score',
+            'region', 'company_mentions', 'industry',
+            'created_at',
         )
         read_only_fields = fields

@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.41.0] — 2026-03-04
+
+### News Feed — Ingest & Serve Career/Tech News
+
+#### Added — `NewsSnippet` Model (`analyzer/models.py`)
+- New model with 20+ fields: `uuid` (crawler PK), `headline`, `summary` (LLM-generated), `source_url`, `source_name`, `image_url`, `published_at`, `category` (13 choices), `tags`, `sentiment`, `relevance_score`, `region`, `company_mentions`, `industry`, `is_flagged`, `flag_reason`, `is_approved`, `is_active`.
+- Indexes on `category+published_at`, `region+published_at`, composite active/approved, `relevance_score`.
+- Migration: `0035_add_news_snippet_model`.
+
+#### Added — News Ingest API (Crawler Bot → i-Luffy)
+- `POST /api/v1/ingest/news/` — single news snippet upsert (keyed on `uuid`, fallback `source_url`).
+- `POST /api/v1/ingest/news/bulk/` — bulk upsert up to 200 snippets per request.
+- `POST /api/v1/ingest/news/deactivate/` — deactivate expired/removed snippets by UUID list.
+- All endpoints use `X-Crawler-Key` auth, no rate limiting, idempotent upserts.
+
+#### Added — News Feed API (i-Luffy → Frontend)
+- `GET /api/v1/feed/news/` — paginated news feed (page/page_size, max 50). Filters: `category`, `region`, `sentiment`, `search` (headline/summary/tags). Only active+approved+non-flagged snippets.
+- `GET /api/v1/feed/news/<uuid:id>/` — single snippet detail. 404 for inactive/flagged.
+
+#### Added — Admin Registration
+- `NewsSnippetAdmin` with list display, filters, search across headline/summary/source.
+
+#### Added — Tests (`analyzer/tests/test_news.py`)
+- 26 tests across 4 test classes: single ingest (6), bulk ingest (5), deactivate (3), feed list+detail (12).
+
+#### Documentation
+- `FRONTEND_API_GUIDE.md` §30.11 + §30.12: full news feed endpoint docs with response shapes, field tables, category enum, TS types.
+- §32 quick-reference: added news feed endpoint rows.
+
+---
+
 ## [0.40.0] — 2026-03-03
 
 ### Feed Insights Rework — Salary, Counts & Documentation Gaps

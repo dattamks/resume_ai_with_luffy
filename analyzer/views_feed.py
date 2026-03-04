@@ -1340,3 +1340,112 @@ class DashboardActivityHistoryView(APIView):
         from .serializers_feed import ActivityHistorySerializer
         serializer = ActivityHistorySerializer(data)
         return Response(serializer.data)
+
+
+# ── News Feed ────────────────────────────────────────────────────────────────
+
+
+class FeedNewsListView(APIView):
+    """
+    GET /api/v1/feed/news/  — Paginated news feed.
+
+    Returns active, approved, non-flagged news snippets sorted by
+    ``published_at`` descending.
+
+    Query params:
+        - ``page`` (int, default 1)
+        - ``page_size`` (int, default 20, max 50)
+        - ``category`` (slug filter, e.g. ``hiring``, ``ai_automation``)
+        - ``region`` (e.g. ``India``, ``US``, ``Global``)
+        - ``sentiment`` (``positive``, ``neutral``, ``negative``)
+        - ``search`` (free-text search across headline, summary, tags)
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request):
+        from .models import NewsSnippet
+        from .serializers_ingest import NewsSnippetReadSerializer
+
+        # Pagination
+        try:
+            page = max(int(request.query_params.get('page', 1)), 1)
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            page_size = min(max(int(request.query_params.get('page_size', 20)), 1), 50)
+        except (ValueError, TypeError):
+            page_size = 20
+
+        offset = (page - 1) * page_size
+
+        # Base queryset — only active + approved + not flagged
+        qs = NewsSnippet.objects.filter(
+            is_active=True,
+            is_approved=True,
+            is_flagged=False,
+        )
+
+        # ── Filters ──────────────────────────────────────────────────
+        category = request.query_params.get('category', '').strip()
+        if category:
+            qs = qs.filter(category=category)
+
+        region = request.query_params.get('region', '').strip()
+        if region:
+            qs = qs.filter(region__iexact=region)
+
+        sentiment = request.query_params.get('sentiment', '').strip()
+        if sentiment:
+            qs = qs.filter(sentiment=sentiment)
+
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(headline__icontains=search)
+                | Q(summary__icontains=search)
+                | Q(tags__icontains=search)
+            )
+
+        # ── Count + slice ────────────────────────────────────────────
+        total = qs.count()
+        snippets = qs.order_by('-published_at', '-created_at')[offset:offset + page_size]
+
+        serializer = NewsSnippetReadSerializer(snippets, many=True)
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total + page_size - 1) // page_size if total else 0,
+            'results': serializer.data,
+        })
+
+
+class FeedNewsDetailView(APIView):
+    """
+    GET /api/v1/feed/news/<uuid:id>/  — Single news snippet detail.
+
+    Only returns active, approved, non-flagged snippets.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReadOnlyThrottle]
+
+    def get(self, request, pk):
+        from .models import NewsSnippet
+        from .serializers_ingest import NewsSnippetReadSerializer
+
+        try:
+            snippet = NewsSnippet.objects.get(
+                id=pk,
+                is_active=True,
+                is_approved=True,
+                is_flagged=False,
+            )
+        except NewsSnippet.DoesNotExist:
+            return Response(
+                {'detail': 'News snippet not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = NewsSnippetReadSerializer(snippet)
+        return Response(serializer.data)

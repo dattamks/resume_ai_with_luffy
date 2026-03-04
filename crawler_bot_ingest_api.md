@@ -1,8 +1,8 @@
 # Crawler Bot — Ingest API Configuration Guide
 
 > **Service:** `resume_ai_backend_job_bot` (Crawler Bot)
-> **Last updated:** 2026-03-01
-> **Purpose:** This document tells i-Luffy how to push company, career page, and job data **into** the Crawler Bot's ingest API.
+> **Last updated:** 2026-03-04
+> **Purpose:** This document tells i-Luffy how to push company, career page, and job data **into** the Crawler Bot's ingest API, and documents the **news snippet** data model that the crawler bot syncs **to** i-Luffy.
 
 ---
 
@@ -70,6 +70,16 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 | `GET`  | `/api/ingest/jobs/`              | List active jobs (latest 100)   |
 | `POST` | `/api/ingest/jobs/`              | Upsert a single job             |
 | `POST` | `/api/ingest/jobs/bulk/`         | Bulk upsert jobs (max 500)      |
+
+### News Snippet Sync (Crawler Bot → i-Luffy)
+
+The crawler bot **pushes** news snippets to i-Luffy. These are **outbound** from the crawler bot's perspective.
+
+| Method | Endpoint (on i-Luffy)                      | Description                             |
+|--------|--------------------------------------------|-----------------------------------------|
+| `POST` | `/api/v1/ingest/news/`                     | Upsert a single news snippet            |
+| `POST` | `/api/v1/ingest/news/bulk/`                | Bulk upsert news snippets (max 200)     |
+| `POST` | `/api/v1/ingest/news/deactivate/`          | Deactivate expired/flagged snippets     |
 
 **No rate limiting** — endpoints are exempt. The `X-Crawler-Key` auth is sufficient.
 
@@ -859,7 +869,212 @@ print(f"Ingested {result['ingested']} jobs, {result['failed']} failed")
 
 ---
 
-## 13. Environment Variables
+## 13. News Snippet Sync (Crawler Bot → i-Luffy)
+
+The crawler bot crawls news snippets via LLM-powered web search and syncs them to i-Luffy for display on the frontend. **Only newly created or updated snippets are synced** — the bot tracks `last_synced_at` on each record.
+
+### 13.1 How It Works
+
+```
+┌────────────────────────┐                              ┌────────────────────────┐
+│   Crawler Bot          │    POST /ingest/news/bulk/   │   i-Luffy Backend      │
+│                        │  ──────────────────────────► │                        │
+│  • LLM crawls news     │    X-Crawler-Key: <secret>   │  • Stores snippets     │
+│  • Filters & flags     │                              │  • Serves to frontend  │
+│  • Syncs only latest   │  ◄──────────────────────────  │  • User notifications  │
+│                        │    200 OK / 201 Created       │                        │
+└────────────────────────┘                              └────────────────────────┘
+```
+
+**Sync criteria** — The crawler bot only pushes snippets where:
+- `last_synced_at IS NULL` (never synced), **or**
+- `updated_at > last_synced_at` (updated since last sync)
+
+After a successful push, the bot sets `last_synced_at = now()` on each synced record.
+
+### 13.2 News Snippet Schema
+
+The payload the crawler bot sends to `POST /api/v1/ingest/news/bulk/`:
+
+```json
+{
+  "snippets": [
+    {
+      "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "headline": "TCS Announces Mega Hiring Drive for 2026",
+      "summary": "TCS plans to hire 40,000 freshers in 2026, focusing on AI and cloud skills. The company aims to expand its workforce across Tier-2 cities.",
+      "source_url": "https://economictimes.com/tech/tcs-hiring-2026",
+      "source_name": "Economic Times",
+      "author": "Rajesh Kumar",
+      "image_url": "https://example.com/tcs-hiring.jpg",
+      "published_at": "2026-03-04T08:30:00Z",
+      "category": "hiring",
+      "tags": ["TCS", "hiring", "freshers", "India"],
+      "sentiment": "positive",
+      "relevance_score": 9,
+      "region": "India",
+      "company_mentions": ["TCS", "Infosys", "Wipro"],
+      "industry": "IT",
+      "is_flagged": false,
+      "flag_reason": "",
+      "is_approved": true,
+      "is_active": true
+    }
+  ]
+}
+```
+
+#### Request Body — News Snippet Fields
+
+| Field              | Type     | Required | Notes                                                              |
+|--------------------|----------|----------|--------------------------------------------------------------------|
+| `uuid`             | UUID     | **Yes**  | Crawler bot's primary key. **Upsert key** on i-Luffy side.        |
+| `headline`         | string   | **Yes**  | Article title/headline (max 500 chars).                            |
+| `summary`          | string   | **Yes**  | 2-3 sentence LLM-generated summary.                               |
+| `source_url`       | URL      | **Yes**  | Direct URL to the original article. Unique.                        |
+| `source_name`      | string   | No       | Publication name (e.g. "TechCrunch", "Economic Times").          |
+| `author`           | string   | No       | Article author, if available.                                      |
+| `image_url`        | URL      | No       | Main image URL for the article.                                    |
+| `published_at`     | datetime | No       | ISO 8601. When the article was published.                          |
+| `category`         | string   | **Yes**  | One of the category slugs (see enum below).                        |
+| `tags`             | string[] | No       | List of tags: `["AI", "hiring", "salary"]`.                    |
+| `sentiment`        | string   | No       | One of: `positive`, `neutral`, `negative`.                         |
+| `relevance_score`  | integer  | No       | LLM-assigned 1-10 (10 = most relevant). Default 5.                |
+| `region`           | string   | No       | Geographic focus: "India", "US", "Global", etc.                |
+| `company_mentions` | string[] | No       | Companies mentioned: `["Google", "TCS"]`.                      |
+| `industry`         | string   | No       | Industry sector: "IT", "Finance", etc.                          |
+| `is_flagged`       | boolean  | No       | Default `false`. True if content was auto-flagged.                 |
+| `flag_reason`      | string   | No       | Why flagged (see enum below). Empty if not flagged.                |
+| `is_approved`      | boolean  | No       | Default `true`. False = hidden until admin approves.               |
+| `is_active`        | boolean  | No       | Default `true`. False = archived/expired.                          |
+
+#### Response `201 Created`
+
+```json
+{
+  "ingested": 5,
+  "failed": 0,
+  "results": [
+    { "uuid": "a1b2c3d4-...", "headline": "TCS Announces Mega Hiring Drive..." }
+  ],
+  "errors": []
+}
+```
+
+#### Constraints
+
+| Constraint              | Value |
+|-------------------------|-------|
+| Max snippets per bulk   | 200   |
+| `headline` max length   | 500   |
+| `source_url` max length | 1000  |
+
+### 13.3 Single News Snippet Upsert
+
+`POST /api/v1/ingest/news/`
+
+Same fields as the bulk endpoint, but a single object (not wrapped in `snippets` array).
+
+```bash
+curl -X POST https://<backend>.up.railway.app/api/v1/ingest/news/ \
+  -H "X-Crawler-Key: your-secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "headline": "Google Announces New AI Tools",
+    "summary": "Google launched a suite of AI-powered developer tools...",
+    "source_url": "https://techcrunch.com/google-ai-tools-2026",
+    "category": "ai_automation",
+    "relevance_score": 8
+  }'
+```
+
+### 13.4 Deactivate News Snippets
+
+`POST /api/v1/ingest/news/deactivate/`
+
+Used to mark snippets as inactive (expired, flagged, or removed from crawler). Sent when the crawler's `expire_stale_news` task archives old snippets.
+
+```json
+{
+  "uuids": [
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "b2c3d4e5-f6a7-8901-bcde-f23456789012"
+  ]
+}
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "deactivated": 2
+}
+```
+
+### 13.5 News Category Enum
+
+| Slug             | Display Label              |
+|------------------|----------------------------|
+| `hiring`         | Hiring & Job Market        |
+| `layoffs`        | Layoffs & Restructuring    |
+| `skill_demand`   | Tech Skill Demand          |
+| `salary`         | Salary & Compensation      |
+| `funding`        | Startup & Funding          |
+| `tech_news`      | Tech News & Releases       |
+| `ai_automation`  | AI & Automation            |
+| `trending_tech`  | Trending Tech              |
+| `job_tips`       | Job Tips & Career Advice   |
+| `dev_community`  | Developer Community        |
+| `big_tech`       | Big Tech Moves             |
+| `industry_report`| Industry Reports           |
+| `visa_policy`    | Visa & Immigration         |
+
+### 13.6 Sentiment Enum
+
+| Value      | Label    |
+|------------|----------|
+| `positive` | Positive |
+| `neutral`  | Neutral  |
+| `negative` | Negative |
+
+### 13.7 Flag Reason Enum
+
+| Value                  | Label                    |
+|------------------------|--------------------------|
+| `""` (empty)           | None                     |
+| `low_relevance`        | Low Relevance Score      |
+| `inappropriate`        | Inappropriate Content    |
+| `spam`                 | Spam / Promotional       |
+| `duplicate`            | Duplicate Content        |
+| `stale`                | Stale / Outdated         |
+| `unverified`           | Unverified Source        |
+| `dead_link`            | Dead Link (404)          |
+| `low_quality_negative` | Low Quality Negative     |
+| `blocked_source`       | Blocked Source Domain    |
+
+### 13.8 Filtering Pipeline
+
+Before syncing to i-Luffy, the crawler bot applies a multi-layer filter:
+
+1. **Prompt-level** — LLM is instructed to return only relevant, recent articles
+2. **Domain blocklist** — Articles from blocked domains (Medium, Reddit, LinkedIn, etc.) are discarded
+3. **Relevance gate** — Score < 5 → discarded, 5-6 → auto-flagged, 7+ → approved
+4. **URL dedup** — `source_url` uniqueness enforced at DB level
+5. **Headline dedup** — Near-duplicate headlines (≥85% similarity) within 48h are discarded
+6. **Keyword scan** — Flagged keywords (scam, fake, nsfw, etc.) trigger auto-flagging
+
+**Only approved, active, non-flagged snippets are synced to i-Luffy.** Flagged content stays on the crawler bot for admin review.
+
+### 13.9 Retention & Expiry
+
+- **Retention:** 90 days (configurable via `NEWS_RETENTION_DAYS` env var)
+- **Expiry task:** Runs daily — archives snippets older than 90 days (`is_active = False`)
+- **Deactivation sync:** When snippets expire, a deactivation payload is sent to i-Luffy
+
+---
+
+## 14. Environment Variables
 
 ### Crawler Bot — Required
 
@@ -876,22 +1091,27 @@ print(f"Ingested {result['ingested']} jobs, {result['failed']} failed")
 
 ---
 
-## 14. Data Model Summary
+## 15. Data Model Summary
 
-| Model       | DB Table             | Upsert Key              | Primary Key |
-|-------------|----------------------|--------------------------|-------------|
-| `Company`   | `companies_company`  | `domain` or `name`       | UUID v4     |
-| `CareerPage`| `companies_careerpage` | `(company, url)`       | UUID v4     |
-| `Job`       | `jobs_job`           | `job_url`                | UUID v4     |
+| Model         | DB Table               | Upsert Key              | Primary Key | Sync Direction       |
+|---------------|------------------------|--------------------------|-------------|----------------------|
+| `Company`     | `companies_company`    | `domain` or `name`       | UUID v4     | i-Luffy → Crawler    |
+| `CareerPage`  | `companies_careerpage` | `(company, url)`         | UUID v4     | i-Luffy → Crawler    |
+| `Job`         | `jobs_job`             | `job_url`                | UUID v4     | i-Luffy → Crawler    |
+| `NewsSnippet` | `news_newssnippet`     | `uuid` / `source_url`   | UUID v4     | **Crawler → i-Luffy**|
+| `NewsQuery`   | `news_newsquery`       | `(topic, category)`      | UUID v4     | Internal (admin)     |
 
 All models have:
 - `id` — UUID v4 primary key (auto-generated)
 - `created_at` — auto-set on creation
 - `updated_at` — auto-set on every save
 
+`NewsSnippet` additionally has:
+- `last_synced_at` — set when synced to i-Luffy (used to determine what to push next)
+
 ---
 
-## 15. Important Notes
+## 16. Important Notes
 
 1. **Idempotent upserts** — Re-sending the same data just updates the existing record. No duplicates are created.
 
@@ -904,3 +1124,11 @@ All models have:
 5. **Career page linking** — If a job is pushed with a `source_page_url` that matches an existing CareerPage record, the FK relationship is auto-linked.
 
 6. **No rate limiting** — Ingest endpoints have no throttle. Push as fast as you need.
+
+7. **News snippet sync is outbound** — Unlike companies/career pages/jobs (which i-Luffy pushes TO the crawler bot), news snippets flow in the **opposite direction**: the crawler bot pushes them TO i-Luffy. The endpoints are on i-Luffy's side.
+
+8. **News sync is incremental** — Only new or updated snippets are pushed (tracked via `last_synced_at`). The bot never re-sends the full corpus.
+
+9. **Flagged news stays local** — Flagged/unapproved snippets are NOT synced to i-Luffy. They remain on the crawler bot for admin review. Only `is_approved=True, is_active=True, is_flagged=False` snippets are pushed.
+
+10. **News retention is 90 days** — Snippets older than 90 days are auto-archived. The crawler sends a deactivation signal to i-Luffy when this happens.

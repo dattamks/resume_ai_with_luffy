@@ -2088,3 +2088,122 @@ class UserActivity(models.Model):
                 break
 
         return streak, monthly
+
+
+# ── News Snippets (Crawler Bot → i-Luffy) ────────────────────────────────────
+
+
+class NewsSnippet(models.Model):
+    """
+    News article snippet synced from the external Crawler Bot service.
+
+    The crawler bot crawls tech/career news via LLM-powered web search,
+    filters and scores each article, then pushes approved snippets here.
+    i-Luffy stores them and serves them to frontend users.
+
+    Upsert key: ``uuid`` (primary) or ``source_url`` (fallback).
+    """
+
+    # ── Category choices ─────────────────────────────────────────────────
+    CATEGORY_HIRING = 'hiring'
+    CATEGORY_LAYOFFS = 'layoffs'
+    CATEGORY_SKILL_DEMAND = 'skill_demand'
+    CATEGORY_SALARY = 'salary'
+    CATEGORY_FUNDING = 'funding'
+    CATEGORY_TECH_NEWS = 'tech_news'
+    CATEGORY_AI_AUTOMATION = 'ai_automation'
+    CATEGORY_TRENDING_TECH = 'trending_tech'
+    CATEGORY_JOB_TIPS = 'job_tips'
+    CATEGORY_DEV_COMMUNITY = 'dev_community'
+    CATEGORY_BIG_TECH = 'big_tech'
+    CATEGORY_INDUSTRY_REPORT = 'industry_report'
+    CATEGORY_VISA_POLICY = 'visa_policy'
+    CATEGORY_CHOICES = [
+        (CATEGORY_HIRING, 'Hiring & Job Market'),
+        (CATEGORY_LAYOFFS, 'Layoffs & Restructuring'),
+        (CATEGORY_SKILL_DEMAND, 'Tech Skill Demand'),
+        (CATEGORY_SALARY, 'Salary & Compensation'),
+        (CATEGORY_FUNDING, 'Startup & Funding'),
+        (CATEGORY_TECH_NEWS, 'Tech News & Releases'),
+        (CATEGORY_AI_AUTOMATION, 'AI & Automation'),
+        (CATEGORY_TRENDING_TECH, 'Trending Tech'),
+        (CATEGORY_JOB_TIPS, 'Job Tips & Career Advice'),
+        (CATEGORY_DEV_COMMUNITY, 'Developer Community'),
+        (CATEGORY_BIG_TECH, 'Big Tech Moves'),
+        (CATEGORY_INDUSTRY_REPORT, 'Industry Reports'),
+        (CATEGORY_VISA_POLICY, 'Visa & Immigration'),
+    ]
+
+    # ── Sentiment choices ────────────────────────────────────────────────
+    SENTIMENT_POSITIVE = 'positive'
+    SENTIMENT_NEUTRAL = 'neutral'
+    SENTIMENT_NEGATIVE = 'negative'
+    SENTIMENT_CHOICES = [
+        (SENTIMENT_POSITIVE, 'Positive'),
+        (SENTIMENT_NEUTRAL, 'Neutral'),
+        (SENTIMENT_NEGATIVE, 'Negative'),
+    ]
+
+    # ── Flag reason choices ──────────────────────────────────────────────
+    FLAG_REASON_CHOICES = [
+        ('', 'None'),
+        ('low_relevance', 'Low Relevance Score'),
+        ('inappropriate', 'Inappropriate Content'),
+        ('spam', 'Spam / Promotional'),
+        ('duplicate', 'Duplicate Content'),
+        ('stale', 'Stale / Outdated'),
+        ('unverified', 'Unverified Source'),
+        ('dead_link', 'Dead Link (404)'),
+        ('low_quality_negative', 'Low Quality Negative'),
+        ('blocked_source', 'Blocked Source Domain'),
+    ]
+
+    # ── Fields ───────────────────────────────────────────────────────────
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uuid = models.UUIDField(
+        unique=True, db_index=True,
+        help_text='Crawler bot primary key — upsert key on i-Luffy side.',
+    )
+    headline = models.CharField(max_length=500)
+    summary = models.TextField(help_text='2-3 sentence LLM-generated summary.')
+    source_url = models.URLField(max_length=1000, unique=True)
+    source_name = models.CharField(max_length=255, blank=True)
+    author = models.CharField(max_length=255, blank=True)
+    image_url = models.URLField(max_length=1000, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, db_index=True)
+    tags = models.JSONField(default=list, blank=True, help_text='List of tag strings.')
+    sentiment = models.CharField(
+        max_length=10, choices=SENTIMENT_CHOICES,
+        default=SENTIMENT_NEUTRAL, blank=True,
+    )
+    relevance_score = models.PositiveSmallIntegerField(
+        default=5,
+        help_text='LLM-assigned 1-10 (10 = most relevant).',
+    )
+    region = models.CharField(max_length=100, blank=True, help_text='e.g. India, US, Global')
+    company_mentions = models.JSONField(
+        default=list, blank=True,
+        help_text='Companies mentioned in the article.',
+    )
+    industry = models.CharField(max_length=100, blank=True)
+    is_flagged = models.BooleanField(default=False)
+    flag_reason = models.CharField(max_length=30, choices=FLAG_REASON_CHOICES, blank=True, default='')
+    is_approved = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-published_at', '-created_at']
+        verbose_name = 'News Snippet'
+        verbose_name_plural = 'News Snippets'
+        indexes = [
+            models.Index(fields=['category', '-published_at']),
+            models.Index(fields=['region', '-published_at']),
+            models.Index(fields=['is_active', 'is_approved', '-published_at']),
+            models.Index(fields=['-relevance_score', '-published_at']),
+        ]
+
+    def __str__(self):
+        return f"[{self.category}] {self.headline[:80]}"

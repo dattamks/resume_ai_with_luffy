@@ -738,6 +738,36 @@ FRONTEND_URL=https://<frontend>.up.railway.app
 
 ---
 
+## ✅ News Feed — Ingest & Serve Career/Tech News
+
+> Crawler bot pushes news snippets to i-Luffy; frontend consumes a paginated, filtered news feed.
+> **Status:** ✅ Done (v0.41.0)
+
+### Model
+- [x] `NewsSnippet` — 20+ fields, UUID PK, 13 category choices, 3 sentiment, 10 flag-reason, 4 composite indexes. Migration `0035`.
+
+### Ingest API (Crawler → i-Luffy)
+- [x] `POST /api/v1/ingest/news/` — single upsert by `uuid` (fallback `source_url`).
+- [x] `POST /api/v1/ingest/news/bulk/` — bulk upsert ≤200 per request.
+- [x] `POST /api/v1/ingest/news/deactivate/` — deactivate by UUID list.
+- [x] All use `X-Crawler-Key` auth, no rate limit.
+
+### Feed API (i-Luffy → Frontend)
+- [x] `GET /api/v1/feed/news/` — paginated list, filters: `category`, `region`, `sentiment`, `search`.
+- [x] `GET /api/v1/feed/news/<uuid:id>/` — single snippet detail.
+
+### Admin
+- [x] `NewsSnippetAdmin` — list, filters, search.
+
+### Tests
+- [x] 26 tests in `analyzer/tests/test_news.py` (4 classes: single ingest, bulk, deactivate, feed).
+
+### Documentation
+- [x] `FRONTEND_API_GUIDE.md` §30.11 + §30.12, TS types, §32 rows.
+- [x] `CHANGELOG.md` v0.41.0 entry.
+
+---
+
 ## ✅ Documentation Gaps — Guide Fixes
 
 > Gaps reported by frontend team after reading FRONTEND_API_GUIDE.md.

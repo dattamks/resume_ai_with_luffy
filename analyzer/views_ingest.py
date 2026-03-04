@@ -20,6 +20,7 @@ from rest_framework.views import APIView
 
 from .models import (
     Company, CompanyEntity, CompanyCareerPage, CrawlSource, DiscoveredJob,
+    NewsSnippet,
 )
 from .serializers_ingest import (
     CompanyIngestSerializer, CompanyEntityIngestSerializer,
@@ -27,6 +28,7 @@ from .serializers_ingest import (
     DiscoveredJobIngestSerializer,
     CrawlSourceSerializer, CrawlSourceUpdateSerializer,
     CompanyReadSerializer, CompanyEntityReadSerializer,
+    NewsSnippetIngestSerializer,
 )
 
 logger = logging.getLogger('analyzer')
@@ -370,3 +372,109 @@ class IngestPingView(APIView):
             'service': 'resume-ai-ingest',
             'timestamp': timezone.now().isoformat(),
         })
+
+
+# ── News Snippet Endpoints ───────────────────────────────────────────────────
+
+
+class NewsSnippetIngestView(APIView):
+    """
+    POST /api/v1/ingest/news/  — Upsert a single news snippet.
+
+    Called by the crawler bot when syncing individual articles.
+    """
+    permission_classes = [IsCrawlerAuthenticated]
+    authentication_classes = []
+    throttle_classes = []
+
+    def post(self, request):
+        serializer = NewsSnippetIngestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        snippet = serializer.save()
+        logger.info(
+            'News snippet ingested: %s (uuid=%s)',
+            snippet.headline[:60], snippet.uuid,
+        )
+        return Response(
+            {
+                'uuid': str(snippet.uuid),
+                'headline': snippet.headline,
+                'source_url': snippet.source_url,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class NewsSnippetBulkIngestView(APIView):
+    """
+    POST /api/v1/ingest/news/bulk/  — Bulk upsert news snippets (max 200).
+
+    Accepts: ``{ "snippets": [ { ... }, { ... } ] }``
+    """
+    permission_classes = [IsCrawlerAuthenticated]
+    authentication_classes = []
+    throttle_classes = []
+
+    def post(self, request):
+        snippets_data = request.data.get('snippets', [])
+        if not isinstance(snippets_data, list):
+            return Response(
+                {'detail': '"snippets" must be a list.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(snippets_data) > 200:
+            return Response(
+                {'detail': 'Maximum 200 snippets per bulk request.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        results = []
+        errors = []
+        for i, item in enumerate(snippets_data):
+            serializer = NewsSnippetIngestSerializer(data=item)
+            if serializer.is_valid():
+                snippet = serializer.save()
+                results.append({
+                    'uuid': str(snippet.uuid),
+                    'headline': snippet.headline,
+                })
+            else:
+                errors.append({'index': i, 'errors': serializer.errors})
+
+        logger.info(
+            'Bulk news ingest: %d success, %d errors',
+            len(results), len(errors),
+        )
+        return Response(
+            {
+                'ingested': len(results),
+                'failed': len(errors),
+                'results': results,
+                'errors': errors,
+            },
+            status=status.HTTP_201_CREATED if results else status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class NewsSnippetDeactivateView(APIView):
+    """
+    POST /api/v1/ingest/news/deactivate/  — Deactivate expired/removed snippets.
+
+    Accepts: ``{ "uuids": ["uuid-1", "uuid-2", ...] }``
+    """
+    permission_classes = [IsCrawlerAuthenticated]
+    authentication_classes = []
+    throttle_classes = []
+
+    def post(self, request):
+        uuids = request.data.get('uuids', [])
+        if not isinstance(uuids, list):
+            return Response(
+                {'detail': '"uuids" must be a list.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        count = NewsSnippet.objects.filter(
+            uuid__in=uuids, is_active=True,
+        ).update(is_active=False)
+        logger.info('News snippets deactivated: %d of %d requested', count, len(uuids))
+        return Response({'deactivated': count})

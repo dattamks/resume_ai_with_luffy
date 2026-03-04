@@ -14,6 +14,8 @@ from .views_feed import (
     FeedHubView,
     FeedInsightsView,
     FeedJobsView,
+    FeedNewsDetailView,
+    FeedNewsListView,
     FeedOnboardingView,
     FeedRecommendationsView,
     FeedTrendingSkillsView,
@@ -27,6 +29,8 @@ feed_urlpatterns = [
     path('hub/', FeedHubView.as_view(), name='feed-hub'),
     path('recommendations/', FeedRecommendationsView.as_view(), name='feed-recommendations'),
     path('onboarding/', FeedOnboardingView.as_view(), name='feed-onboarding'),
+    path('news/', FeedNewsListView.as_view(), name='feed-news'),
+    path('news/<uuid:pk>/', FeedNewsDetailView.as_view(), name='feed-news-detail'),
 ]
 
 # /api/v1/dashboard/ (extras — existing stats endpoint is in analyzer/urls.py)
