@@ -1,4 +1,18 @@
-# No system packages needed — PDF generation uses ReportLab (pure Python).
-# This file is kept for any future Nixpacks configuration.
+# System packages for Playwright headless Chromium (HTML→PDF resume rendering).
 [phases.setup]
-aptPkgs = []
+aptPkgs = [
+    "libatk1.0-0t64",
+    "libatk-bridge2.0-0t64",
+    "libcups2t64",
+    "libxcomposite1",
+    "libxdamage1",
+    "libxfixes3",
+    "libxrandr2",
+    "libgbm1",
+    "libxkbcommon0",
+    "libasound2t64",
+    "libatspi2.0-0t64",
+]
+
+[phases.build]
+cmds = ["playwright install chromium"]

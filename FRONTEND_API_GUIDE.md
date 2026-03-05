@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-04 &nbsp;|&nbsp; **API version:** v0.44.0
+> **Last updated:** 2026-03-05 &nbsp;|&nbsp; **API version:** v0.45.1
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -4297,6 +4297,8 @@ Content-Type: application/json
 | `template` | `string` | `"ats_classic"` | Any active template slug (see [§28](#28-resume-templates-template-marketplace)) | Resume layout template |
 | `format` | `string` | `"pdf"` | `pdf`, `docx` | Output file format |
 
+> **Note (v0.45.1):** The `modern` template is currently disabled. Using `template: "modern"` will return a `400` error. Active templates: `ats_classic`, `executive`, `creative`, `minimal`.
+
 **Response — 202 Accepted:**
 
 ```json
@@ -4425,7 +4427,8 @@ Permanently deletes a generated resume (file removed from R2 storage, DB record 
 
 ```typescript
 // Template slugs are dynamic — fetch from GET /api/v1/templates/
-// Default templates: 'ats_classic' | 'modern' | 'executive' | 'creative' | 'minimal'
+// Active templates: 'ats_classic' | 'executive' | 'creative' | 'minimal'
+// Note: 'modern' is currently disabled and will return an error if used.
 type ResumeTemplateSlug = string;
 type ResumeFormat = 'pdf' | 'docx';
 type GeneratedResumeStatus = 'pending' | 'processing' | 'done' | 'failed';
@@ -5670,11 +5673,11 @@ Returns all **active** templates, ordered by `sort_order` then `name`.
 
 | Slug | Name | Category | Premium | Description |
 |------|------|----------|---------|-------------|
-| `ats_classic` | ATS Classic | professional | ❌ | Clean ATS-friendly layout |
-| `modern` | Modern | professional | ✅ | Teal accents, contemporary design |
-| `executive` | Executive | executive | ✅ | Serif fonts, formal charcoal tones |
-| `creative` | Creative | creative | ✅ | Purple accents, vibrant design |
-| `minimal` | Minimal | professional | ✅ | Whitespace-heavy, distraction-free |
+| `ats_classic` | ATS Classic | professional | ❌ | Clean single-column, Inter font, ATS-optimized |
+| `modern` | Modern | professional | ✅ | ⚠️ **Currently disabled** — under redesign. API returns error if used. |
+| `executive` | Executive | executive | ✅ | Lato font, gold accents, generous whitespace |
+| `creative` | Creative | creative | ✅ | Purple gradient hero header, lavender skill pills |
+| `minimal` | Minimal | professional | ✅ | Ultra-clean, monospace dates, subdued gray palette |
 
 ### 28.3 Plan Gating
 
@@ -5722,7 +5725,7 @@ templates.results.forEach(tmpl => {
 
 // 3. Generate resume with chosen template
 const { data } = await api.post(`/analyses/${analysisId}/generate-resume/`, {
-  template: 'modern',  // slug from step 1
+  template: 'executive',  // slug from step 1 (note: 'modern' is currently disabled)
   format: 'pdf',
 });
 

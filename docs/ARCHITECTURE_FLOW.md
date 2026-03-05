@@ -176,11 +176,14 @@ resume_ai_with_luffy/
 │       ├── resume_understanding.py#  Combined resume parsing + career profile at upload (LLM)
 │       ├── resume_parser.py   #     (Legacy) Structured resume data extraction
 │       ├── resume_generator.py#     LLM-based resume rewriting
-│       ├── pdf_report.py      #     Analysis report PDF generation
-│       ├── template_registry.py#    Resume template → renderer mapping
-│       ├── resume_pdf_renderer.py # ATS Classic PDF renderer
+│       ├── pdf_report.py      #     Analysis report PDF generation (ReportLab)
+│       ├── template_registry.py#    Resume template → renderer mapping (HTML→Playwright + ReportLab fallback)
+│       ├── resume_html_renderer.py# HTML→PDF via Playwright headless Chromium (singleton browser)
+│       ├── resume_template_env.py#  Jinja2 template env with base64 WOFF2 font embedding
+│       ├── resume_html_pdf_renderers.py# Bridge: 4 active template slugs → HTML→PDF
+│       ├── resume_pdf_renderer.py # (Legacy fallback) ATS Classic PDF renderer (ReportLab)
 │       ├── resume_docx_renderer.py# ATS Classic DOCX renderer
-│       ├── resume_modern_*.py #     Modern template renderers
+│       ├── resume_modern_*.py #     Modern template renderers (PDF currently disabled)
 │       ├── resume_creative_*.py#    Creative template renderers
 │       ├── resume_minimal_*.py #    Minimal template renderers
 │       ├── resume_executive_*.py#   Executive template renderers
@@ -452,8 +455,9 @@ Celery: generate_improved_resume_task
   │
   ├─ Step 4: Render via template registry
   │          template_registry.get_renderer(template_slug, format)
-  │            → resume_pdf_renderer.py or resume_docx_renderer.py
-  │            → returns file bytes
+  │            → HTML template (Jinja2) → Playwright headless Chromium → PDF bytes
+  │            → or resume_*_docx.py → DOCX bytes
+  │            → ReportLab fallback if Playwright unavailable
   │
   ├─ Step 5: Upload to R2 (via Django FileField → S3Boto3Storage)
   │
@@ -462,19 +466,23 @@ Celery: generate_improved_resume_task
 
 ### Template Registry
 
+PDF rendering uses **HTML/CSS → Playwright headless Chromium** (v0.45.0+).
+DOCX rendering uses **python-docx** (unchanged).
+ReportLab is kept as a PDF fallback when Playwright/Chromium is unavailable.
+
 ```python
+# Active templates (v0.45.1)
 template_registry = {
-    ('ats_classic', 'pdf'):  resume_pdf_renderer.render,
-    ('ats_classic', 'docx'): resume_docx_renderer.render,
-    ('modern', 'pdf'):       resume_modern_pdf.render,
-    ('modern', 'docx'):      resume_modern_docx.render,
-    ('creative', 'pdf'):     resume_creative_pdf.render,
-    ('creative', 'docx'):    resume_creative_docx.render,
-    ('minimal', 'pdf'):      resume_minimal_pdf.render,
-    ('minimal', 'docx'):     resume_minimal_docx.render,
-    ('executive', 'pdf'):    resume_executive_pdf.render,
-    ('executive', 'docx'):   resume_executive_docx.render,
+    'ats_classic': {'pdf': html→playwright, 'docx': resume_docx_renderer},
+    # 'modern': disabled — under redesign
+    'executive':   {'pdf': html→playwright, 'docx': resume_executive_docx},
+    'creative':    {'pdf': html→playwright, 'docx': resume_creative_docx},
+    'minimal':     {'pdf': html→playwright, 'docx': resume_minimal_docx},
 }
+
+# PDF pipeline: Jinja2 HTML template → base64 WOFF2 fonts → Playwright page.pdf()
+# Templates: analyzer/templates/resumes/<slug>.html
+# Fonts: analyzer/static/fonts/ (Inter, Lato, Montserrat — WOFF2)
 ```
 
 ---

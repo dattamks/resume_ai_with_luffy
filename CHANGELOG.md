@@ -5,6 +5,64 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.45.1] — 2026-03-05
+
+### Template Refinements & Modern Template Disabled
+
+#### Changed — Template Visual Fixes (v2–v4)
+- All 5 HTML templates iterated through multiple visual QA rounds.
+- **ats_classic** — Proper `@page` margins (40px 48px) for consistent multi-page rendering.
+- **executive** — Proper `@page` margins (44px 52px), body padding removed.
+- **creative** — Fully redesigned: gradient purple hero header with negative-margin bleed, lavender skills bar with pill tags, single-column body with purple left-border job entries. Fixed header padding so text doesn't touch edges (v4).
+- **modern** — Fully rewritten: dark navy header banner with name/contact + skill pills, single-column body with blue left-border section titles. **Disabled** — needs further design modification.
+- **minimal** — Text contrast improved (darkened section titles to #777, secondary text to #666).
+
+#### Changed — Modern Template Disabled
+- `modern` removed from `TEMPLATE_RENDERERS` in `template_registry.py`. Requesting `modern` now returns a `ValueError`. Will be re-enabled after redesign.
+- Frontend should filter out `modern` from template picker or rely on the `is_active` flag from `GET /api/v1/templates/`.
+
+#### Fixed — Multi-Page Layout
+- Replaced flex two-column sidebar layouts (modern, creative) with single-column layouts using `@page` CSS margins. Flex sidebars broke on page 2 in Chromium PDF rendering.
+- All templates now render consistently across page breaks.
+
+---
+
+## [0.45.0] — 2026-03-05
+
+### Resume Rendering Overhaul — HTML/CSS → PDF via Playwright
+
+#### Added — HTML→PDF Rendering Pipeline
+- **Playwright headless Chromium** replaces ReportLab for all PDF resume rendering. Produces pixel-perfect output with full CSS support (flexbox, grid, `@font-face`, gradients).
+- `analyzer/services/resume_html_renderer.py` — singleton browser, `render_html_to_pdf()`, thread-safe, auto-restart on crash.
+- `analyzer/services/resume_template_env.py` — Jinja2 environment with Google Fonts embedded as base64 WOFF2 data URIs.
+- `analyzer/services/resume_html_pdf_renderers.py` — bridge module mapping template slugs to HTML→PDF rendering.
+
+#### Added — 5 Distinct HTML Resume Templates
+Each template has a **fundamentally different layout** (not just color swaps):
+- **ats_classic** — Clean single-column, Inter font, ALL CAPS section headers with underline, ATS-optimized
+- **modern** — Dark navy header banner, Montserrat headings, blue-accent section titles *(currently disabled)*
+- **executive** — Full-width, Lato font, gold accent (#c5a55a), gradient section underlines, generous whitespace
+- **creative** — Gradient purple hero header, lavender skills bar with pill tags, purple-accent job entries
+- **minimal** — Ultra-clean single column, Courier New monospace dates, subdued gray palette
+
+#### Added — Google Fonts Bundle
+- 9 WOFF2 font files (Inter, Lato, Montserrat — regular/bold/italic) in `analyzer/static/fonts/`
+
+#### Changed — Template Registry
+- `template_registry.py` now routes PDF rendering through HTML→Playwright pipeline with automatic ReportLab fallback when Playwright/Chromium is unavailable.
+- DOCX rendering unchanged (python-docx).
+
+#### Changed — Build & Deployment
+- `requirements.txt` — added `playwright==1.50.0`, `Jinja2==3.1.6`
+- `nixpacks.toml` — added Chromium system dependencies and `playwright install chromium` build command
+- `entrypoint.sh` — exports `PLAYWRIGHT_BROWSERS_PATH` env var
+
+#### Added — Tests
+- `RenderHtmlPdfTests` — 9 integration tests covering all 5 templates, minimal content, special characters/XSS safety, template registry routing, and template distinctness.
+- All 90 resume generation tests pass (zero regressions).
+
+---
+
 ## [0.44.0] — 2026-03-04
 
 ### Skill Catalogue & Rate Limit Increase

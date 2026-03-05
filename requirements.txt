@@ -68,6 +68,10 @@ firecrawl-py==4.16.0
 reportlab==4.4.0
 python-docx==1.1.2
 
+# HTML → PDF rendering (Playwright headless Chromium)
+playwright==1.50.0
+Jinja2==3.1.6
+
 # Vector embeddings (pgvector for PostgreSQL similarity search)
 pgvector==0.4.2
 numpy==2.4.2

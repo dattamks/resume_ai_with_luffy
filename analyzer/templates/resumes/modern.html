@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+{{ font_face('Montserrat', 'Montserrat-Regular.woff2', '400', 'normal') }}
+{{ font_face('Montserrat', 'Montserrat-Bold.woff2', '700', 'normal') }}
+{{ font_face('Inter', 'Inter-Regular.woff2', '400', 'normal') }}
+
+@page {
+  size: A4;
+  margin: 36px 40px;
+}
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.45;
+  color: #333;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ── Header block (dark) ────────────────────── */
+.header {
+  background: #1a1a2e;
+  color: #fff;
+  padding: 24px 28px;
+  margin: -36px -40px 20px -40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.header-left {
+  flex-shrink: 0;
+}
+
+.name {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 20pt;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1.2;
+}
+
+.contact-row {
+  margin-top: 6px;
+  font-size: 8.5pt;
+  color: #b0b8c0;
+}
+
+.contact-row span + span::before {
+  content: '·';
+  margin: 0 8px;
+  color: #555;
+}
+
+.header-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: flex-end;
+  max-width: 55%;
+}
+
+.skill-pill {
+  background: rgba(130, 177, 255, 0.18);
+  color: #b0cfff;
+  font-size: 7.5pt;
+  padding: 3px 9px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+/* ── Section ────────────────────────────────── */
+.section {
+  margin-bottom: 14px;
+}
+
+.section-title {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 10pt;
+  font-weight: 700;
+  color: #1a1a2e;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-left: 3px solid #2980b9;
+  padding-left: 10px;
+  margin-bottom: 8px;
+}
+
+/* ── Summary ────────────────────────────────── */
+.summary-text {
+  font-size: 9.5pt;
+  color: #444;
+  line-height: 1.55;
+}
+
+/* ── Experience ─────────────────────────────── */
+.job {
+  margin-bottom: 10px;
+}
+
+.job-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.job-title {
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 700;
+  font-size: 10pt;
+  color: #1a1a2e;
+}
+
+.job-date {
+  font-size: 8.5pt;
+  color: #7f8c8d;
+  white-space: nowrap;
+}
+
+.job-company {
+  font-size: 9pt;
+  color: #666;
+  margin-bottom: 3px;
+}
+
+.job-bullets {
+  list-style: none;
+  padding-left: 0;
+}
+
+.job-bullets li {
+  font-size: 9pt;
+  margin-bottom: 2px;
+  padding-left: 14px;
+  position: relative;
+}
+
+.job-bullets li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #2980b9;
+}
+
+/* ── Education row ──────────────────────────── */
+.edu-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.edu-item {
+  flex: 0 0 auto;
+}
+
+.edu-degree {
+  font-weight: 700;
+  font-size: 10pt;
+  color: #1a1a2e;
+}
+
+.edu-inst {
+  font-size: 8.5pt;
+  color: #888;
+}
+
+/* ── Certifications ─────────────────────────── */
+.cert {
+  margin-bottom: 4px;
+  font-size: 9pt;
+}
+
+.cert-name {
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.cert-meta {
+  color: #888;
+}
+
+/* ── Projects ───────────────────────────────── */
+.project {
+  margin-bottom: 8px;
+}
+
+.project-name {
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 700;
+  font-size: 10pt;
+  color: #1a1a2e;
+}
+
+.project-desc {
+  font-size: 9pt;
+  margin-top: 2px;
+}
+
+.project-tech {
+  font-size: 8pt;
+  color: #2980b9;
+  margin-top: 2px;
+}
+</style>
+</head>
+<body>
+
+{# ── Header ──────────────────────────────────────────────────── #}
+<div class="header">
+  <div class="header-left">
+    <div class="name">{{ contact.name }}</div>
+    <div class="contact-row">
+      {% if contact.email %}<span>{{ contact.email }}</span>{% endif %}
+      {% if contact.phone %}<span>{{ contact.phone }}</span>{% endif %}
+      {% if contact.location %}<span>{{ contact.location }}</span>{% endif %}
+      {% if contact.linkedin %}<span>{{ contact.linkedin }}</span>{% endif %}
+      {% if contact.portfolio %}<span>{{ contact.portfolio }}</span>{% endif %}
+    </div>
+  </div>
+  {% if skills and skills.technical %}
+  <div class="header-right">
+    {% for s in skills.technical %}<span class="skill-pill">{{ s }}</span>{% endfor %}
+    {% if skills.tools %}
+      {% for s in skills.tools %}<span class="skill-pill">{{ s }}</span>{% endfor %}
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Summary ─────────────────────────────────────────────────── #}
+{% if summary %}
+<div class="section">
+  <div class="section-title">Professional Summary</div>
+  <div class="summary-text">{{ summary }}</div>
+</div>
+{% endif %}
+
+{# ── Experience ──────────────────────────────────────────────── #}
+{% if experience %}
+<div class="section">
+  <div class="section-title">Experience</div>
+  {% for job in experience %}
+  <div class="job">
+    <div class="job-header">
+      <span class="job-title">{{ job.title }}</span>
+      <span class="job-date">
+        {% if job.start_date %}{{ job.start_date }}{% endif %}
+        {% if job.start_date and job.end_date %} – {% endif %}
+        {% if job.end_date %}{{ job.end_date }}{% endif %}
+      </span>
+    </div>
+    <div class="job-company">
+      {{ job.company }}{% if job.location %}, {{ job.location }}{% endif %}
+    </div>
+    {% if job.bullets %}
+    <ul class="job-bullets">
+      {% for bullet in job.bullets %}
+      <li>{{ bullet }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Education ───────────────────────────────────────────────── #}
+{% if education %}
+<div class="section">
+  <div class="section-title">Education</div>
+  <div class="edu-grid">
+    {% for edu in education %}
+    <div class="edu-item">
+      <div class="edu-degree">{{ edu.degree }}</div>
+      <div class="edu-inst">{{ edu.institution }}{% if edu.year %} · {{ edu.year }}{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Skills (soft) ───────────────────────────────────────────── #}
+{% if skills and skills.soft %}
+<div class="section">
+  <div class="section-title">Core Strengths</div>
+  <div class="summary-text">{{ skills.soft | join(' · ') }}</div>
+</div>
+{% endif %}
+
+{# ── Certifications ──────────────────────────────────────────── #}
+{% if certifications %}
+<div class="section">
+  <div class="section-title">Certifications</div>
+  {% for cert in certifications %}
+  <div class="cert">
+    <span class="cert-name">{{ cert.name }}</span>
+    {% if cert.issuer or cert.year %}
+    <span class="cert-meta">
+      {% if cert.issuer %} – {{ cert.issuer }}{% endif %}
+      {% if cert.year %} ({{ cert.year }}){% endif %}
+    </span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Projects ────────────────────────────────────────────────── #}
+{% if projects %}
+<div class="section">
+  <div class="section-title">Projects</div>
+  {% for proj in projects %}
+  <div class="project">
+    <div class="project-name">{{ proj.name }}</div>
+    {% if proj.description %}
+    <div class="project-desc">{{ proj.description }}</div>
+    {% endif %}
+    {% if proj.technologies %}
+    <div class="project-tech">{{ proj.technologies | join(' · ') }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+</body>
+</html>

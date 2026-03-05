@@ -618,6 +618,8 @@ On resume upload:
 - [ ] **⚪ DEFERRED — Admin analytics dashboard** — System-wide metrics: active users, analyses/day, LLM token costs, error rates.
 - [x] **🔵 P3 — Resume template marketplace** — 5 templates (ats_classic free + 4 premium), ResumeTemplate model, `premium_templates` plan flag, DB-validated slugs, dedicated PDF/DOCX renderers, admin, seed command. *(v0.25.0)*
 - [ ] **🔵 P3 — LinkedIn resume import** — Import LinkedIn profile data directly instead of uploading PDF.
+- [ ] **� IMMEDIATE — Modern template needs modification** — The modern resume template needs a design overhaul. Currently disabled in the template registry until the redesign is complete.
+- [ ] **�🔵 P3 — Link Skill model to other models** — Currently `Skill` is a standalone catalogue with no FK/M2M relationships. Skills in `DiscoveredJob.skills_required`, `JobSearchProfile.skills`, and `ResumeAnalysis.keyword_analysis` are stored as raw JSONField arrays. **Fix:** Add M2M relationships: `DiscoveredJob.skills` → `Skill`, `JobSearchProfile.matched_skills` → `Skill`, `UserProfile.skills` → `Skill` (through table with proficiency level). Replace JSON string matching with proper relational queries. Enables: skill-based job matching via SQL joins, user skill endorsements, skill gap analysis via set operations, and skill autocomplete backed by the catalogue.
 
 ---
 
@@ -1066,7 +1068,7 @@ Each phase is independently deployable. Recommended order: **A → B → C → D
 
 > **Goal:** Replace the current programmatic ReportLab/python-docx renderers with an HTML/CSS → PDF pipeline that produces output comparable to commercial resume builders (Enhancv, Zety, Resume.io). Fix alignment issues, bland formatting, and lack of layout variety.
 >
-> **Status:** Not started
+> **Status:** ✅ Phases A, B, C complete. Phase E tests done. ReportLab kept as fallback.
 >
 > **Priority:** 🔴 IMMEDIATE — Users report resumes look bland, have alignment issues, and don't match the quality expected from a resume-building product.
 
@@ -1106,49 +1108,49 @@ This is the industry-standard approach used by every major resume builder.
 
 ### Phase A — Infrastructure & Base Template Engine
 
-- [ ] 🔴 **Add `playwright` to requirements.txt** — `playwright==1.50.0` (or latest stable)
-- [ ] 🔴 **Add Chromium install to build** — `RUN playwright install --with-deps chromium` in Dockerfile/nixpacks. Add to `entrypoint.sh` for dev.
-- [ ] 🔴 **Create `analyzer/services/resume_html_renderer.py`** — Base HTML→PDF conversion:
+- [x] 🔴 **Add `playwright` to requirements.txt** — `playwright==1.50.0`
+- [x] 🔴 **Add Chromium install to build** — `playwright install chromium` in nixpacks.toml. Env var in `entrypoint.sh`.
+- [x] 🔴 **Create `analyzer/services/resume_html_renderer.py`** — Base HTML→PDF conversion:
   - `render_html_to_pdf(html: str) -> bytes` — launches headless Chromium, prints to PDF (A4, no margins — CSS handles margins)
   - Use `async_playwright` with `browser.new_page()` → `page.set_content(html)` → `page.pdf()`
   - Singleton browser instance (reuse across requests, restart on crash)
   - Configurable timeout (30s default)
-- [ ] 🔴 **Bundle Google Fonts as WOFF2** — Download Inter, Lato, Montserrat (3 families × regular/bold/italic = ~9 files). Store in `analyzer/static/fonts/`. Reference via `@font-face` with `file://` or base64 data URIs in HTML.
-- [ ] 🔴 **Create Jinja2 template base** — `analyzer/templates/resumes/base.html` with common CSS reset, font declarations, A4 page sizing (`@page { size: A4; margin: 0; }`), and shared macros (contact row, section header, date range, skill tags).
+- [x] 🔴 **Bundle Google Fonts as WOFF2** — Inter, Lato, Montserrat (9 WOFF2 files) in `analyzer/static/fonts/`. Embedded as base64 data URIs via `resume_template_env.py`.
+- [x] 🔴 **Create Jinja2 template env** — `analyzer/services/resume_template_env.py` with common CSS reset, font declarations, A4 page sizing (`@page { size: A4; margin: 0; }`), and shared macros (contact row, section header, date range, skill tags).
 
 ### Phase B — 5 Distinct HTML Resume Templates
 
 Each template should have a **fundamentally different layout**, not just a color swap.
 
-- [ ] 🔴 **`ats_classic.html`** — Clean single-column, serif body, minimal color. Optimized for ATS parsers. No graphics.
+- [x] 🔴 **`ats_classic.html`** — Clean single-column, serif body, minimal color. Optimized for ATS parsers. No graphics.
   - Font: Inter (body) + system serif (headings)
   - Layout: Full-width single column
   - Section headers: ALL CAPS with thin underline
   - Job entries: `flexbox row` — title left, date right-aligned on same line
   - Skills: comma-separated plain text (ATS-safe)
 
-- [ ] 🔴 **`modern.html`** — Two-column layout with left sidebar (30/70 split).
+- [x] 🔴 **`modern.html`** — Two-column layout with left sidebar (30/70 split).
   - Font: Montserrat (headings), Inter (body)
   - Sidebar (left): contact info, skills (pill tags with rounded bg), education, certifications
   - Main (right): summary, experience, projects
   - Color accent: blue left-border on sidebar
   - Job entries: title + company on one line, date right-aligned
 
-- [ ] 🔴 **`executive.html`** — Elegant full-width layout with generous whitespace.
+- [x] 🔴 **`executive.html`** — Elegant full-width layout with generous whitespace.
   - Font: Lato (all)
   - Layout: Single column with centered name/contact block
   - Large name with letter-spacing, thin horizontal rule separators
   - Section headers: small-caps, tracked text
   - Muted color palette (charcoal + gold accents)
 
-- [ ] 🔴 **`creative.html`** — Bold sidebar layout with color blocks.
+- [x] 🔴 **`creative.html`** — Bold sidebar layout with color blocks.
   - Font: Montserrat
   - Layout: Right sidebar (35/65) with colored background
   - Sidebar (right): photo placeholder, skills as progress bars, social links with icons
   - Main (left): experience, projects with tech tag pills
   - Vibrant color palette (configurable accent)
 
-- [ ] 🔴 **`minimal.html`** — Ultra-clean, lots of whitespace, monospace accents.
+- [x] 🔴 **`minimal.html`** — Ultra-clean, lots of whitespace, monospace accents.
   - Font: Inter (body), monospace (dates/labels)
   - Layout: Single column, wide margins
   - No colors, no icons, no decorative elements
@@ -1157,13 +1159,13 @@ Each template should have a **fundamentally different layout**, not just a color
 
 ### Phase C — Integrate with Template Registry
 
-- [ ] 🔴 **Update `template_registry.py`** — Point all 5 PDF slugs to new HTML→PDF renderers. Keep DOCX renderers as-is (python-docx is fine for DOCX).
-- [ ] 🔴 **New renderer functions** — `render_<slug>_html_pdf(resume_content: dict) -> bytes`:
+- [x] 🔴 **Update `template_registry.py`** — Point all 5 PDF slugs to new HTML→PDF renderers. Keep DOCX renderers as-is (python-docx is fine for DOCX).
+- [x] 🔴 **New renderer functions** — `render_<slug>_html_pdf(resume_content: dict) -> bytes`:
   1. Load Jinja2 template from `analyzer/templates/resumes/<slug>.html`
   2. Render with `resume_content` dict (same schema as today)
   3. Pass HTML string to `render_html_to_pdf()`
   4. Return bytes
-- [ ] 🔴 **Keep ReportLab as fallback** — If Playwright/Chromium is not available (e.g., local dev without Chromium), fall back to existing ReportLab renderers with a log warning. Check via `shutil.which('chromium')` or try-import.
+- [x] 🔴 **Keep ReportLab as fallback** — If Playwright/Chromium is not available (e.g., local dev without Chromium), fall back to existing ReportLab renderers with a log warning. Check via `shutil.which('chromium')` or try-import.
 
 ### Phase D — DOCX Quality Improvements (python-docx)
 
@@ -1175,7 +1177,7 @@ Each template should have a **fundamentally different layout**, not just a color
 ### Phase E — Cleanup & Testing
 
 - [ ] 🟡 **Delete old ReportLab PDF renderers** — Remove `resume_pdf_renderer.py`, `resume_modern_pdf.py`, `resume_executive_pdf.py`, `resume_creative_pdf.py`, `resume_minimal_pdf.py` (5 files, ~1800 lines total). Keep `pdf_report.py` (analysis reports still use ReportLab — that's fine).
-- [ ] 🟡 **Update tests** — Update `test_resume_generation.py` PDF render tests to work with new HTML→PDF pipeline. Mock Playwright browser in tests.
+- [x] 🟡 **Update tests** — Update `test_resume_generation.py` PDF render tests to work with new HTML→PDF pipeline. Mock Playwright browser in tests.
 - [ ] 🟡 **Visual regression tests** — Generate PDFs from sample `resume_content` JSON for all 5 templates. Manual review + screenshot comparison.
 - [ ] 🟡 **Update FRONTEND_API_GUIDE.md** — Note improved rendering quality. No API changes needed (same endpoints, same request/response schema).
 - [ ] 🟡 **CHANGELOG.md** — Entry documenting the rendering overhaul.
@@ -1215,10 +1217,10 @@ PDF bytes → upload to R2 → return download URL
 
 ### Dependencies
 
-- [ ] `playwright==1.50.0` in `requirements.txt`
-- [ ] `Jinja2==3.1.6` in `requirements.txt` (Django already includes it but ensure standalone usage)
-- [ ] Chromium browser binary via `playwright install chromium`
-- [ ] WOFF2 font files bundled in `analyzer/static/fonts/`
+- [x] `playwright==1.50.0` in `requirements.txt`
+- [x] `Jinja2==3.1.6` in `requirements.txt`
+- [x] Chromium browser binary via `playwright install chromium`
+- [x] WOFF2 font files bundled in `analyzer/static/fonts/`
 
 
 

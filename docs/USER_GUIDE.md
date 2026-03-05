@@ -214,10 +214,10 @@ After analysis, let AI build an optimized version of your resume:
 2. Click **Generate Improved Resume**
 3. Choose a **template**:
    - `ats_classic` — Clean, ATS-friendly (default)
-   - `modern` — Two-column modern layout
-   - `creative` — Bold, eye-catching design
-   - `minimal` — Simple and clean
-   - `executive` — For leadership positions
+   - `executive` — Elegant layout with gold accents, for leadership positions
+   - `creative` — Bold purple gradient design with skill pills
+   - `minimal` — Ultra-clean, whitespace-heavy, distraction-free
+   - ~~`modern`~~ — *Currently unavailable (under redesign)*
 4. Choose **format**: PDF or DOCX
 5. Click Generate — AI rewrites your entire resume incorporating all improvements
 6. Download when ready

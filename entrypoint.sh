@@ -7,6 +7,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
+# Playwright browser path — must match where `playwright install chromium` put browsers.
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/root/.cache/ms-playwright}"
+
 case "${SERVICE_TYPE}" in
   web)
     echo "▶ Starting web service (gunicorn)…"

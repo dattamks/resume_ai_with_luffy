@@ -1082,3 +1082,133 @@ class RenderResumeDOCXTests(TestCase):
         docx_bytes = render_resume_docx(data)
         self.assertIsInstance(docx_bytes, bytes)
         self.assertTrue(docx_bytes[:2] == b'PK')
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 5. HTML → PDF rendering tests (Playwright headless Chromium)
+# ══════════════════════════════════════════════════════════════════════════
+
+class RenderHtmlPdfTests(TestCase):
+    """Integration tests for the HTML → PDF resume rendering pipeline."""
+
+    def tearDown(self):
+        super().tearDown()
+        from analyzer.services.resume_html_renderer import shutdown_browser
+        shutdown_browser()
+
+    def _skip_if_no_playwright(self):
+        from analyzer.services.resume_html_renderer import is_playwright_available
+        if not is_playwright_available():
+            self.skipTest('Playwright not installed')
+        # Also check that Chromium can actually launch
+        try:
+            from analyzer.services.resume_html_renderer import _get_browser
+            _get_browser()
+        except Exception:
+            self.skipTest('Chromium browser not available')
+
+    def test_ats_classic_html_pdf(self):
+        """ats_classic HTML template produces valid PDF."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import render_ats_classic_html_pdf
+        pdf_bytes = render_ats_classic_html_pdf(SAMPLE_RESUME_CONTENT)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(len(pdf_bytes) > 100)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_modern_html_pdf(self):
+        """modern HTML template produces valid PDF."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import render_modern_html_pdf
+        pdf_bytes = render_modern_html_pdf(SAMPLE_RESUME_CONTENT)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_executive_html_pdf(self):
+        """executive HTML template produces valid PDF."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import render_executive_html_pdf
+        pdf_bytes = render_executive_html_pdf(SAMPLE_RESUME_CONTENT)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_creative_html_pdf(self):
+        """creative HTML template produces valid PDF."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import render_creative_html_pdf
+        pdf_bytes = render_creative_html_pdf(SAMPLE_RESUME_CONTENT)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_minimal_html_pdf(self):
+        """minimal HTML template produces valid PDF."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import render_minimal_html_pdf
+        pdf_bytes = render_minimal_html_pdf(SAMPLE_RESUME_CONTENT)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_html_pdf_with_minimal_content(self):
+        """HTML→PDF renders with minimal resume content."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import render_ats_classic_html_pdf
+        minimal = {
+            'contact': {'name': 'Test User'},
+            'summary': 'A developer.',
+            'experience': [],
+            'education': [],
+            'skills': {'technical': [], 'tools': [], 'soft': []},
+            'certifications': [],
+            'projects': [],
+        }
+        pdf_bytes = render_ats_classic_html_pdf(minimal)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_html_pdf_with_special_characters(self):
+        """HTML→PDF handles XSS-like chars and unicode safely (Jinja2 auto-escapes)."""
+        self._skip_if_no_playwright()
+        import copy
+        from analyzer.services.resume_html_pdf_renderers import render_ats_classic_html_pdf
+        data = copy.deepcopy(SAMPLE_RESUME_CONTENT)
+        data['contact']['name'] = 'John "O\'Brien" & <Partners>'
+        data['summary'] = 'Expert with <script>alert("xss")</script> safely escaped.'
+        data['experience'][0]['bullets'] = [
+            'Revenue grew 200% → $5M ARR',
+            '<b>HTML injection</b> attempt',
+        ]
+        pdf_bytes = render_ats_classic_html_pdf(data)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_template_registry_routes_to_html_pdf(self):
+        """Template registry returns HTML→PDF renderers when Playwright available."""
+        self._skip_if_no_playwright()
+        from analyzer.services.template_registry import get_renderer
+        for slug in ['ats_classic', 'modern', 'executive', 'creative', 'minimal']:
+            renderer = get_renderer(slug, 'pdf')
+            self.assertIn('html_pdf', renderer.__module__)
+
+    def test_all_templates_produce_different_pdfs(self):
+        """Each template produces a distinct PDF (not just color swaps)."""
+        self._skip_if_no_playwright()
+        from analyzer.services.resume_html_pdf_renderers import (
+            render_ats_classic_html_pdf,
+            render_modern_html_pdf,
+            render_executive_html_pdf,
+            render_creative_html_pdf,
+            render_minimal_html_pdf,
+        )
+        pdfs = {
+            'ats_classic': render_ats_classic_html_pdf(SAMPLE_RESUME_CONTENT),
+            'modern': render_modern_html_pdf(SAMPLE_RESUME_CONTENT),
+            'executive': render_executive_html_pdf(SAMPLE_RESUME_CONTENT),
+            'creative': render_creative_html_pdf(SAMPLE_RESUME_CONTENT),
+            'minimal': render_minimal_html_pdf(SAMPLE_RESUME_CONTENT),
+        }
+        sizes = [len(v) for v in pdfs.values()]
+        # All should be valid PDFs
+        for name, pdf in pdfs.items():
+            self.assertTrue(pdf.startswith(b'%PDF'), f'{name} not valid PDF')
+        # At least 3 distinctly different sizes (different layouts)
+        self.assertGreaterEqual(len(set(sizes)), 3)

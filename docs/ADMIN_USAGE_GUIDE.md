@@ -347,19 +347,24 @@ Resume templates control the look of generated resumes/cover letters:
 
 ### Available Templates
 
-Each template has a corresponding PDF and DOCX renderer in `analyzer/services/`:
-- `ats_classic` — ATS-optimized professional
-- `modern` / `modern_clean` — Modern two-column design
-- `creative` — Bold creative layout
-- `minimal` — Clean minimalist
-- `executive` — Executive/leadership style
+PDF rendering now uses **HTML/CSS → Playwright headless Chromium** (v0.45.0+). HTML templates live in `analyzer/templates/resumes/<slug>.html`. ReportLab is kept as a fallback. DOCX rendering uses python-docx (unchanged).
+
+**Active templates:**
+- `ats_classic` — ATS-optimized, single-column, Inter font
+- `executive` — Elegant, Lato font, gold accents
+- `creative` — Purple gradient hero header, lavender skill pills
+- `minimal` — Ultra-clean, monospace dates, subdued palette
+
+**Disabled:**
+- `modern` — Under redesign. Set `is_active = False` in admin to hide from users.
 
 ### Adding New Templates
 
-1. Create PDF renderer: `analyzer/services/resume_<slug>_pdf.py`
-2. Create DOCX renderer: `analyzer/services/resume_<slug>_docx.py`
-3. Register in `analyzer/services/template_registry.py`
-4. Add metadata via Django Admin (name, slug, category, preview)
+1. Create HTML template: `analyzer/templates/resumes/<slug>.html` (Jinja2)
+2. Add render function in `analyzer/services/resume_html_pdf_renderers.py`
+3. Create DOCX renderer: `analyzer/services/resume_<slug>_docx.py`
+4. Register in `analyzer/services/template_registry.py`
+5. Add metadata via Django Admin (name, slug, category, preview)
 
 ---
 
