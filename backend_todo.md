@@ -6,7 +6,7 @@
 
 | Tag | Meaning | Count |
 |-----|---------|-------|
-| 🔴 IMMEDIATE | Next sprint — implement now | 0 (all done) |
+| 🔴 IMMEDIATE | Next sprint — implement now | 1 (Resume Rendering Overhaul) |
 | 🟡 P2 | Important — implement soon | 0 (all done) |
 | 🔵 P3 | Important — plan for later | 1 |
 | ⚪ DEFERRED | Backlog — revisit in future | 10 |
@@ -1059,6 +1059,166 @@ Each phase is independently deployable. Recommended order: **A → B → C → D
 | `InterviewQuestion` model, seed data, filtering | C |
 | `InterviewPrepView` returns 200 with instant results | C |
 | Embedding matcher returns `[]` when no embedding (no fallback) | E |
+
+---
+
+## 🔴 Resume Rendering Overhaul — Professional-Grade PDF/DOCX Output
+
+> **Goal:** Replace the current programmatic ReportLab/python-docx renderers with an HTML/CSS → PDF pipeline that produces output comparable to commercial resume builders (Enhancv, Zety, Resume.io). Fix alignment issues, bland formatting, and lack of layout variety.
+>
+> **Status:** Not started
+>
+> **Priority:** 🔴 IMMEDIATE — Users report resumes look bland, have alignment issues, and don't match the quality expected from a resume-building product.
+
+### Problem Analysis
+
+The current rendering system (shipped v0.11.0) uses **ReportLab Platypus** for PDFs and **python-docx** for DOCX. Limitations:
+
+1. **All 5 templates are structurally identical** — same single-column `SimpleDocTemplate`, same section order, same flowable pipeline. Only color constants and bullet characters differ.
+2. **No real multi-column/sidebar layouts** — "creative" and "modern" are just color swaps, not different layouts.
+3. **No custom fonts** — locked to Helvetica/Times-Roman (ReportLab built-ins). Professional resumes use fonts like Inter, Lato, Raleway, Montserrat.
+4. **Broken alignment** — job title, company, and dates are stacked vertically as separate `Paragraph` flowables instead of being on the same line (title left, date right-aligned).
+5. **No fine layout control** — ReportLab Platypus makes precise spacing, overlapping elements, and modern designs extremely difficult.
+6. **Massive code duplication** — 10 renderer files (~300-400 lines each) repeating nearly identical logic with only colors changed.
+
+### Previous Attempt: WeasyPrint (v0.1.0 – v0.9.0)
+
+WeasyPrint was used initially for PDF **report** generation (analysis reports, not resume generation — resume generation didn't exist until v0.11.0). It was replaced with ReportLab in v0.9.1 because:
+- WeasyPrint depends on native C libraries (`libpango`, `libcairo`, `libgdk-pixbuf`) that caused build failures on Railway's Nixpacks.
+- At that time only analysis reports existed — simple single-column layouts where ReportLab was adequate.
+
+**Why this time is different:** Resume generation (v0.11.0) was built *after* the WeasyPrint removal, so resumes were never rendered via HTML/CSS. The problem now is that ReportLab is inadequate for the *visually demanding* resume use case. The solution is to use HTML/CSS rendering specifically for resumes (not reports), with proper native deps managed via Docker/nixpacks config.
+
+### Approach: HTML/CSS Templates → PDF via Headless Chromium (Playwright)
+
+This is the industry-standard approach used by every major resume builder.
+
+**Why Playwright over WeasyPrint:**
+- **Full CSS support** — flexbox, grid, `@font-face`, media queries, gradients — all work perfectly (it's real Chromium)
+- **No native C library headaches** — single `playwright install chromium` vs hunting down `libpango`/`libcairo` versions
+- **Pixel-perfect output** — the PDF is exactly what you see in a browser
+- **WeasyPrint CSS gaps** — no flexbox, limited grid, buggy multi-column — still can't produce modern layouts
+
+**Why not WeasyPrint again:**
+- Same native dependency issues on Railway (libpango/libcairo)
+- CSS support is limited: no flexbox, partial grid, no `gap`, no `backdrop-filter` — can't build real sidebar/two-column layouts reliably
+- Would be repeating the same deployment pain without solving the layout problem
+
+### Phase A — Infrastructure & Base Template Engine
+
+- [ ] 🔴 **Add `playwright` to requirements.txt** — `playwright==1.50.0` (or latest stable)
+- [ ] 🔴 **Add Chromium install to build** — `RUN playwright install --with-deps chromium` in Dockerfile/nixpacks. Add to `entrypoint.sh` for dev.
+- [ ] 🔴 **Create `analyzer/services/resume_html_renderer.py`** — Base HTML→PDF conversion:
+  - `render_html_to_pdf(html: str) -> bytes` — launches headless Chromium, prints to PDF (A4, no margins — CSS handles margins)
+  - Use `async_playwright` with `browser.new_page()` → `page.set_content(html)` → `page.pdf()`
+  - Singleton browser instance (reuse across requests, restart on crash)
+  - Configurable timeout (30s default)
+- [ ] 🔴 **Bundle Google Fonts as WOFF2** — Download Inter, Lato, Montserrat (3 families × regular/bold/italic = ~9 files). Store in `analyzer/static/fonts/`. Reference via `@font-face` with `file://` or base64 data URIs in HTML.
+- [ ] 🔴 **Create Jinja2 template base** — `analyzer/templates/resumes/base.html` with common CSS reset, font declarations, A4 page sizing (`@page { size: A4; margin: 0; }`), and shared macros (contact row, section header, date range, skill tags).
+
+### Phase B — 5 Distinct HTML Resume Templates
+
+Each template should have a **fundamentally different layout**, not just a color swap.
+
+- [ ] 🔴 **`ats_classic.html`** — Clean single-column, serif body, minimal color. Optimized for ATS parsers. No graphics.
+  - Font: Inter (body) + system serif (headings)
+  - Layout: Full-width single column
+  - Section headers: ALL CAPS with thin underline
+  - Job entries: `flexbox row` — title left, date right-aligned on same line
+  - Skills: comma-separated plain text (ATS-safe)
+
+- [ ] 🔴 **`modern.html`** — Two-column layout with left sidebar (30/70 split).
+  - Font: Montserrat (headings), Inter (body)
+  - Sidebar (left): contact info, skills (pill tags with rounded bg), education, certifications
+  - Main (right): summary, experience, projects
+  - Color accent: blue left-border on sidebar
+  - Job entries: title + company on one line, date right-aligned
+
+- [ ] 🔴 **`executive.html`** — Elegant full-width layout with generous whitespace.
+  - Font: Lato (all)
+  - Layout: Single column with centered name/contact block
+  - Large name with letter-spacing, thin horizontal rule separators
+  - Section headers: small-caps, tracked text
+  - Muted color palette (charcoal + gold accents)
+
+- [ ] 🔴 **`creative.html`** — Bold sidebar layout with color blocks.
+  - Font: Montserrat
+  - Layout: Right sidebar (35/65) with colored background
+  - Sidebar (right): photo placeholder, skills as progress bars, social links with icons
+  - Main (left): experience, projects with tech tag pills
+  - Vibrant color palette (configurable accent)
+
+- [ ] 🔴 **`minimal.html`** — Ultra-clean, lots of whitespace, monospace accents.
+  - Font: Inter (body), monospace (dates/labels)
+  - Layout: Single column, wide margins
+  - No colors, no icons, no decorative elements
+  - Dates in monospace, left-aligned in a fixed-width column
+  - Section headers: thin, lowercase, light gray
+
+### Phase C — Integrate with Template Registry
+
+- [ ] 🔴 **Update `template_registry.py`** — Point all 5 PDF slugs to new HTML→PDF renderers. Keep DOCX renderers as-is (python-docx is fine for DOCX).
+- [ ] 🔴 **New renderer functions** — `render_<slug>_html_pdf(resume_content: dict) -> bytes`:
+  1. Load Jinja2 template from `analyzer/templates/resumes/<slug>.html`
+  2. Render with `resume_content` dict (same schema as today)
+  3. Pass HTML string to `render_html_to_pdf()`
+  4. Return bytes
+- [ ] 🔴 **Keep ReportLab as fallback** — If Playwright/Chromium is not available (e.g., local dev without Chromium), fall back to existing ReportLab renderers with a log warning. Check via `shutil.which('chromium')` or try-import.
+
+### Phase D — DOCX Quality Improvements (python-docx)
+
+- [ ] 🟡 **Fix alignment in all 5 DOCX renderers** — Use `Table` (invisible borders) for `[Job Title | Date]` on same line. Currently stacked vertically.
+- [ ] 🟡 **Add tab stops for dates** — `WD_TAB_ALIGNMENT.RIGHT` on job entry paragraphs.
+- [ ] 🟡 **Shared DOCX base renderer** — Extract common section-building logic from the 5 DOCX files into a base class. Template-specific code = just style constants + layout choice.
+- [ ] 🟡 **Register custom fonts** — Bundle TTF files, reference in DOCX styles. Note: font must be installed on server OS for rendering, but the DOCX file will specify the font name and display correctly when opened on a system that has the font.
+
+### Phase E — Cleanup & Testing
+
+- [ ] 🟡 **Delete old ReportLab PDF renderers** — Remove `resume_pdf_renderer.py`, `resume_modern_pdf.py`, `resume_executive_pdf.py`, `resume_creative_pdf.py`, `resume_minimal_pdf.py` (5 files, ~1800 lines total). Keep `pdf_report.py` (analysis reports still use ReportLab — that's fine).
+- [ ] 🟡 **Update tests** — Update `test_resume_generation.py` PDF render tests to work with new HTML→PDF pipeline. Mock Playwright browser in tests.
+- [ ] 🟡 **Visual regression tests** — Generate PDFs from sample `resume_content` JSON for all 5 templates. Manual review + screenshot comparison.
+- [ ] 🟡 **Update FRONTEND_API_GUIDE.md** — Note improved rendering quality. No API changes needed (same endpoints, same request/response schema).
+- [ ] 🟡 **CHANGELOG.md** — Entry documenting the rendering overhaul.
+
+### Phase F — Future Enhancements (Deferred)
+
+- [ ] ⚪ **Live HTML preview** — New endpoint `POST /api/v1/resume-preview/` returns rendered HTML (not PDF) for instant frontend preview before download.
+- [ ] ⚪ **Custom color themes** — Allow users to pick accent color per template. Pass `accent_color` to Jinja2 context.
+- [ ] ⚪ **Profile photo support** — Accept photo upload, embed in creative/modern templates.
+- [ ] ⚪ **Custom section ordering** — Let users reorder sections (experience before education, etc.) via drag-and-drop.
+
+### Deployment Notes
+
+- **Railway:** Add `PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/.playwright` env var. Add `playwright install --with-deps chromium` to build command or Dockerfile.
+- **Docker:** `RUN pip install playwright && playwright install --with-deps chromium` in Dockerfile.
+- **Disk usage:** Chromium adds ~280MB to the container image.
+- **Memory:** Headless Chromium needs ~100-200MB RAM per PDF render. Use singleton browser + sequential page creation to control memory.
+- **Cold start:** First PDF render takes 2-3s (browser launch). Subsequent renders ~500ms.
+
+### Architecture
+
+```
+resume_content (dict)
+        │
+        ▼
+Jinja2 template (analyzer/templates/resumes/<slug>.html)
+        │
+        ▼
+Rendered HTML string (with embedded fonts, CSS)
+        │
+        ▼
+Playwright headless Chromium → page.pdf()
+        │
+        ▼
+PDF bytes → upload to R2 → return download URL
+```
+
+### Dependencies
+
+- [ ] `playwright==1.50.0` in `requirements.txt`
+- [ ] `Jinja2==3.1.6` in `requirements.txt` (Django already includes it but ensure standalone usage)
+- [ ] Chromium browser binary via `playwright install chromium`
+- [ ] WOFF2 font files bundled in `analyzer/static/fonts/`
 
 
 
