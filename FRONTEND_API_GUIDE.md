@@ -1,6 +1,6 @@
 # Frontend API Integration Guide
 
-> **Last updated:** 2026-03-03 &nbsp;|&nbsp; **API version:** v0.37.0
+> **Last updated:** 2026-03-04 &nbsp;|&nbsp; **API version:** v0.44.0
 > Comprehensive technical reference for frontend developers integrating with the i-Luffy backend.
 
 ---
@@ -39,6 +39,7 @@
 30. [Feed & Analytics Endpoints](#30-feed--analytics-endpoints)
 31. [Database Table Reference — Job & Company Models](#31-database-table-reference--job--company-models)
 32. [Quick Reference — All Endpoints](#32-quick-reference--all-endpoints)
+33. [Skill Catalogue](#33-skill-catalogue)
 
 ---
 
@@ -2701,12 +2702,12 @@ Every endpoint is throttled. Six scopes exist, each overridable via environment 
 | Scope | Default Limit | Env Var Override | Applied To |
 |-------|---------------|------------------|------------|
 | `anon` (IP-based) | 60 / hour | `ANON_THROTTLE_RATE` | All unauthenticated requests (global default) |
-| `user` (per user) | 200 / hour | `USER_THROTTLE_RATE` | All authenticated requests (global default) |
+| `user` (per user) | 500 / hour | `USER_THROTTLE_RATE` | All authenticated requests (global default) |
 | `auth` (IP-based) | 20 / hour | `AUTH_THROTTLE_RATE` | Register, Login, Forgot-password, Reset-password |
-| `analyze` (per user) | 10 / hour | `ANALYZE_THROTTLE_RATE` | `POST /api/v1/analyze/`, `POST /api/v1/analyses/<id>/retry/` |
-| `readonly` (per user) | 120 / hour | `READONLY_THROTTLE_RATE` | All authenticated read endpoints |
-| `write` (per user) | 60 / hour | `WRITE_THROTTLE_RATE` | Analysis delete, share toggle |
-| `payment` (per user) | 30 / hour | `PAYMENT_THROTTLE_RATE` | All Razorpay payment endpoints (subscribe, verify, cancel, topup, history) |
+| `analyze` (per user) | 20 / hour | `ANALYZE_THROTTLE_RATE` | `POST /api/v1/analyze/`, `POST /api/v1/analyses/<id>/retry/` |
+| `readonly` (per user) | 1000 / hour | `READONLY_THROTTLE_RATE` | All authenticated read endpoints |
+| `write` (per user) | 150 / hour | `WRITE_THROTTLE_RATE` | Analysis delete, share toggle |
+| `payment` (per user) | 60 / hour | `PAYMENT_THROTTLE_RATE` | All Razorpay payment endpoints (subscribe, verify, cancel, topup, history) |
 
 When rate-limited, the API returns:
 
@@ -2731,7 +2732,7 @@ All API responses now include rate-limit headers (when DRF throttling is active)
 | `X-RateLimit-Remaining` | Requests remaining before throttled | `187` |
 | `X-RateLimit-Reset` | Unix timestamp when the window resets | `1709120000` |
 
-The headers reflect the **most restrictive** throttle scope active on the endpoint. For example, `POST /api/v1/analyze/` has both `user` (200/hr) and `analyze` (10/hr) scopes — the headers will show whichever has fewer remaining requests.
+The headers reflect the **most restrictive** throttle scope active on the endpoint. For example, `POST /api/v1/analyze/` has both `user` (500/hr) and `analyze` (20/hr) scopes — the headers will show whichever has fewer remaining requests.
 
 **Frontend usage:**
 ```js
@@ -7620,12 +7621,339 @@ SentAlert   ── dedup log (User × DiscoveredJob × channel)
 | **Share** |||||
 | GET | `/api/v1/shared/<uuid:token>/` | ❌ | Anon (60/hr IP) | Public read-only shared analysis |
 | GET | `/api/v1/shared/<uuid:token>/summary/` | ❌ | Anon (60/hr IP) | Lightweight score summary for social cards |
+| **Skills** |||||
+| GET | `/api/v1/skills/` | ✅ | Readonly (1000/hr) | List/search skill catalogue (§33). Filters: `q`, `category`, `trending`, `ordering` |
+| GET | `/api/v1/skills/<name>/` | ✅ | Readonly (1000/hr) | Skill detail with description, demand stats, roles (§33) |
 | **System** |||||
 | GET | `/api/v1/health/` | ❌ | None | Health check |
 
 ---
 
+## 33. Skill Catalogue
+
+Normalised skill master table aggregated from crawled job listings. Each skill has an LLM-generated description, category, demand statistics across multiple time windows, and associated roles.
+
+### 33.1 GET `/api/v1/skills/` — List / Search Skills
+
+**Auth:** Required &nbsp;|&nbsp; **Throttle:** Readonly (1000/hr) &nbsp;|&nbsp; **Paginated:** Yes (20/page)
+
+| Query Param | Type | Default | Description |
+|-------------|------|---------|-------------|
+| `q` | string | — | Free-text search across name, display_name, aliases |
+| `category` | string | — | Filter by category (see choices below) |
+| `trending` | `"true"` | — | Only return skills marked as trending (top 50 by 30d demand) |
+| `ordering` | string | `-demand` | Sort order: `demand`, `-demand`, `growth`, `-growth`, `name`, `-name`, `salary`, `-salary` |
+| `page` | int | 1 | Page number |
+
+**Category choices:** `language`, `framework`, `tool`, `cloud`, `data`, `devops`, `design`, `soft`, `security`, `mobile`, `ai_ml`, `other`
+
+**Response:**
+```json
+{
+  "count": 1803,
+  "next": "http://…/api/v1/skills/?page=2",
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-…",
+      "name": "python",
+      "display_name": "Python",
+      "category": "language",
+      "job_count_30d": 264,
+      "job_count_1y": 264,
+      "job_count_5y": 264,
+      "growth_pct": null,
+      "is_trending": true
+    }
+  ]
+}
+```
+
+### 33.2 GET `/api/v1/skills/<name>/` — Skill Detail
+
+**Auth:** Required &nbsp;|&nbsp; **Throttle:** Readonly (1000/hr)
+
+Lookup by canonical lowercase name (e.g. `python`, `kubernetes`, `ci/cd`).
+
+**Response:**
+```json
+{
+  "id": "a1b2c3d4-…",
+  "name": "python",
+  "display_name": "Python",
+  "description": "A versatile, high-level programming language widely used for data science, machine learning, automation, and backend development.",
+  "category": "language",
+  "category_display": "Programming Language",
+  "aliases": ["python3", "py"],
+  "roles": ["backend engineer", "data scientist", "machine learning engineer"],
+  "job_count_30d": 264,
+  "job_count_1y": 264,
+  "job_count_5y": 264,
+  "growth_pct": null,
+  "avg_salary_usd": "125000.00",
+  "is_trending": true,
+  "is_active": true,
+  "last_aggregated_at": "2026-03-04T15:30:00Z",
+  "created_at": "2026-03-04T14:00:00Z",
+  "updated_at": "2026-03-04T15:30:00Z"
+}
+```
+
+**404** if skill name not found or inactive.
+
+### 33.3 Skill Model — Field Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Primary key |
+| `name` | string | Canonical lowercase name (unique, indexed) |
+| `display_name` | string | Pretty capitalised name |
+| `description` | string | LLM-generated 1-2 sentence description |
+| `category` | string | One of 12 category choices (see above) |
+| `aliases` | string[] | Alternate names for dedup (e.g. `["k8s", "kube"]` → kubernetes) |
+| `roles` | string[] | Common job roles using this skill |
+| `job_count_5y` | int | Jobs mentioning this skill in last 5 years |
+| `job_count_1y` | int | Jobs mentioning this skill in last 1 year |
+| `job_count_30d` | int | Jobs mentioning this skill in last 30 days |
+| `growth_pct` | float\|null | Demand growth %: `(count_30d - prev_30d) / prev_30d × 100` |
+| `avg_salary_usd` | decimal\|null | Average salary (USD) for jobs requiring this skill |
+| `is_trending` | bool | Top 50 skills by 30-day demand |
+| `is_active` | bool | Inactive skills hidden from API |
+| `last_aggregated_at` | datetime\|null | When demand stats were last refreshed |
+| `created_at` | datetime | Row creation |
+| `updated_at` | datetime | Last update |
+
+### 33.4 TypeScript Types
+
+```ts
+interface SkillListItem {
+  id: string;
+  name: string;
+  display_name: string;
+  category: SkillCategory;
+  job_count_30d: number;
+  job_count_1y: number;
+  job_count_5y: number;
+  growth_pct: number | null;
+  is_trending: boolean;
+}
+
+interface SkillDetail extends SkillListItem {
+  description: string;
+  category_display: string;
+  aliases: string[];
+  roles: string[];
+  avg_salary_usd: string | null;
+  is_active: boolean;
+  last_aggregated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type SkillCategory =
+  | 'language' | 'framework' | 'tool' | 'cloud' | 'data'
+  | 'devops' | 'design' | 'soft' | 'security' | 'mobile'
+  | 'ai_ml' | 'other';
+```
+
+### 33.6 Frontend Usage Notes
+
+- **Skills search bar:** Use `?q=pyth` for typeahead — debounce 300ms, show top 10 results.
+- **Trending skills widget:** `GET /api/v1/skills/?trending=true&ordering=-demand` for the top 50.
+- **Skill category filter:** Add category tabs/chips using the 12 category choices.
+- **Skill detail page:** Link from trending-skills view or search results → `GET /api/v1/skills/<name>/` for full description, demand charts, salary info.
+- **Demand charts:** Use `job_count_30d`, `job_count_1y`, `job_count_5y` for bar/line charts showing demand over time.
+- **Growth indicator:** Show `growth_pct` as ↑/↓ badge. `null` means no previous period data.
+- **Salary info:** `avg_salary_usd` available on detail view — show as "Avg. salary: $125,000" or hide if null.
+
+### 33.7 Management Command (Backfill)
+
+```bash
+# Full re-aggregate (backfill/repair only — normal enrichment is automatic)
+python manage.py aggregate_skills
+
+# Also generate LLM descriptions for skills missing them
+python manage.py aggregate_skills --generate-descriptions
+
+# Preview without writing (dry run)
+python manage.py aggregate_skills --dry-run
+
+# Process only top 500 skills by demand
+python manage.py aggregate_skills --top 500
+```
+
+---
+
+## 33. Skill Catalogue
+
+Normalised skill master table aggregated from crawled job listings. Each skill has an LLM-generated description, category, demand statistics across multiple time windows, and associated roles.
+
+### 33.1 GET `/api/v1/skills/` — List / Search Skills
+
+**Auth:** Required &nbsp;|&nbsp; **Throttle:** Readonly (1000/hr) &nbsp;|&nbsp; **Paginated:** Yes (20/page)
+
+| Query Param | Type | Default | Description |
+|-------------|------|---------|-------------|
+| `q` | string | — | Free-text search across name, display_name, aliases |
+| `category` | string | — | Filter by category (see choices below) |
+| `trending` | `"true"` | — | Only return skills marked as trending (top 50 by 30d demand) |
+| `ordering` | string | `-demand` | Sort order: demand, -demand, growth, -growth, name, -name, salary, -salary |
+| `page` | int | 1 | Page number |
+
+**Category choices:** language, framework, tool, cloud, data, devops, design, soft, security, mobile, ai_ml, other
+
+**Response:**
+```json
+{
+  "count": 1803,
+  "next": "http://…/api/v1/skills/?page=2",
+  "previous": null,
+  "results": [
+    {
+      "id": "a1b2c3d4-…",
+      "name": "python",
+      "display_name": "Python",
+      "category": "language",
+      "job_count_30d": 264,
+      "job_count_1y": 264,
+      "job_count_5y": 264,
+      "growth_pct": null,
+      "is_trending": true
+    }
+  ]
+}
+```
+
+### 33.2 GET `/api/v1/skills/<name>/` — Skill Detail
+
+**Auth:** Required &nbsp;|&nbsp; **Throttle:** Readonly (1000/hr)
+
+Lookup by canonical lowercase name (e.g. python, kubernetes, ci/cd).
+
+**Response:**
+```json
+{
+  "id": "a1b2c3d4-…",
+  "name": "python",
+  "display_name": "Python",
+  "description": "A versatile, high-level programming language widely used for data science, machine learning, automation, and backend development.",
+  "category": "language",
+  "category_display": "Programming Language",
+  "aliases": ["python3", "py"],
+  "roles": ["backend engineer", "data scientist", "machine learning engineer"],
+  "job_count_30d": 264,
+  "job_count_1y": 264,
+  "job_count_5y": 264,
+  "growth_pct": null,
+  "avg_salary_usd": "125000.00",
+  "is_trending": true,
+  "is_active": true,
+  "last_aggregated_at": "2026-03-04T15:30:00Z",
+  "created_at": "2026-03-04T14:00:00Z",
+  "updated_at": "2026-03-04T15:30:00Z"
+}
+```
+
+**404** if skill name not found or inactive.
+
+### 33.3 Skill Model — Field Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Primary key |
+| `name` | string | Canonical lowercase name (unique, indexed) |
+| `display_name` | string | Pretty capitalised name |
+| `description` | string | LLM-generated 1-2 sentence description |
+| `category` | string | One of 12 category choices (see above) |
+| `aliases` | string[] | Alternate names for dedup (e.g. ["k8s", "kube"] → kubernetes) |
+| `roles` | string[] | Common job roles using this skill |
+| `job_count_5y` | int | Jobs mentioning this skill in last 5 years |
+| `job_count_1y` | int | Jobs mentioning this skill in last 1 year |
+| `job_count_30d` | int | Jobs mentioning this skill in last 30 days |
+| `growth_pct` | float\|null | Demand growth %: (count_30d - prev_30d) / prev_30d × 100 |
+| `avg_salary_usd` | decimal\|null | Average salary (USD) for jobs requiring this skill |
+| `is_trending` | bool | Top 50 skills by 30-day demand |
+| `is_active` | bool | Inactive skills hidden from API |
+| `last_aggregated_at` | datetime\|null | When demand stats were last refreshed |
+| `created_at` | datetime | Row creation |
+| `updated_at` | datetime | Last update |
+
+### 33.4 Automatic Enrichment Pipeline
+
+Skills are enriched **automatically** as part of the job ingestion pipeline — no manual command or scheduled task needed.
+
+**Flow:**
+1. A job is ingested (crawler bot API, daily crawl, or user analysis)
+2. Each skill from `skills_required` / `skills_nice_to_have` is upserted into the `Skill` table
+3. **Existing skills** → demand counters (`job_count_30d/1y/5y`) are incremented, roles list is updated
+4. **New skills** → row is created, then a Celery task (`enrich_new_skills_task`) is dispatched to generate the LLM description, category, display name, and roles asynchronously
+
+This means the Skill catalogue grows and stays current organically as jobs flow in.
+
+**Pipeline entry points:**
+- `process_ingested_jobs_task` — fires after crawler bot `POST /api/v1/ingest/jobs/` or `/ingest/jobs/bulk/`
+- `crawl_jobs_daily_task` — fires during the nightly job crawl
+- `sync_analyzed_job_task` — fires after a user submits a resume analysis with a JD
+
+### 33.5 Management Command (Backfill Only)
+
+The management command is **not needed for normal operation** — it exists only for one-off backfills or repairs.
+
+```bash
+# Full re-aggregate of demand counters from all jobs
+python manage.py aggregate_skills
+
+# Also generate LLM descriptions for skills missing them
+python manage.py aggregate_skills --generate-descriptions
+
+# Preview without writing (dry run)
+python manage.py aggregate_skills --dry-run
+
+# Process only top 500 skills by demand
+python manage.py aggregate_skills --top 500
+```
+
+---
+
 ## Changelog
+
+### v0.44.0 — Skill Catalogue & Rate Limit Increase
+
+#### Added — Normalised Skill Model (`analyzer/models.py`)
+- **`Skill` model**: 17-field normalised skill catalogue aggregated from `DiscoveredJob.skills_required` and `skills_nice_to_have`. Fields: `name` (unique), `display_name`, `description` (LLM-generated), `category` (12 choices), `aliases`, `roles`, `job_count_5y/1y/30d`, `growth_pct`, `avg_salary_usd`, `is_trending`, `is_active`, timestamps.
+- **1,803 skills** seeded from 822 crawled jobs. All have LLM-generated descriptions, categories, and role associations.
+- **Migration:** `0037_add_skill_model.py`
+
+#### Added — Skill API Endpoints
+- `GET /api/v1/skills/` — paginated list with `?q=`, `?category=`, `?trending=true`, `?ordering=` (demand/growth/name/salary).
+- `GET /api/v1/skills/<name>/` — full skill detail by canonical name.
+
+#### Added — `aggregate_skills` Management Command
+- Scans all `DiscoveredJob` listings across 30d/1y/5y time windows.
+- Computes demand counts, growth %, average salary per skill.
+- Marks top 50 skills as trending.
+- `--generate-descriptions` flag calls LLM (Claude 3.5 Haiku) in batches of 30 to generate skill descriptions, categories, display names, and roles.
+- `--dry-run`, `--top N`, `--batch-size`, `--trending-threshold` options.
+- Designed to run as a daily Celery beat task.
+
+#### Added — Skill Admin
+- Full Django Admin registration with list display, search, filters (category, trending, active), inline editing.
+
+#### Changed — Rate Limits Increased for Authenticated Users
+| Scope | Before | After |
+|-------|--------|-------|
+| `user` | 200/hr | **500/hr** |
+| `analyze` | 10/hr | **20/hr** |
+| `readonly` | 120/hr | **1000/hr** |
+| `write` | 60/hr | **150/hr** |
+| `payment` | 30/hr | **60/hr** |
+
+Anonymous (`anon`: 60/hr) and auth-endpoint (`auth`: 20/hr) rates unchanged.
+
+#### Frontend Notes
+- New section §33 documents the Skill Catalogue API.
+- Rate limit values updated throughout §12 and Quick Reference (§32).
+- No breaking changes — all existing endpoints unchanged.
 
 ### v0.38.0 — Role-Based Feed & Dashboard Scoping
 

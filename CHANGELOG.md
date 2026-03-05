@@ -5,6 +5,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.44.0] — 2026-03-04
+
+### Skill Catalogue & Rate Limit Increase
+
+#### Added — Skill Model & API
+- Skill model: 17-field normalised catalogue (`analyzer/models.py`) with LLM-generated description, category, aliases, roles, demand stats, salary, trending flag, and timestamps.
+- Migration: `0037_add_skill_model.py` — seeded 1,803 skills from 822 jobs, all with LLM descriptions.
+- API endpoints:
+  - `GET /api/v1/skills/` — paginated, searchable, filterable list
+  - `GET /api/v1/skills/<name>/` — full skill detail
+
+#### Added — Skill Aggregation & Management
+- Automatic pipeline enrichment: every job ingested triggers skill upsert (counter increments for existing, row creation for new). New skills get LLM descriptions via async `enrich_new_skills_task`.
+- Pipeline hooks in `process_ingested_jobs_task`, `crawl_jobs_daily_task`, `sync_analyzed_job_task`.
+- Service module: `analyzer/services/skill_enrichment.py`.
+- Management command: `aggregate_skills` — backfill/repair only (not needed for normal operation).
+- Admin: Full Django admin registration with filters, search, inline editing.
+
+#### Changed — Rate Limits Increased
+| Scope     | Before | After   |
+|-----------|--------|---------|
+| user      | 200/hr | 500/hr  |
+| analyze   | 10/hr  | 20/hr   |
+| readonly  | 120/hr | 1000/hr |
+| write     | 60/hr  | 150/hr  |
+| payment   | 30/hr  | 60/hr   |
+Anonymous (`anon`: 60/hr) and auth-endpoint (`auth`: 20/hr) unchanged.
+
+#### Frontend Notes
+- Skill catalogue API documented in §33 of FRONTEND_API_GUIDE.md
+- Rate limits updated throughout docs
+- No breaking changes; all existing endpoints unchanged
+
+---
+
 ## [0.43.0] — 2026-03-04
 
 ### LLM Response Resilience — Coercion, Auto-Retry, Free Retries

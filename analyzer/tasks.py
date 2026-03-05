@@ -431,6 +431,12 @@ def sync_analyzed_job_task(self, analysis_id):
             'sync_analyzed_job: %s DiscoveredJob %s — "%s" @ %s (analysis=%s)',
             action, job.id, title, company, analysis_id,
         )
+
+        # Skill enrichment
+        try:
+            _enrich_skills_from_jobs([job], source_label='sync_analyzed_job')
+        except Exception as skill_exc:
+            logger.warning('sync_analyzed_job: skill enrichment failed: %s', skill_exc)
     except Exception as exc:
         logger.error('sync_analyzed_job: failed to save DiscoveredJob: %s', exc)
 
@@ -1493,6 +1499,14 @@ def crawl_jobs_daily_task():
                 logger.warning('Failed to embed job %s: %s', job_id, exc)
         logger.info('crawl_jobs_daily_task: %d/%d jobs embedded', embedded_count, len(new_job_ids))
 
+    # Skill enrichment for newly crawled jobs
+    if new_job_ids:
+        try:
+            enrichment_jobs = list(DiscoveredJob.objects.filter(id__in=new_job_ids))
+            _enrich_skills_from_jobs(enrichment_jobs, source_label='crawl_jobs_daily_task')
+        except Exception as exc:
+            logger.warning('crawl_jobs_daily_task: skill enrichment failed: %s', exc)
+
     duration = _time.monotonic() - start
     logger.info('crawl_jobs_daily_task: completed in %.2fs', duration)
 
@@ -1854,7 +1868,14 @@ def process_ingested_jobs_task(self, job_ids):
         embedded_count, len(job_ids), duration,
     )
 
-    # Step 2: Chain matching — use Redis lock to prevent concurrent storms
+    # Step 2: Skill enrichment — upsert Skill rows + dispatch LLM for new ones
+    try:
+        enrichment_jobs = list(DiscoveredJob.objects.filter(id__in=job_ids))
+        _enrich_skills_from_jobs(enrichment_jobs, source_label='process_ingested_jobs_task')
+    except Exception as exc:
+        logger.warning('process_ingested_jobs_task: skill enrichment failed: %s', exc)
+
+    # Step 3: Chain matching — use Redis lock to prevent concurrent storms
     # If another process_ingested_jobs_task already scheduled matching,
     # the lock prevents a redundant run. The first match run will pick up
     # all newly embedded jobs anyway.
@@ -2381,6 +2402,124 @@ def generate_role_family_task(self, source_titles: list[str]):
         )
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Skill Enrichment — LLM descriptions for newly discovered skills
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    autoretry_for=(ConnectionError, OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    acks_late=True,
+    ignore_result=True,
+)
+def enrich_new_skills_task(self, skill_names: list[str]):
+    """
+    Generate LLM descriptions, categories, display names, and roles for
+    newly created Skill rows.
+
+    Called automatically from the job ingestion pipeline when new skills
+    are discovered.  Processes skills in a single LLM batch call.
+    """
+    import json
+    import time
+
+    from .models import Skill
+    from .management.commands.aggregate_skills import (
+        _generate_descriptions_batch,
+    )
+
+    if not skill_names:
+        return
+
+    # Only process skills that still lack a description
+    needs_desc = list(
+        Skill.objects.filter(
+            name__in=skill_names,
+            is_active=True,
+        ).filter(
+            models_Q(description='') | models_Q(description__isnull=True),
+        ).values_list('name', flat=True)
+    )
+
+    if not needs_desc:
+        logger.info('enrich_new_skills_task: all %d skills already have descriptions', len(skill_names))
+        return
+
+    logger.info('enrich_new_skills_task: generating descriptions for %d new skills', len(needs_desc))
+
+    # Process in batches of 30
+    batch_size = 30
+    enriched = 0
+    for i in range(0, len(needs_desc), batch_size):
+        batch = needs_desc[i:i + batch_size]
+        try:
+            results = _generate_descriptions_batch(batch)
+        except Exception as exc:
+            logger.warning('enrich_new_skills_task: LLM batch failed: %s', exc)
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+            continue
+
+        for item in results:
+            if not isinstance(item, dict) or 'name' not in item:
+                continue
+            name = item['name'].strip().lower()
+            try:
+                skill_obj = Skill.objects.get(name=name)
+            except Skill.DoesNotExist:
+                continue
+
+            save_fields = ['updated_at']
+            if item.get('description') and not skill_obj.description:
+                skill_obj.description = item['description']
+                save_fields.append('description')
+            if item.get('display_name'):
+                skill_obj.display_name = item['display_name']
+                save_fields.append('display_name')
+            if item.get('category') and item['category'] in dict(Skill.CATEGORY_CHOICES):
+                skill_obj.category = item['category']
+                save_fields.append('category')
+            if item.get('roles') and isinstance(item['roles'], list):
+                skill_obj.roles = item['roles']
+                save_fields.append('roles')
+
+            skill_obj.save(update_fields=save_fields)
+            enriched += 1
+
+        # Rate-limit between batches
+        if i + batch_size < len(needs_desc):
+            time.sleep(1)
+
+    logger.info('enrich_new_skills_task: enriched %d/%d skills', enriched, len(needs_desc))
+
+
+def _enrich_skills_from_jobs(jobs, source_label='pipeline'):
+    """
+    Helper called from pipeline tasks.  Upserts Skill rows for all jobs,
+    then dispatches an async task to LLM-generate descriptions for any
+    new skills.
+    """
+    from .services.skill_enrichment import upsert_skills_for_jobs
+
+    new_skill_names = upsert_skills_for_jobs(jobs)
+    if new_skill_names:
+        logger.info(
+            '%s: %d new skills found — dispatching LLM enrichment',
+            source_label, len(new_skill_names),
+        )
+        enrich_new_skills_task.delay(new_skill_names)
+    return new_skill_names
+
+
+# We need Q imported for the task above
+from django.db.models import Q as models_Q  # noqa: E402
 
 
 # ── Admin Daily Digest ───────────────────────────────────────────────────────
