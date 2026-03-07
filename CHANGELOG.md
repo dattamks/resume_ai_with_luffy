@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.46.1] — 2026-03-07
+
+### Fixed — Company Ingest Upsert (Single + Bulk)
+
+- **Bug:** Both `POST /api/v1/ingest/companies/` and `POST /api/v1/ingest/companies/bulk/` always tried to **create** a new company. When a company with the same `name` or `slug` already existed, DRF's auto-generated `UniqueValidator` rejected the request with a `400` error before the serializer's `create()` (which contained the correct `update_or_create` logic) was ever called. This meant **861 companies could never be updated** with enriched data (descriptions, tech stacks, LinkedIn/Glassdoor URLs, etc.).
+- **Root cause:** `CompanyIngestSerializer` was missing `validators = []` on `Meta` and per-field `'validators': []` in `extra_kwargs` for `name` and `slug`. The `DiscoveredJobIngestSerializer` already had this pattern (`validators = []`) and worked correctly — company endpoints just never got the same treatment.
+- **Fix applied to `analyzer/serializers_ingest.py`:**
+  1. Added `validators = []` on `CompanyIngestSerializer.Meta` to suppress model-level unique validators.
+  2. Added `'validators': []` in `extra_kwargs` for both `name` and `slug` fields to suppress field-level `UniqueValidator`.
+  3. Changed `update_or_create()` lookup from `name=name` (exact match) to `name__iexact=name` (case-insensitive) to prevent duplicate companies from casing differences (e.g. `"Google"` vs `"google"`).
+  4. Slug is now always auto-generated from `name` (input `slug` is popped/ignored) to prevent slug collision errors.
+- **Result:** Both endpoints now correctly create-or-update companies. Existing companies are updated in-place; new companies are created. The crawler bot's `push_companies` (which calls `/companies/bulk/`) now works for both first-time sync and subsequent enrichment updates.
+
+### Improved — CompanyEntity Query Performance
+
+- **`GET /api/v1/ingest/entities/`** now uses `Prefetch('career_pages', queryset=..filter(is_active=True))` to avoid N+1 queries when serializing career pages. The serializer's `get_career_pages` updated to use the prefetched queryset (`.all()` instead of re-filtering).
+
+---
+
 ## [0.46.0] — 2026-03-07
 
 ### Added — Modern Luxe Resume Template

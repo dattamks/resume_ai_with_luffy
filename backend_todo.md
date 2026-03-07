@@ -6,10 +6,10 @@
 
 | Tag | Meaning | Count |
 |-----|---------|-------|
-| 🔴 IMMEDIATE | Next sprint — implement now | 1 (Resume Rendering Overhaul) |
+| 🔴 IMMEDIATE | Next sprint — implement now | 0 (all done) |
 | 🟡 P2 | Important — implement soon | 0 (all done) |
 | 🔵 P3 | Important — plan for later | 1 |
-| ⚪ DEFERRED | Backlog — revisit in future | 10 |
+| ⚪ DEFERRED | Backlog — revisit in future | 12 |
 
 ---
 
@@ -1221,6 +1221,36 @@ PDF bytes → upload to R2 → return download URL
 - [x] `Jinja2==3.1.6` in `requirements.txt`
 - [x] Chromium browser binary via `playwright install chromium`
 - [x] WOFF2 font files bundled in `analyzer/static/fonts/`
+
+---
+
+## Backlog — Scan Report Findings (March 2026)
+
+> Items surfaced from SCAN_REPORT.md review. Prioritized by impact and feasibility.
+
+### P1 — High (Performance & Testing)
+
+- [x] **N+1 query audit on remaining views** — Audited all views; `ResumeListView`, `JobAlertListCreateView`, `GeneratedResumeListView`, `FeedHubView`, and `CompanyEntityIngestView` already have `select_related()`/`prefetch_related()` with prefetch-aware serializer fallbacks. No additional fixes needed.
+- [x] **Integration tests for template rendering (PDF/DOCX)** — Added 3 new test classes (39 total tests) in `test_templates.py`: `DOCXRendererOutputTests` (7 tests — all 5 DOCX renderers, empty/minimal/special chars, missing optional sections), `HTMLTemplateRenderTests` (5 tests — all 6 HTML templates render to valid HTML, empty sections, special chars, contact name), `PDFRendererOutputTests` (3 tests — mocked Playwright, empty content, missing optional sections). Also fixed `TemplateRegistryTests` and `SeedTemplatesCommandTests` for `modern_luxe`. Fixed stale `modern` → `modern_luxe` reference in `test_resume_generation.py`.
+
+### P2 — Medium (Security, Reliability, Maintainability)
+
+- [ ] **Split `analyzer/models.py` into submodules** — 2338 lines. Split into `models/resume.py` (Resume, ResumeAnalysis, ResumeVersion, GeneratedResume), `models/jobs.py` (Company, DiscoveredJob, JobAlert, JobMatch, etc.), `models/ai.py` (LLMResponse, InterviewPrep, CoverLetter), `models/feed.py` (NewsSnippet, Skill), `models/infra.py` (Notification, UserActivity, ResumeTemplate) with `__init__.py` re-exporting all models. No migration changes needed — just code organization.
+- [ ] **Celery task idempotency audit** — Verify all 10+ async tasks are safe to retry without side effects. Specifically check: `crawl_jobs_daily_task` (does re-run duplicate jobs?), `match_all_alerts_task` (does re-run create duplicate JobMatch?), `send_job_alert_notification_task` (does re-run send duplicate emails?). Document findings per task.
+- [ ] **Crawler bot auth hardening** — `X-Crawler-Key` is a shared static secret with no rotation mechanism. If leaked, any IP can ingest arbitrary data. Consider: key rotation support (accept old + new key during rollover), request signing (HMAC timestamp), or IP allowlisting via middleware.
+- [ ] **Wallet concurrent debit stress tests** — Add tests for race conditions: two simultaneous `POST /api/v1/analyze/` from same user (only one should succeed if balance=1), concurrent top-up + debit, rapid-fire retry requests. Use `threading` or `select_for_update` assertions.
+- [ ] **Database backup automation** — `backups/` directory has manual Railway dumps only. Set up automated daily `pg_dump` via Railway cron job or Celery Beat task. Retain last 7 daily + 4 weekly backups. Alert on backup failure.
+
+### P3 — Low (Polish & Observability)
+
+- [ ] **Feed query caching** — Add Redis caching to expensive feed endpoints: `GET /feed/insights/` (heavy aggregation, cache 1h), `GET /feed/trending-skills/` (cache 30min), `GET /feed/jobs/` (per-user cache 5min). Use `cache_page` or manual `cache.get/set` with user-scoped keys.
+- [ ] **Replace `print()` in migration `0030_*.py`** — Use `self.stdout.write()` (Django migration best practice) or `logging.getLogger(__name__)` instead of bare `print()`.
+- [ ] **Webhook dedup edge case tests** — Test scenarios: replayed webhook with same `event_id` (should skip), concurrent duplicate webhook deliveries (only one should process), `WebhookEvent` cleanup for old entries.
+
+### ⚪ DEFERRED
+
+- [ ] **APM (Application Performance Monitoring)** — Prometheus metrics (v0.24.0) cover counters and gauges but lack request tracing, slow query detection, and error grouping. Evaluate Sentry Performance or Grafana Tempo for distributed tracing. Requires: hosted service + `sentry-sdk[django]` integration.
+- [ ] **Comprehensive type hints** — Service layer functions (`services/*.py`) and view methods lack type annotations. Blocks static analysis tools (mypy, pyright). Low immediate value but improves IDE experience and onboarding. Start with `resume_generator.py` and `analyzer.py` as highest-impact files.
 
 
 

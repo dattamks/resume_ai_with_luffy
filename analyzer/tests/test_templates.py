@@ -4,14 +4,14 @@ Tests for the resume template marketplace:
 - Template listing API
 - Plan gating (premium_templates on Plan)
 - Template registry
-- Renderer output validation
+- Renderer output validation (HTML, DOCX, PDF with mocked Playwright)
 - GenerateResumeView with template selection
 """
 import uuid
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from django.contrib.auth.models import User
-from django.test import TestCase, override_settings
+from django.test import TestCase, SimpleTestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import Plan, UserProfile
@@ -82,23 +82,22 @@ class ResumeTemplateModelTests(TestCase):
         self.assertEqual(templates[0], 'a')
 
 
-class TemplateRegistryTests(TestCase):
+class TemplateRegistryTests(SimpleTestCase):
     """Test the template_registry module."""
 
     def test_all_slugs_present(self):
         slugs = get_available_slugs()
-        expected = ['ats_classic', 'creative', 'executive', 'minimal', 'modern']
+        expected = ['ats_classic', 'creative', 'executive', 'minimal', 'modern_luxe']
         self.assertEqual(slugs, expected)
 
     def test_get_renderer_pdf(self):
         renderer = get_renderer('ats_classic', 'pdf')
         self.assertTrue(callable(renderer))
-        self.assertEqual(renderer.__name__, 'render_resume_pdf')
 
     def test_get_renderer_docx(self):
-        renderer = get_renderer('modern', 'docx')
+        renderer = get_renderer('modern_luxe', 'docx')
         self.assertTrue(callable(renderer))
-        self.assertEqual(renderer.__name__, 'render_modern_docx')
+        self.assertEqual(renderer.__name__, 'render_modern_luxe_docx')
 
     def test_unknown_slug_raises(self):
         with self.assertRaises(ValueError) as ctx:
@@ -111,33 +110,33 @@ class TemplateRegistryTests(TestCase):
         self.assertIn('html', str(ctx.exception))
 
 
-class RendererOutputTests(TestCase):
-    """Test that every registered renderer produces valid output."""
+# ── DOCX Renderer Integration Tests ──────────────────────────────────────
 
-    def test_all_renderers_produce_bytes(self):
+
+class DOCXRendererOutputTests(SimpleTestCase):
+    """Test that every DOCX renderer produces valid output."""
+
+    def test_all_docx_renderers_produce_bytes(self):
         for slug in get_available_slugs():
-            for fmt in ('pdf', 'docx'):
-                renderer = get_renderer(slug, fmt)
-                result = renderer(SAMPLE_RESUME_CONTENT)
-                self.assertIsInstance(result, bytes, f'{slug}/{fmt} did not return bytes')
-                self.assertGreater(len(result), 100, f'{slug}/{fmt} output too small')
+            renderer = get_renderer(slug, 'docx')
+            result = renderer(SAMPLE_RESUME_CONTENT)
+            self.assertIsInstance(result, bytes, f'{slug}/docx did not return bytes')
+            self.assertGreater(len(result), 100, f'{slug}/docx output too small')
 
-    def test_renderers_handle_empty_content(self):
+    def test_docx_empty_content(self):
         for slug in get_available_slugs():
-            for fmt in ('pdf', 'docx'):
-                renderer = get_renderer(slug, fmt)
-                result = renderer({})
-                self.assertIsInstance(result, bytes, f'{slug}/{fmt} crashed on empty input')
+            renderer = get_renderer(slug, 'docx')
+            result = renderer({})
+            self.assertIsInstance(result, bytes, f'{slug}/docx crashed on empty input')
 
-    def test_renderers_handle_minimal_content(self):
+    def test_docx_minimal_content(self):
         minimal = {'contact': {'name': 'Test'}}
         for slug in get_available_slugs():
-            for fmt in ('pdf', 'docx'):
-                renderer = get_renderer(slug, fmt)
-                result = renderer(minimal)
-                self.assertIsInstance(result, bytes)
+            renderer = get_renderer(slug, 'docx')
+            result = renderer(minimal)
+            self.assertIsInstance(result, bytes, f'{slug}/docx failed on minimal input')
 
-    def test_renderers_handle_special_characters(self):
+    def test_docx_special_characters(self):
         content = {
             'contact': {'name': 'José García <>&"\'', 'email': 'jose@例え.jp'},
             'summary': 'Expert in C++ & data<analysis>.',
@@ -145,10 +144,156 @@ class RendererOutputTests(TestCase):
             'skills': {'technical': ['C#', 'F#'], 'tools': [], 'soft': []},
         }
         for slug in get_available_slugs():
-            for fmt in ('pdf', 'docx'):
-                renderer = get_renderer(slug, fmt)
-                result = renderer(content)
-                self.assertIsInstance(result, bytes)
+            renderer = get_renderer(slug, 'docx')
+            result = renderer(content)
+            self.assertIsInstance(result, bytes, f'{slug}/docx failed on special chars')
+
+    def test_docx_no_certifications(self):
+        """Templates handle missing certifications gracefully."""
+        content = {**SAMPLE_RESUME_CONTENT, 'certifications': []}
+        for slug in get_available_slugs():
+            renderer = get_renderer(slug, 'docx')
+            result = renderer(content)
+            self.assertIsInstance(result, bytes, f'{slug}/docx failed with no certifications')
+
+    def test_docx_no_projects(self):
+        """Templates handle missing projects gracefully."""
+        content = {**SAMPLE_RESUME_CONTENT, 'projects': []}
+        for slug in get_available_slugs():
+            renderer = get_renderer(slug, 'docx')
+            result = renderer(content)
+            self.assertIsInstance(result, bytes, f'{slug}/docx failed with no projects')
+
+    def test_docx_no_optional_sections(self):
+        """Templates handle missing certifications AND projects."""
+        content = {k: v for k, v in SAMPLE_RESUME_CONTENT.items()
+                   if k not in ('certifications', 'projects')}
+        for slug in get_available_slugs():
+            renderer = get_renderer(slug, 'docx')
+            result = renderer(content)
+            self.assertIsInstance(result, bytes, f'{slug}/docx failed with no optional sections')
+
+
+# ── HTML Template Rendering Tests ────────────────────────────────────────
+
+
+class HTMLTemplateRenderTests(SimpleTestCase):
+    """Test that Jinja2 HTML templates render to valid HTML strings."""
+
+    def _render(self, template_name, content):
+        from analyzer.services.resume_template_env import render_template
+        return render_template(template_name, content)
+
+    def test_all_templates_render_to_html(self):
+        templates = [
+            'ats_classic.html', 'modern.html', 'modern_luxe.html',
+            'executive.html', 'creative.html', 'minimal.html',
+        ]
+        for tmpl in templates:
+            html = self._render(tmpl, SAMPLE_RESUME_CONTENT)
+            self.assertIsInstance(html, str, f'{tmpl} did not return str')
+            self.assertIn('<html', html.lower(), f'{tmpl} missing <html> tag')
+            self.assertGreater(len(html), 500, f'{tmpl} output too small')
+
+    def test_templates_render_empty_content(self):
+        """Templates handle empty sections without crashing."""
+        content = {
+            'contact': {'name': 'Test User'},
+            'summary': '',
+            'experience': [],
+            'education': [],
+            'skills': {},
+            'certifications': [],
+            'projects': [],
+        }
+        templates = [
+            'ats_classic.html', 'modern.html', 'modern_luxe.html',
+            'executive.html', 'creative.html', 'minimal.html',
+        ]
+        for tmpl in templates:
+            html = self._render(tmpl, content)
+            self.assertIsInstance(html, str, f'{tmpl} crashed on empty sections')
+
+    def test_templates_render_no_optional_sections(self):
+        """HTML templates handle missing certifications and projects."""
+        content = {k: v for k, v in SAMPLE_RESUME_CONTENT.items()
+                   if k not in ('certifications', 'projects')}
+        templates = [
+            'ats_classic.html', 'modern.html', 'modern_luxe.html',
+            'executive.html', 'creative.html', 'minimal.html',
+        ]
+        for tmpl in templates:
+            html = self._render(tmpl, content)
+            self.assertIsInstance(html, str, f'{tmpl} crashed without optional sections')
+
+    def test_templates_render_special_characters(self):
+        content = {
+            'contact': {'name': 'José García <>&"\'', 'email': 'jose@例え.jp'},
+            'summary': 'Expert in C++ & data<analysis>.',
+            'experience': [{'title': 'Développeur', 'company': 'Ñ Corp', 'bullets': ['Résumé & CV']}],
+            'skills': {'technical': ['C#', 'F#'], 'tools': [], 'soft': []},
+        }
+        templates = [
+            'ats_classic.html', 'modern.html', 'modern_luxe.html',
+            'executive.html', 'creative.html', 'minimal.html',
+        ]
+        for tmpl in templates:
+            html = self._render(tmpl, content)
+            self.assertIsInstance(html, str, f'{tmpl} failed on special chars')
+
+    def test_contact_name_appears_in_html(self):
+        for tmpl in ['ats_classic.html', 'executive.html', 'minimal.html']:
+            html = self._render(tmpl, SAMPLE_RESUME_CONTENT)
+            self.assertIn('Jane Doe', html, f'{tmpl} missing contact name')
+
+
+# ── PDF Renderer Tests (Playwright mocked) ──────────────────────────────
+
+
+def _mock_render_html_to_pdf(html):
+    """Mock PDF renderer that returns fake PDF bytes."""
+    return b'%PDF-1.4 mock content ' + str(len(html)).encode()
+
+
+class PDFRendererOutputTests(SimpleTestCase):
+    """Test PDF renderers with Playwright mocked out."""
+
+    @patch('analyzer.services.resume_html_renderer.render_html_to_pdf',
+           side_effect=_mock_render_html_to_pdf)
+    def test_all_pdf_renderers_produce_bytes(self, mock_pdf):
+        for slug in get_available_slugs():
+            renderer = get_renderer(slug, 'pdf')
+            result = renderer(SAMPLE_RESUME_CONTENT)
+            self.assertIsInstance(result, bytes, f'{slug}/pdf did not return bytes')
+            self.assertGreater(len(result), 10, f'{slug}/pdf output too small')
+        self.assertEqual(mock_pdf.call_count, len(get_available_slugs()))
+
+    @patch('analyzer.services.resume_html_renderer.render_html_to_pdf',
+           side_effect=_mock_render_html_to_pdf)
+    def test_pdf_empty_content(self, mock_pdf):
+        content = {
+            'contact': {'name': 'Test User'},
+            'summary': '',
+            'experience': [],
+            'education': [],
+            'skills': {},
+            'certifications': [],
+            'projects': [],
+        }
+        for slug in get_available_slugs():
+            renderer = get_renderer(slug, 'pdf')
+            result = renderer(content)
+            self.assertIsInstance(result, bytes, f'{slug}/pdf crashed on empty content')
+
+    @patch('analyzer.services.resume_html_renderer.render_html_to_pdf',
+           side_effect=_mock_render_html_to_pdf)
+    def test_pdf_no_optional_sections(self, mock_pdf):
+        content = {k: v for k, v in SAMPLE_RESUME_CONTENT.items()
+                   if k not in ('certifications', 'projects')}
+        for slug in get_available_slugs():
+            renderer = get_renderer(slug, 'pdf')
+            result = renderer(content)
+            self.assertIsInstance(result, bytes, f'{slug}/pdf failed without optional sections')
 
 
 class TemplateListAPITests(TestCase):
@@ -327,19 +472,34 @@ class SeedTemplatesCommandTests(TestCase):
         from io import StringIO
         out = StringIO()
         call_command('seed_templates', stdout=out)
-        self.assertEqual(ResumeTemplate.objects.count(), 5)
-        self.assertTrue(ResumeTemplate.objects.filter(slug='ats_classic').exists())
-        self.assertTrue(ResumeTemplate.objects.filter(slug='modern').exists())
-        self.assertTrue(ResumeTemplate.objects.filter(slug='executive').exists())
-        self.assertTrue(ResumeTemplate.objects.filter(slug='creative').exists())
-        self.assertTrue(ResumeTemplate.objects.filter(slug='minimal').exists())
+        self.assertEqual(ResumeTemplate.objects.count(), 6)
+        for slug in ('ats_classic', 'modern', 'modern_luxe', 'executive', 'creative', 'minimal'):
+            self.assertTrue(
+                ResumeTemplate.objects.filter(slug=slug).exists(),
+                f'Missing template: {slug}',
+            )
+
+    def test_seed_modern_luxe_is_active(self):
+        from django.core.management import call_command
+        from io import StringIO
+        call_command('seed_templates', stdout=StringIO())
+        luxe = ResumeTemplate.objects.get(slug='modern_luxe')
+        self.assertTrue(luxe.is_active)
+        self.assertTrue(luxe.is_premium)
+
+    def test_seed_modern_is_inactive(self):
+        from django.core.management import call_command
+        from io import StringIO
+        call_command('seed_templates', stdout=StringIO())
+        modern = ResumeTemplate.objects.get(slug='modern')
+        self.assertFalse(modern.is_active)
 
     def test_seed_is_idempotent(self):
         from django.core.management import call_command
         from io import StringIO
         call_command('seed_templates', stdout=StringIO())
         call_command('seed_templates', stdout=StringIO())
-        self.assertEqual(ResumeTemplate.objects.count(), 5)
+        self.assertEqual(ResumeTemplate.objects.count(), 6)
 
 
 class PlanPremiumTemplatesFieldTests(TestCase):

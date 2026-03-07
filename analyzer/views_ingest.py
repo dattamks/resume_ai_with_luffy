@@ -18,6 +18,8 @@ from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.db.models import Prefetch
+
 from .models import (
     Company, CompanyEntity, CompanyCareerPage, CrawlSource, DiscoveredJob,
     NewsSnippet,
@@ -126,7 +128,16 @@ class CompanyEntityIngestView(APIView):
     throttle_classes = []
 
     def get(self, request):
-        qs = CompanyEntity.objects.filter(is_active=True).select_related('company')
+        qs = (
+            CompanyEntity.objects.filter(is_active=True)
+            .select_related('company')
+            .prefetch_related(
+                Prefetch(
+                    'career_pages',
+                    queryset=CompanyCareerPage.objects.filter(is_active=True),
+                ),
+            )
+        )
         company_name = request.query_params.get('company')
         if company_name:
             qs = qs.filter(company__name__iexact=company_name.strip())

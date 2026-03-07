@@ -1185,7 +1185,7 @@ class RenderHtmlPdfTests(TestCase):
         """Template registry returns HTML→PDF renderers when Playwright available."""
         self._skip_if_no_playwright()
         from analyzer.services.template_registry import get_renderer
-        for slug in ['ats_classic', 'modern', 'executive', 'creative', 'minimal']:
+        for slug in ['ats_classic', 'modern_luxe', 'executive', 'creative', 'minimal']:
             renderer = get_renderer(slug, 'pdf')
             self.assertIn('html_pdf', renderer.__module__)
 
@@ -1194,14 +1194,14 @@ class RenderHtmlPdfTests(TestCase):
         self._skip_if_no_playwright()
         from analyzer.services.resume_html_pdf_renderers import (
             render_ats_classic_html_pdf,
-            render_modern_html_pdf,
+            render_modern_luxe_html_pdf,
             render_executive_html_pdf,
             render_creative_html_pdf,
             render_minimal_html_pdf,
         )
         pdfs = {
             'ats_classic': render_ats_classic_html_pdf(SAMPLE_RESUME_CONTENT),
-            'modern': render_modern_html_pdf(SAMPLE_RESUME_CONTENT),
+            'modern_luxe': render_modern_luxe_html_pdf(SAMPLE_RESUME_CONTENT),
             'executive': render_executive_html_pdf(SAMPLE_RESUME_CONTENT),
             'creative': render_creative_html_pdf(SAMPLE_RESUME_CONTENT),
             'minimal': render_minimal_html_pdf(SAMPLE_RESUME_CONTENT),

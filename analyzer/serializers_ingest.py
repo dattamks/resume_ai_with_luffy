@@ -34,8 +34,12 @@ class CompanyIngestSerializer(serializers.ModelSerializer):
             'linkedin_url', 'glassdoor_url', 'tech_stack',
             'is_active',
         )
+        # Skip DRF-level unique checks; we handle duplicates
+        # via update_or_create() in create().
+        validators = []
         extra_kwargs = {
-            'slug': {'required': False},
+            'name': {'validators': []},
+            'slug': {'required': False, 'validators': []},
             'is_active': {'required': False},
         }
 
@@ -44,12 +48,12 @@ class CompanyIngestSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from django.utils.text import slugify
-        name = validated_data['name']
-        if not validated_data.get('slug'):
-            validated_data['slug'] = slugify(name)
+        name = validated_data.pop('name')
+        validated_data.pop('slug', None)          # auto-generate from name
+        validated_data['slug'] = slugify(name)
         company, _created = Company.objects.update_or_create(
-            name=name,
-            defaults=validated_data,
+            name__iexact=name,
+            defaults={'name': name, **validated_data},
         )
         return company
 
@@ -317,7 +321,8 @@ class CompanyEntityReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_career_pages(self, obj):
-        pages = obj.career_pages.filter(is_active=True)
+        # Use prefetched career_pages when available (filtered in view's Prefetch)
+        pages = obj.career_pages.all()
         return CompanyCareerPageReadSerializer(pages, many=True).data
 
 

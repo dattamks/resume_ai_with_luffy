@@ -3,7 +3,7 @@ import uuid
 
 from django.core.cache import cache
 from django.db import models
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Prefetch, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework import status, filters
@@ -18,7 +18,7 @@ from accounts.services import (
     deduct_credits, refund_credits, check_balance,
     can_use_feature, InsufficientCreditsError,
 )
-from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, Notification, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
+from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobAlertRun, JobMatch, DiscoveredJob, Notification, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
 from .serializers import (
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
@@ -499,6 +499,15 @@ class ResumeListView(ListAPIView):
                 'analyses',
                 filter=Q(analyses__deleted_at__isnull=True),
             ))
+            .prefetch_related(
+                Prefetch(
+                    'analyses',
+                    queryset=ResumeAnalysis.objects.filter(
+                        deleted_at__isnull=True, status='done',
+                    ).order_by('-created_at').only('id', 'created_at', 'resume_id'),
+                    to_attr='_done_analyses',
+                ),
+            )
         )
 
 
@@ -1200,7 +1209,7 @@ class GeneratedResumeListView(APIView):
         from rest_framework.pagination import PageNumberPagination
         qs = GeneratedResume.objects.filter(
             user=request.user,
-        ).select_related('analysis').order_by('-created_at')
+        ).select_related('analysis', 'resume').order_by('-created_at')
         paginator = PageNumberPagination()
         page = paginator.paginate_queryset(qs, request)
         serializer = GeneratedResumeSerializer(page, many=True)
@@ -1224,6 +1233,13 @@ class JobAlertListCreateView(APIView):
             JobAlert.objects
             .filter(user=request.user)
             .select_related('resume', 'resume__job_search_profile')
+            .prefetch_related(
+                Prefetch(
+                    'runs',
+                    queryset=JobAlertRun.objects.order_by('-created_at'),
+                    to_attr='_prefetched_runs',
+                ),
+            )
             .annotate(total_matches=Count('matches'))
             .order_by('-created_at')
         )

@@ -36,11 +36,15 @@ class ResumeSerializer(serializers.ModelSerializer):
         return delta.days
 
     def get_last_analyzed_at(self, obj):
-        latest = obj.analyses.filter(
+        # Use prefetched _done_analyses from ResumeListView to avoid N+1
+        done = getattr(obj, '_done_analyses', None)
+        if done is not None:
+            return done[0].created_at if done else None
+        # Fallback for non-prefetched contexts
+        return obj.analyses.filter(
             deleted_at__isnull=True,
             status='done',
         ).order_by('-created_at').values_list('created_at', flat=True).first()
-        return latest
 
 
 class ScrapeResultSerializer(serializers.ModelSerializer):
@@ -506,7 +510,12 @@ class JobAlertSerializer(serializers.ModelSerializer):
         )
 
     def get_last_run(self, instance):
-        latest = instance.runs.order_by('-created_at').first()
+        # Use prefetched _prefetched_runs from view to avoid N+1
+        runs = getattr(instance, '_prefetched_runs', None)
+        if runs is not None:
+            latest = runs[0] if runs else None
+        else:
+            latest = instance.runs.order_by('-created_at').first()
         return JobAlertRunSerializer(latest).data if latest else None
 
     def get_total_matches(self, instance):

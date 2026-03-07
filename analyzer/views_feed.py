@@ -901,19 +901,20 @@ class FeedHubView(APIView):
         user = request.user
         one_week_ago = timezone.now() - timedelta(days=7)
 
-        # Alerts with match counts
+        # Alerts with match counts (single query via annotation)
         alerts = list(
             JobAlert.objects.filter(user=user, is_active=True)
             .select_related('resume')
+            .annotate(
+                matches_this_week=Count(
+                    'matches',
+                    filter=Q(matches__created_at__gte=one_week_ago),
+                ),
+            )
             .order_by('-created_at')
         )
         for alert in alerts:
-            week_matches = JobMatch.objects.filter(
-                job_alert=alert,
-                created_at__gte=one_week_ago,
-            ).count()
-            alert.matches_this_week = week_matches
-            alert.health = 'ok' if week_matches > 0 else 'quiet'
+            alert.health = 'ok' if alert.matches_this_week > 0 else 'quiet'
 
         # Recent interview preps (last 10)
         preps = list(
