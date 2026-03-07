@@ -863,9 +863,10 @@ class GoogleCompleteView(APIView):
         profile.auth_provider = 'google'
         profile.avatar_url = picture
         profile.google_sub = google_sub
+        profile.is_email_verified = True
         profile.save(update_fields=[
             'agreed_to_terms', 'agreed_to_data_usage', 'marketing_opt_in',
-            'auth_provider', 'avatar_url', 'google_sub',
+            'auth_provider', 'avatar_url', 'google_sub', 'is_email_verified',
         ])
 
         # Sync marketing opt-in to newsletter preference

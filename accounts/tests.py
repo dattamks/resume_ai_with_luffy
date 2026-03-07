@@ -428,6 +428,7 @@ class GoogleCompleteViewTests(TestCase):
         self.assertEqual(user.profile.auth_provider, 'google')
         self.assertEqual(user.profile.avatar_url, 'https://example.com/avatar.jpg')
         self.assertEqual(user.profile.google_sub, 'google-sub-test')
+        self.assertTrue(user.profile.is_email_verified)
 
         # Verify consent log
         from accounts.models import ConsentLog

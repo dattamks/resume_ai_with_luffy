@@ -387,6 +387,12 @@ PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int
 GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default='')
 GOOGLE_OAUTH2_TEMP_TOKEN_TTL = 600  # 10 minutes for completing registration
 
+# Allow Google Sign-In popup to communicate back via postMessage.
+# Django 4.0+ defaults SECURE_CROSS_ORIGIN_OPENER_POLICY to 'same-origin',
+# which blocks the popup's postMessage call. 'same-origin-allow-popups'
+# keeps COOP protection while permitting OAuth popups.
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin-allow-popups'
+
 # Logging
 # In production (Railway), use JSON formatter for structured log aggregation.
 # Local dev uses human-readable simple/verbose formatters.
