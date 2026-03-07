@@ -565,6 +565,16 @@ class GeneratedResume(models.Model):
         max_length=255, blank=True, default='',
         help_text='User-editable label for this generated resume.',
     )
+    source_job = models.ForeignKey(
+        'DiscoveredJob', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tailored_resumes',
+        help_text='The crawled job that triggered this tailored resume generation',
+    )
+    verification_score = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Post-generation ATS score from re-analysis verification',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1035,6 +1045,10 @@ class DiscoveredJob(models.Model):
     )
     salary_range = models.CharField(max_length=255, blank=True)
     description_snippet = models.TextField(blank=True, help_text='Short job description excerpt')
+    full_description = models.TextField(
+        blank=True, default='',
+        help_text='Full job description scraped from the posting URL',
+    )
 
     # ── Enriched fields (extracted by LLM during crawl) ──
     skills_required = models.JSONField(

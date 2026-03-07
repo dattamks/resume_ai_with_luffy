@@ -291,10 +291,99 @@ class GoogleLoginViewTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('not verified', resp.data['detail'])
 
-    def test_missing_token_returns_400(self):
-        """Missing token field returns 400."""
+    def test_missing_token_and_code_returns_400(self):
+        """Missing both token and code fields returns 400."""
         resp = self.client.post(self.url, {}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_code_without_redirect_uri_returns_400(self):
+        """Authorization code without redirect_uri returns 400."""
+        resp = self.client.post(self.url, {'code': 'some-code'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @override_settings(
+        GOOGLE_OAUTH2_CLIENT_ID='test-client-id',
+        GOOGLE_OAUTH2_CLIENT_SECRET='test-client-secret',
+    )
+    @patch('google.oauth2.id_token.verify_oauth2_token')
+    @patch('accounts.views.GoogleLoginView._exchange_code_for_id_token')
+    def test_code_flow_existing_user_returns_jwt(self, mock_exchange, mock_verify):
+        """Authorization code flow returns JWT for existing user."""
+        User.objects.create_user(
+            username='codeuser', email='code@gmail.com', password='Pass123!',
+        )
+        mock_exchange.return_value = 'exchanged-id-token'
+        mock_verify.return_value = {
+            'email': 'code@gmail.com',
+            'email_verified': True,
+            'sub': 'google-sub-code',
+            'name': 'Code User',
+        }
+        resp = self.client.post(self.url, {
+            'code': 'valid-auth-code',
+            'redirect_uri': 'http://localhost:5173/auth/google/callback',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn('access', resp.data)
+        mock_exchange.assert_called_once_with(
+            'valid-auth-code',
+            'http://localhost:5173/auth/google/callback',
+            'test-client-id',
+        )
+
+    @override_settings(
+        GOOGLE_OAUTH2_CLIENT_ID='test-client-id',
+        GOOGLE_OAUTH2_CLIENT_SECRET='test-client-secret',
+    )
+    @patch('google.oauth2.id_token.verify_oauth2_token')
+    @patch('accounts.views.GoogleLoginView._exchange_code_for_id_token')
+    def test_code_flow_new_user_returns_needs_registration(self, mock_exchange, mock_verify):
+        """Authorization code flow returns needs_registration for new user."""
+        mock_exchange.return_value = 'exchanged-id-token'
+        mock_verify.return_value = {
+            'email': 'newcode@gmail.com',
+            'email_verified': True,
+            'sub': 'google-sub-new',
+            'name': 'New Code User',
+            'given_name': 'New',
+            'family_name': 'Code',
+            'picture': 'https://example.com/pic.jpg',
+        }
+        resp = self.client.post(self.url, {
+            'code': 'valid-auth-code',
+            'redirect_uri': 'http://localhost:5173/auth/google/callback',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(resp.data['needs_registration'])
+        self.assertIn('temp_token', resp.data)
+        self.assertEqual(resp.data['email'], 'newcode@gmail.com')
+
+    @override_settings(
+        GOOGLE_OAUTH2_CLIENT_ID='test-client-id',
+        GOOGLE_OAUTH2_CLIENT_SECRET='test-client-secret',
+    )
+    @patch('accounts.views.GoogleLoginView._exchange_code_for_id_token')
+    def test_code_flow_exchange_failure_returns_401(self, mock_exchange):
+        """Failed code exchange returns 401."""
+        mock_exchange.return_value = None
+        resp = self.client.post(self.url, {
+            'code': 'expired-code',
+            'redirect_uri': 'http://localhost:5173/auth/google/callback',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn('exchange', resp.data['detail'].lower())
+
+    @override_settings(
+        GOOGLE_OAUTH2_CLIENT_ID='test-client-id',
+        GOOGLE_OAUTH2_CLIENT_SECRET='',
+    )
+    def test_code_flow_missing_client_secret_returns_401(self):
+        """Missing client secret causes code exchange to return 401."""
+        resp = self.client.post(self.url, {
+            'code': 'valid-code',
+            'redirect_uri': 'http://localhost:5173/auth/google/callback',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     @override_settings(GOOGLE_OAUTH2_CLIENT_ID='test-client-id')
     @patch('google.oauth2.id_token.verify_oauth2_token')

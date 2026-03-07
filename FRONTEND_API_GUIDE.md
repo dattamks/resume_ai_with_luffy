@@ -799,7 +799,25 @@ Exchange a valid refresh token for new access + refresh tokens.
 
 ### Google OAuth Login (Two-Step Flow)
 
-Google Sign-In uses a **two-step flow** for new users (existing users get JWT tokens immediately):
+Google Sign-In uses a **two-step flow** for new users (existing users get JWT tokens immediately).
+
+The backend supports **two authentication methods** — use whichever your frontend implements:
+
+#### Method A: Authorization Code Flow (Recommended — full-page redirect)
+
+```
+Step 1:  Frontend redirects to Google's consent page
+         → User authorizes → Google redirects back to /auth/google/callback?code=...
+         ↓
+         POST /api/v1/auth/google/  { code: "<auth_code>", redirect_uri: "<callback_url>" }
+         ↓
+         Backend exchanges code for ID token at Google's token endpoint
+         ↓
+         Existing user? → JWT tokens returned (done!)
+         New user?      → { needs_registration: true, temp_token, email, name, picture }
+```
+
+#### Method B: ID Token Flow (Legacy — popup/One Tap)
 
 ```
 Step 1:  Frontend gets Google ID token (Google Sign-In / One Tap)
@@ -808,7 +826,10 @@ Step 1:  Frontend gets Google ID token (Google Sign-In / One Tap)
          ↓
          Existing user? → JWT tokens returned (done!)
          New user?      → { needs_registration: true, temp_token, email, name, picture }
+```
 
+#### Step 2 (both methods):
+```
 Step 2:  Frontend shows consent form + username/password fields
          ↓
          POST /api/v1/auth/google/complete/  { temp_token, username, password, consents... }
@@ -818,16 +839,30 @@ Step 2:  Frontend shows consent form + username/password fields
 
 ### POST `/api/v1/auth/google/` — Google Login (Step 1)
 
-Verifies a Google ID token. For existing users, returns JWT tokens immediately (with smart profile sync). For new users, returns a temporary token to complete registration.
+Verifies a Google credential. For existing users, returns JWT tokens immediately (with smart profile sync). For new users, returns a temporary token to complete registration.
 
 > **Profile sync on returning login:** When an existing user logs in via Google, the backend fills in any **blank** profile fields (`first_name`, `last_name`, `avatar_url`) from the Google account. Fields the user has manually set are **never overwritten**. `google_sub` is always updated, and `auth_provider` is upgraded from `"email"` to `"google"` if applicable.
 
-**Request:**
+**Request — Authorization Code Flow:**
+```json
+{
+  "code": "4/0AX4XfWh...",
+  "redirect_uri": "https://app.iluffy.in/auth/google/callback"
+}
+```
+
+**Request — ID Token Flow:**
 ```json
 {
   "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6..."
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `code` | string | Either `code` or `token` | Google authorization code from redirect flow |
+| `redirect_uri` | string | Required with `code` | Redirect URI (must match Google Console config) |
+| `token` | string | Either `code` or `token` | Google ID token from Sign-In / One Tap |
 
 **Response — Existing User (200):**
 ```json
@@ -866,8 +901,11 @@ Verifies a Google ID token. For existing users, returns JWT tokens immediately (
 |--------|-----------|------|
 | 200 | Existing user | JWT tokens + user object |
 | 200 | New user | `needs_registration: true` + temp_token |
+| 400 | Missing both `token` and `code` | `{ "detail": "Either \"token\" or \"code\" must be provided." }` |
+| 400 | `code` without `redirect_uri` | `{ "detail": "\"redirect_uri\" is required when using authorization code flow." }` |
 | 400 | Unverified email | `{ "detail": "Google account email is not verified." }` |
 | 401 | Invalid/expired Google token | `{ "detail": "Invalid or expired Google token." }` |
+| 401 | Failed code exchange | `{ "detail": "Failed to exchange authorization code..." }` |
 | 503 | Google OAuth not configured | `{ "detail": "Google OAuth is not configured on this server." }` |
 
 ### POST `/api/v1/auth/google/complete/` — Complete Google Registration (Step 2)

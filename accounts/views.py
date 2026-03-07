@@ -672,8 +672,12 @@ class GoogleLoginView(APIView):
     """
     POST /api/v1/auth/google/ — Authenticate with Google.
 
-    Receives a Google ID token (from Google Sign-In / One Tap on the frontend),
-    verifies it, and either:
+    Accepts either:
+      1. { "token": "<id_token>" } — ID token from Google Sign-In / One Tap
+      2. { "code": "<auth_code>", "redirect_uri": "<uri>" } — authorization code
+         from redirect flow (exchanged server-side for an ID token)
+
+    Then verifies the ID token and either:
       - Returns JWT tokens if the user already exists.
       - Returns a temp_token + needs_registration flag if the user is new.
     """
@@ -684,9 +688,6 @@ class GoogleLoginView(APIView):
         serializer = GoogleAuthSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        id_token_str = serializer.validated_data['token']
-
-        # Verify Google ID token
         google_client_id = settings.GOOGLE_OAUTH2_CLIENT_ID
         if not google_client_id:
             return Response(
@@ -694,6 +695,24 @@ class GoogleLoginView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        # Determine flow: authorization code or ID token
+        auth_code = serializer.validated_data.get('code')
+        id_token_str = serializer.validated_data.get('token')
+
+        if auth_code:
+            # Authorization code flow — exchange code for tokens
+            id_token_str = self._exchange_code_for_id_token(
+                auth_code,
+                serializer.validated_data['redirect_uri'],
+                google_client_id,
+            )
+            if id_token_str is None:
+                return Response(
+                    {'detail': 'Failed to exchange authorization code. It may be expired or already used.'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+        # Verify Google ID token
         try:
             from google.oauth2 import id_token as google_id_token
             from google.auth.transport import requests as google_requests
@@ -802,6 +821,52 @@ class GoogleLoginView(APIView):
             'family_name': family_name,
             'picture': picture,
         })
+
+    @staticmethod
+    def _exchange_code_for_id_token(code, redirect_uri, client_id):
+        """
+        Exchange a Google authorization code for an ID token.
+
+        Calls Google's token endpoint with the code, client ID, client secret,
+        and redirect_uri. Returns the id_token string on success, None on failure.
+        """
+        import requests as http_requests
+
+        client_secret = getattr(settings, 'GOOGLE_OAUTH2_CLIENT_SECRET', '')
+        if not client_secret:
+            logger.error('GOOGLE_OAUTH2_CLIENT_SECRET is not configured')
+            return None
+
+        try:
+            resp = http_requests.post(
+                'https://oauth2.googleapis.com/token',
+                data={
+                    'code': code,
+                    'client_id': client_id,
+                    'client_secret': client_secret,
+                    'redirect_uri': redirect_uri,
+                    'grant_type': 'authorization_code',
+                },
+                timeout=10,
+            )
+        except http_requests.RequestException as e:
+            logger.error('Google token exchange network error: %s', e)
+            return None
+
+        if resp.status_code != 200:
+            logger.warning(
+                'Google token exchange failed: status=%s body=%s',
+                resp.status_code, resp.text[:500],
+            )
+            return None
+
+        token_data = resp.json()
+        id_token_str = token_data.get('id_token')
+        if not id_token_str:
+            logger.error('Google token response missing id_token field')
+            return None
+
+        return id_token_str
 
 
 class GoogleCompleteView(APIView):

@@ -488,10 +488,28 @@ class SubscriptionStatusSerializer(serializers.Serializer):
 # ── Google OAuth Serializers ────────────────────────────────────────────────
 
 class GoogleAuthSerializer(serializers.Serializer):
-    """Input for Google OAuth login — receives the Google ID token from frontend."""
+    """Input for Google OAuth login — accepts either an ID token or an authorization code."""
     token = serializers.CharField(
+        required=False,
         help_text='Google ID token (credential) from Google Sign-In / One Tap.',
     )
+    code = serializers.CharField(
+        required=False,
+        help_text='Google authorization code from redirect flow.',
+    )
+    redirect_uri = serializers.URLField(
+        required=False,
+        help_text='Redirect URI used in the authorization code flow (must match Google Console config).',
+    )
+
+    def validate(self, attrs):
+        token = attrs.get('token')
+        code = attrs.get('code')
+        if not token and not code:
+            raise serializers.ValidationError('Either "token" or "code" must be provided.')
+        if code and not attrs.get('redirect_uri'):
+            raise serializers.ValidationError('"redirect_uri" is required when using authorization code flow.')
+        return attrs
 
 
 class GoogleCompleteSerializer(serializers.Serializer):

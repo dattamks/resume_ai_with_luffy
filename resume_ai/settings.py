@@ -385,6 +385,7 @@ PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int
 
 # ── Google OAuth2 ────────────────────────────────────────────────────────────
 GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default='')
+GOOGLE_OAUTH2_CLIENT_SECRET = config('GOOGLE_OAUTH2_CLIENT_SECRET', default='')
 GOOGLE_OAUTH2_TEMP_TOKEN_TTL = 600  # 10 minutes for completing registration
 
 # Allow Google Sign-In popup to communicate back via postMessage.
