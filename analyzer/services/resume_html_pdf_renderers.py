@@ -40,3 +40,7 @@ def render_creative_html_pdf(resume_content: dict) -> bytes:
 
 def render_minimal_html_pdf(resume_content: dict) -> bytes:
     return _render_html_pdf('minimal.html', resume_content)
+
+
+def render_modern_luxe_html_pdf(resume_content: dict) -> bytes:
+    return _render_html_pdf('modern_luxe.html', resume_content)

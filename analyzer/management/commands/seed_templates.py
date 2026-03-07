@@ -33,6 +33,21 @@ TEMPLATES = [
         ),
         'category': 'professional',
         'is_premium': True,
+        'is_active': False,
+        'sort_order': 1,
+    },
+    {
+        'slug': 'modern_luxe',
+        'name': 'Modern Luxe',
+        'description': (
+            'Elegant gold-and-black card-based layout with serif display headings, '
+            'two-column grid (main + sidebar), timeline experience dots, and SVG contact icons. '
+            'Three premium fonts: Cormorant Garamond, Outfit, DM Mono. '
+            'Ideal for senior professionals, designers, and executive-adjacent roles.'
+        ),
+        'category': 'professional',
+        'is_premium': True,
+        'is_active': True,
         'sort_order': 1,
     },
     {

@@ -618,7 +618,7 @@ On resume upload:
 - [ ] **⚪ DEFERRED — Admin analytics dashboard** — System-wide metrics: active users, analyses/day, LLM token costs, error rates.
 - [x] **🔵 P3 — Resume template marketplace** — 5 templates (ats_classic free + 4 premium), ResumeTemplate model, `premium_templates` plan flag, DB-validated slugs, dedicated PDF/DOCX renderers, admin, seed command. *(v0.25.0)*
 - [ ] **🔵 P3 — LinkedIn resume import** — Import LinkedIn profile data directly instead of uploading PDF.
-- [ ] **� IMMEDIATE — Modern template needs modification** — The modern resume template needs a design overhaul. Currently disabled in the template registry until the redesign is complete.
+- [x] **🔴 IMMEDIATE — Modern template needs modification** — Replaced with `modern_luxe` template: gold-and-black card-based layout, two-column grid, 3 custom fonts (Cormorant Garamond, Outfit, DM Mono), timeline experience dots. Old `modern` marked `is_active: False`. *(v0.46.0)*
 - [ ] **�🔵 P3 — Link Skill model to other models** — Currently `Skill` is a standalone catalogue with no FK/M2M relationships. Skills in `DiscoveredJob.skills_required`, `JobSearchProfile.skills`, and `ResumeAnalysis.keyword_analysis` are stored as raw JSONField arrays. **Fix:** Add M2M relationships: `DiscoveredJob.skills` → `Skill`, `JobSearchProfile.matched_skills` → `Skill`, `UserProfile.skills` → `Skill` (through table with proficiency level). Replace JSON string matching with proper relational queries. Enables: skill-based job matching via SQL joins, user skill endorsements, skill gap analysis via set operations, and skill autocomplete backed by the catalogue.
 
 ---

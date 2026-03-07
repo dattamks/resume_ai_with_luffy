@@ -5671,13 +5671,14 @@ Returns all **active** templates, ordered by `sort_order` then `name`.
 
 ### 28.2 Default Templates
 
-| Slug | Name | Category | Premium | Description |
-|------|------|----------|---------|-------------|
-| `ats_classic` | ATS Classic | professional | ❌ | Clean single-column, Inter font, ATS-optimized |
-| `modern` | Modern | professional | ✅ | ⚠️ **Currently disabled** — under redesign. API returns error if used. |
-| `executive` | Executive | executive | ✅ | Lato font, gold accents, generous whitespace |
-| `creative` | Creative | creative | ✅ | Purple gradient hero header, lavender skill pills |
-| `minimal` | Minimal | professional | ✅ | Ultra-clean, monospace dates, subdued gray palette |
+| Slug | Name | Category | Premium | Active | Description |
+|------|------|----------|---------|--------|-------------|
+| `ats_classic` | ATS Classic | professional | ❌ | ✅ | Clean single-column, Inter font, ATS-optimized |
+| `modern_luxe` | Modern Luxe | professional | ✅ | ✅ | Gold-and-black card-based layout, two-column grid (main + sidebar), Cormorant Garamond + Outfit + DM Mono fonts, timeline experience dots, SVG icons |
+| `executive` | Executive | executive | ✅ | ✅ | Lato font, gold accents, generous whitespace |
+| `creative` | Creative | creative | ✅ | ✅ | Purple gradient hero header, lavender skill pills |
+| `minimal` | Minimal | professional | ✅ | ✅ | Ultra-clean, monospace dates, subdued gray palette |
+| `modern` | Modern Clean | professional | ✅ | ❌ | Legacy teal/navy template — disabled, superseded by `modern_luxe` |
 
 ### 28.3 Plan Gating
 
@@ -5725,7 +5726,7 @@ templates.results.forEach(tmpl => {
 
 // 3. Generate resume with chosen template
 const { data } = await api.post(`/analyses/${analysisId}/generate-resume/`, {
-  template: 'executive',  // slug from step 1 (note: 'modern' is currently disabled)
+  template: 'modern_luxe',  // slug from step 1
   format: 'pdf',
 });
 

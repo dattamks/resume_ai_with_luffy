@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.46.0] — 2026-03-07
+
+### Added — Modern Luxe Resume Template
+
+- **New template: `modern_luxe`** — Elegant gold-and-black card-based layout with a two-column grid (main content + sidebar). Uses three custom font families: Cormorant Garamond (serif display headings), Outfit (sans-serif body), and DM Mono (monospace labels/dates). Features a dark hero header with SVG contact icons, timeline dots for experience entries, and a warm linen background with radial gold gradients.
+- **6 new WOFF2 font files** bundled in `analyzer/static/fonts/`: CormorantGaramond-Light, CormorantGaramond-LightItalic, CormorantGaramond-SemiBold, Outfit-Regular, Outfit-SemiBold, DMMono-Regular.
+- **New HTML template**: `analyzer/templates/resumes/modern_luxe.html` — Jinja2 template with embedded fonts via base64 data URIs.
+- **New DOCX renderer**: `analyzer/services/resume_modern_luxe_docx.py` — Gold-accented DOCX with Georgia display headings and Consolas monospace dates.
+- **Registered** in `template_registry.py` with PDF (Playwright) + DOCX renderers. No ReportLab fallback (Playwright required).
+- **Seed data**: `modern_luxe` added to `seed_templates` command with `is_active: True`, `is_premium: True`.
+
+#### Changed
+- Legacy `modern` template explicitly marked `is_active: False` in seed data. Superseded by `modern_luxe`.
+- Updated FRONTEND_API_GUIDE.md §28.2 with `modern_luxe` template details and `Active` column.
+
+---
+
 ## [0.45.1] — 2026-03-05
 
 ### Template Refinements & Modern Template Disabled

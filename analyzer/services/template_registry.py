@@ -83,6 +83,15 @@ def _get_minimal_pdf() -> RendererFn:
     return render_minimal_pdf
 
 
+def _get_modern_luxe_pdf() -> RendererFn:
+    from .resume_html_renderer import is_playwright_available
+    if is_playwright_available():
+        from .resume_html_pdf_renderers import render_modern_luxe_html_pdf
+        return render_modern_luxe_html_pdf
+    logger.warning('Playwright unavailable — no ReportLab fallback for modern_luxe PDF')
+    raise RuntimeError('modern_luxe PDF requires Playwright (no ReportLab fallback available)')
+
+
 # ── DOCX renderers (python-docx, unchanged) ─────────────────────────────
 
 def _get_ats_classic_docx() -> RendererFn:
@@ -110,15 +119,21 @@ def _get_minimal_docx() -> RendererFn:
     return render_minimal_docx
 
 
+def _get_modern_luxe_docx() -> RendererFn:
+    from .resume_modern_luxe_docx import render_modern_luxe_docx
+    return render_modern_luxe_docx
+
+
 # ── Registry ────────────────────────────────────────────────────────────────
 
 TEMPLATE_RENDERERS: Dict[str, Dict[str, Callable[[], RendererFn]]] = {
-    'ats_classic': {'pdf': _get_ats_classic_pdf, 'docx': _get_ats_classic_docx},
-    # 'modern' disabled — template needs design modification (see backend_todo.md)
-    # 'modern':      {'pdf': _get_modern_pdf,      'docx': _get_modern_docx},
-    'executive':   {'pdf': _get_executive_pdf,    'docx': _get_executive_docx},
-    'creative':    {'pdf': _get_creative_pdf,     'docx': _get_creative_docx},
-    'minimal':     {'pdf': _get_minimal_pdf,      'docx': _get_minimal_docx},
+    'ats_classic':  {'pdf': _get_ats_classic_pdf,  'docx': _get_ats_classic_docx},
+    # 'modern' disabled — legacy template, superseded by modern_luxe
+    # 'modern':     {'pdf': _get_modern_pdf,       'docx': _get_modern_docx},
+    'modern_luxe':  {'pdf': _get_modern_luxe_pdf,  'docx': _get_modern_luxe_docx},
+    'executive':    {'pdf': _get_executive_pdf,    'docx': _get_executive_docx},
+    'creative':     {'pdf': _get_creative_pdf,     'docx': _get_creative_docx},
+    'minimal':      {'pdf': _get_minimal_pdf,      'docx': _get_minimal_docx},
 }
 
 
