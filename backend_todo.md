@@ -1247,6 +1247,78 @@ PDF bytes → upload to R2 → return download URL
 - [ ] **Replace `print()` in migration `0030_*.py`** — Use `self.stdout.write()` (Django migration best practice) or `logging.getLogger(__name__)` instead of bare `print()`.
 - [ ] **Webhook dedup edge case tests** — Test scenarios: replayed webhook with same `event_id` (should skip), concurrent duplicate webhook deliveries (only one should process), `WebhookEvent` cleanup for old entries.
 
+### P2 — Medium (Feature Gap)
+
+- [ ] **Resume Rename / Display Name** — Currently neither user-uploaded nor AI-generated resumes can be renamed. `original_filename` is read-only. Users have no way to give a meaningful label to their resumes (e.g. "Backend Role — Google" vs "resume_v3_final.pdf").
+
+#### Scope
+
+| Component | Change |
+|-----------|--------|
+| **Model** | Add `display_name` (`CharField`, max_length=255, blank=True, default='') to `Resume`. When blank, UI/API falls back to `original_filename`. |
+| **Migration** | New migration adding the field (nullable-safe, no data migration needed). |
+| **Serializer** | New `ResumeRenameSerializer` with only `display_name` (writable). Update `ResumeSerializer` to include `display_name` in read fields. |
+| **View** | New `ResumeUpdateView` (PATCH only) at `/api/v1/resumes/<uuid>/` — updates `display_name`. Owner-only. |
+| **URL** | Add `path('resumes/<uuid:pk>/', ResumeUpdateView.as_view())` to `analyzer/urls.py`. |
+| **GeneratedResume** | Add `display_name` (`CharField`, max_length=255, blank=True, default='') to `GeneratedResume`. |
+| **GeneratedResume serializer** | New `GeneratedResumeRenameSerializer`. Update list serializer to include `display_name`. |
+| **GeneratedResume view** | New `GeneratedResumeUpdateView` (PATCH only) at `/api/v1/generated-resumes/<uuid:pk>/`. |
+| **Docs** | Update `FRONTEND_API_GUIDE.md` with new endpoints. |
+
+#### Effort: **S** (1–3 hours)
+
+#### Test Cases — `analyzer/tests/test_resume_rename.py`
+
+##### Setup & Fixtures
+- Create user with JWT auth, ensure free plan, grant credits.
+- Create 2–3 `Resume` objects via `get_or_create_from_upload()`.
+- Create a `GeneratedResume` linked to the user.
+- Create a second user (for ownership tests).
+
+##### Happy Path Tests
+1. **`test_rename_resume_success`** — PATCH `/api/v1/resumes/<id>/` with `{"display_name": "My Best Resume"}` → 200, response contains updated `display_name`.
+2. **`test_rename_generated_resume_success`** — PATCH `/api/v1/generated-resumes/<id>/` with `{"display_name": "Google SWE v2"}` → 200.
+3. **`test_display_name_appears_in_list`** — After rename, GET `/api/v1/resumes/` includes `display_name` field in each item.
+4. **`test_display_name_appears_in_generated_list`** — After rename, GET `/api/v1/generated-resumes/` includes `display_name` field.
+5. **`test_clear_display_name`** — PATCH with `{"display_name": ""}` → 200, falls back to blank (frontend shows `original_filename`).
+6. **`test_rename_preserves_other_fields`** — After PATCH, `original_filename`, `file_size_bytes`, `is_default`, `uploaded_at` remain unchanged.
+7. **`test_rename_does_not_affect_file`** — After PATCH, `file.url` still works and file on R2/disk is unchanged.
+
+##### Edge Cases
+8. **`test_display_name_max_length`** — PATCH with 255-char string → 200 (accepted).
+9. **`test_display_name_exceeds_max_length`** — PATCH with 256+ char string → 400.
+10. **`test_display_name_with_unicode`** — PATCH with `"日本語の履歴書"` → 200 (Unicode supported).
+11. **`test_display_name_with_special_chars`** — PATCH with `"Resume (v2) — Senior Dev @Google #1"` → 200.
+12. **`test_display_name_whitespace_only`** — PATCH with `"   "` → 400 (reject whitespace-only, or strip to blank — decide on validation).
+13. **`test_display_name_with_leading_trailing_spaces`** — PATCH with `"  My Resume  "` → 200, saved value is stripped to `"My Resume"`.
+14. **`test_display_name_with_html_tags`** — PATCH with `"<script>alert('xss')</script>"` → stored as plain text (no XSS risk since it's CharField, but verify serialized output is escaped).
+15. **`test_rename_same_name_twice`** — Two consecutive PATCHes with different names → both succeed, last value wins.
+16. **`test_two_resumes_same_display_name`** — Two different resumes renamed to the same `display_name` → both 200 (no unique constraint on display_name).
+17. **`test_default_display_name_is_blank`** — Newly uploaded resume has `display_name == ""`.
+
+##### Auth & Permissions
+18. **`test_rename_unauthenticated`** — PATCH without JWT → 401.
+19. **`test_rename_other_users_resume`** — User A tries to PATCH User B's resume → 404 (queryset filtered by `request.user`).
+20. **`test_rename_other_users_generated_resume`** — User A tries to PATCH User B's generated resume → 404.
+21. **`test_rename_nonexistent_resume`** — PATCH with random UUID → 404.
+
+##### HTTP Method Enforcement
+22. **`test_put_not_allowed`** — PUT `/api/v1/resumes/<id>/` → 405 (only PATCH supported).
+23. **`test_delete_via_rename_endpoint`** — DELETE on the PATCH URL → 405 (delete has its own endpoint).
+24. **`test_get_single_resume_not_exposed`** — GET `/api/v1/resumes/<id>/` → 405 (no retrieve view, only list).
+
+##### Payload Validation
+25. **`test_patch_with_no_body`** — PATCH with empty JSON `{}` → 200 (no-op, nothing changes).
+26. **`test_patch_with_extra_fields_ignored`** — PATCH with `{"display_name": "X", "original_filename": "hacked.pdf"}` → `display_name` updated, `original_filename` unchanged (extra fields ignored).
+27. **`test_patch_original_filename_readonly`** — Confirm `original_filename` cannot be mutated via PATCH.
+28. **`test_patch_file_hash_readonly`** — Confirm `file_hash` cannot be mutated via PATCH.
+29. **`test_patch_is_default_readonly`** — Confirm `is_default` cannot be changed via rename endpoint (has its own endpoint).
+
+##### Search Integration
+30. **`test_search_by_display_name`** — After rename, GET `/api/v1/resumes/?search=Google` matches the renamed resume (if search filter includes `display_name`).
+
+---
+
 ### ⚪ DEFERRED
 
 - [ ] **APM (Application Performance Monitoring)** — Prometheus metrics (v0.24.0) cover counters and gauges but lack request tracing, slow query detection, and error grouping. Evaluate Sentry Performance or Grafana Tempo for distributed tracing. Requires: hosted service + `sentry-sdk[django]` integration.

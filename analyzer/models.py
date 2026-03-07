@@ -48,6 +48,10 @@ class Resume(models.Model):
         help_text='SHA-256 hex digest for deduplication',
     )
     original_filename = models.CharField(max_length=255)
+    display_name = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='User-editable label. When blank, UI falls back to original_filename.',
+    )
     file_size_bytes = models.PositiveIntegerField(default=0)
     is_default = models.BooleanField(
         default=False,
@@ -556,6 +560,10 @@ class GeneratedResume(models.Model):
     credits_deducted = models.BooleanField(
         default=False,
         help_text='Whether credits were deducted. Prevents double-deduction on retry.',
+    )
+    display_name = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='User-editable label for this generated resume.',
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

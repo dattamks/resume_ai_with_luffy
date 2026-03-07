@@ -1492,7 +1492,7 @@ Each user has exactly **one** default resume at a time. The default resume is th
 | Param      | Default | Description |
 |------------|---------|-------------|
 | `page`     | 1       | Page number (20 items per page) |
-| `search`   | —       | Search by `original_filename` (case-insensitive contains) |
+| `search`   | —       | Search by `original_filename` or `display_name` (case-insensitive contains) |
 | `ordering` | `-uploaded_at` | Sort field. Prefix with `-` for descending. Options: `uploaded_at`, `original_filename`, `file_size` |
 
 **Response (200):**
@@ -1505,6 +1505,7 @@ Each user has exactly **one** default resume at a time. The default resume is th
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "original_filename": "my_resume_2026.pdf",
+      "display_name": "Backend Role — Google",
       "file_size_bytes": 245760,
       "uploaded_at": "2026-02-23T10:00:00Z",
       "active_analysis_count": 3,
@@ -1526,6 +1527,7 @@ Each user has exactly **one** default resume at a time. The default resume is th
 |------------------------|----------|------------------------------------------------------------|
 | `id`                   | UUID     | Resume unique identifier                                   |
 | `original_filename`    | string   | Original uploaded filename (e.g., `"my_resume.pdf"`)       |
+| `display_name`         | string   | User-editable label. Empty string `""` by default — display `original_filename` when empty. |
 | `file_size_bytes`      | int      | File size in bytes (use for display: `245760` → `"240 KB"`) |
 | `uploaded_at`          | datetime | When first uploaded (ISO 8601)                             |
 | `active_analysis_count`| int      | Number of active (non-soft-deleted) analyses using this resume |
@@ -1615,6 +1617,84 @@ const setDefault = async (resumeId) => {
   // Invalidate dashboard cache on client side
 };
 ```
+
+---
+
+### PATCH `/api/v1/resumes/<uuid:id>/rename/` — Rename Resume
+
+🔒 Requires auth. **Throttled:** `write` scope (60/hour). Update the user-editable `display_name` for a resume. Only the owner can rename their resumes. The `original_filename` remains unchanged.
+
+**Request (JSON):**
+```json
+{
+  "display_name": "Backend Role — Google"
+}
+```
+
+**Response (200):** Full resume object with updated `display_name`.
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "original_filename": "resume_v3_final.pdf",
+  "display_name": "Backend Role — Google",
+  "file_size_bytes": 245760,
+  "uploaded_at": "2026-02-23T10:00:00Z",
+  "active_analysis_count": 3,
+  "file_url": "https://r2.example.com/resumes/resume_v3_final.pdf",
+  "days_since_upload": 12,
+  "last_analyzed_at": "2026-02-25T14:00:00Z",
+  "is_default": true,
+  "processing_status": "done",
+  "parsed_content": null,
+  "career_profile": null
+}
+```
+
+**Notes:**
+- `display_name` defaults to `""` (empty string). When empty, the frontend should display `original_filename` instead.
+- Leading/trailing whitespace is automatically stripped.
+- Max length: 255 characters. Unicode is fully supported.
+- `original_filename`, `file_hash`, `is_default`, and all other fields are read-only via this endpoint.
+- The `display_name` field is also searchable via `GET /api/v1/resumes/?search=Google`.
+
+**Errors:**
+
+| Code | Condition | Response |
+|------|-----------|----------|
+| 400  | `display_name` exceeds 255 chars | `{ "display_name": ["Ensure this field has no more than 255 characters."] }` |
+| 404  | Not found / not owner | `{ "detail": "Not found." }` |
+| 405  | Using PUT/GET/DELETE instead of PATCH | `{ "detail": "Method \"PUT\" not allowed." }` |
+
+**Frontend recommendation:**
+```jsx
+// Inline rename on resume card
+const renameResume = async (resumeId, newName) => {
+  const { data } = await api.patch(`/resumes/${resumeId}/rename/`, {
+    display_name: newName.trim(),
+  });
+  // Update local state with data.display_name
+};
+
+// Display logic: show display_name if set, otherwise original_filename
+const displayLabel = resume.display_name || resume.original_filename;
+```
+
+---
+
+### PATCH `/api/v1/generated-resumes/<uuid:id>/rename/` — Rename Generated Resume
+
+🔒 Requires auth. **Throttled:** `write` scope (60/hour). Update the user-editable `display_name` for a generated resume. Same validation rules as resume rename.
+
+**Request (JSON):**
+```json
+{
+  "display_name": "Google SWE v2"
+}
+```
+
+**Response (200):** Full generated resume object with updated `display_name`.
+
+**Errors:** Same as resume rename (400, 404, 405).
 
 ---
 

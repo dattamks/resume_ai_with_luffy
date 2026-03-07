@@ -24,9 +24,11 @@ from .serializers import (
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
     ResumeSerializer,
+    ResumeRenameSerializer,
     SharedAnalysisSerializer,
     GeneratedResumeSerializer,
     GeneratedResumeCreateSerializer,
+    GeneratedResumeRenameSerializer,
     JobAlertSerializer,
     JobAlertCreateSerializer,
     JobAlertUpdateSerializer,
@@ -487,7 +489,7 @@ class ResumeListView(ListAPIView):
     throttle_classes = [ReadOnlyThrottle]
     serializer_class = ResumeSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['original_filename']
+    search_fields = ['original_filename', 'display_name']
     ordering_fields = ['uploaded_at', 'original_filename', 'file_size_bytes']
     ordering = ['-uploaded_at']
 
@@ -554,6 +556,26 @@ class ResumeDeleteView(APIView):
                 next_resume.set_as_default()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ResumeUpdateView(APIView):
+    """
+    PATCH /api/v1/resumes/<uuid:pk>/
+    Rename a resume (update display_name). Owner-only.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def patch(self, request, pk):
+        try:
+            resume = Resume.objects.get(pk=pk, user=request.user)
+        except Resume.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ResumeRenameSerializer(resume, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(ResumeSerializer(resume).data)
 
 
 class SetDefaultResumeView(APIView):
@@ -1776,6 +1798,26 @@ class GeneratedResumeDeleteView(APIView):
         gen.delete()
         logger.info('Generated resume deleted: id=%s user=%s', pk, request.user.id)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class GeneratedResumeUpdateView(APIView):
+    """
+    PATCH /api/v1/generated-resumes/<uuid:pk>/
+    Rename a generated resume (update display_name). Owner-only.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [WriteThrottle]
+
+    def patch(self, request, pk):
+        try:
+            gen = GeneratedResume.objects.get(pk=pk, user=request.user)
+        except GeneratedResume.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = GeneratedResumeRenameSerializer(gen, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(GeneratedResumeSerializer(gen).data)
 
 
 # ── Bulk delete resumes ──────────────────────────────────────────────────────

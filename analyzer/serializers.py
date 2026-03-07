@@ -14,7 +14,7 @@ class ResumeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
         fields = (
-            'id', 'original_filename', 'file_size_bytes',
+            'id', 'original_filename', 'display_name', 'file_size_bytes',
             'uploaded_at', 'active_analysis_count', 'file_url',
             'days_since_upload', 'last_analyzed_at', 'is_default',
             'parsed_content', 'career_profile', 'processing_status',
@@ -45,6 +45,17 @@ class ResumeSerializer(serializers.ModelSerializer):
             deleted_at__isnull=True,
             status='done',
         ).order_by('-created_at').values_list('created_at', flat=True).first()
+
+
+class ResumeRenameSerializer(serializers.ModelSerializer):
+    """Writable serializer for renaming a resume."""
+
+    class Meta:
+        model = Resume
+        fields = ('display_name',)
+
+    def validate_display_name(self, value):
+        return value.strip()
 
 
 class ScrapeResultSerializer(serializers.ModelSerializer):
@@ -341,7 +352,8 @@ class GeneratedResumeSerializer(serializers.ModelSerializer):
         model = GeneratedResume
         fields = (
             'id', 'analysis', 'resume', 'template', 'format',
-            'status', 'error_message', 'file_url', 'created_at',
+            'status', 'error_message', 'file_url', 'display_name',
+            'created_at',
         )
         read_only_fields = fields
 
@@ -349,6 +361,17 @@ class GeneratedResumeSerializer(serializers.ModelSerializer):
         if obj.file:
             return obj.file.url
         return None
+
+
+class GeneratedResumeRenameSerializer(serializers.ModelSerializer):
+    """Writable serializer for renaming a generated resume."""
+
+    class Meta:
+        model = GeneratedResume
+        fields = ('display_name',)
+
+    def validate_display_name(self, value):
+        return value.strip()
 
 
 class ResumeTemplateSerializer(serializers.ModelSerializer):

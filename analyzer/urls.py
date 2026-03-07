@@ -3,11 +3,12 @@ from django.urls import path
 from .views import (
     AnalyzeResumeView, AnalysisListView, AnalysisDetailView,
     RetryAnalysisView, AnalysisDeleteView, AnalysisPDFExportView,
-    AnalysisStatusView, ResumeListView, ResumeDeleteView, SetDefaultResumeView,
+    AnalysisStatusView, ResumeListView, ResumeDeleteView, ResumeUpdateView,
+    SetDefaultResumeView,
     DashboardStatsView, AnalysisShareView, SharedAnalysisView,
     GenerateResumeView, GeneratedResumeStatusView,
     GeneratedResumeDownloadView, GeneratedResumeListView,
-    GeneratedResumeDeleteView,
+    GeneratedResumeDeleteView, GeneratedResumeUpdateView,
     # New endpoints
     AnalysisCancelView, AnalysisBulkDeleteView, AnalysisExportJSONView,
     AccountDataExportView, ResumeBulkDeleteView, AnalysisCompareView,
@@ -51,6 +52,7 @@ urlpatterns = [
     path('shared/<uuid:token>/', SharedAnalysisView.as_view(), name='shared-analysis'),
     path('resumes/', ResumeListView.as_view(), name='resume-list'),
     path('resumes/<uuid:pk>/', ResumeDeleteView.as_view(), name='resume-delete'),
+    path('resumes/<uuid:pk>/rename/', ResumeUpdateView.as_view(), name='resume-rename'),
     path('resumes/<uuid:pk>/set-default/', SetDefaultResumeView.as_view(), name='resume-set-default'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     # Bulk operations
@@ -62,6 +64,7 @@ urlpatterns = [
     # Generated resumes
     path('generated-resumes/', GeneratedResumeListView.as_view(), name='generated-resume-list'),
     path('generated-resumes/<uuid:pk>/', GeneratedResumeDeleteView.as_view(), name='generated-resume-delete'),
+    path('generated-resumes/<uuid:pk>/rename/', GeneratedResumeUpdateView.as_view(), name='generated-resume-rename'),
     # Bulk operations — resumes
     path('resumes/bulk-delete/', ResumeBulkDeleteView.as_view(), name='resume-bulk-delete'),
     # Share summary (lightweight public endpoint)
