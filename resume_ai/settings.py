@@ -336,6 +336,10 @@ if not DEBUG:
 OPENROUTER_API_KEY = config('OPENROUTER_API_KEY', default='')
 OPENROUTER_MODEL = config('OPENROUTER_MODEL', default='anthropic/claude-3.5-haiku')
 OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')
+# During tests, use a dummy key so the analyzer/provider can be constructed.
+# Tests mock the actual LLM call, so no real request is ever made.
+if TESTING and not OPENROUTER_API_KEY:
+    OPENROUTER_API_KEY = 'test-openrouter-key'
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
 MAX_PDF_PAGES = config('MAX_PDF_PAGES', default=50, cast=int)
