@@ -225,6 +225,25 @@ class PDFExtractorTests(TestCase):
             PDFExtractor().extract(_BigField())
 
 
+class JobAlertPreferencesValidationTests(TestCase):
+    def _validate(self, prefs):
+        from analyzer.serializers import JobAlertUpdateSerializer
+        s = JobAlertUpdateSerializer(data={'preferences': prefs, 'frequency': 'daily'})
+        return s.is_valid()
+
+    def test_rejects_bad_scalar_types(self):
+        self.assertFalse(self._validate({'remote_ok': 'yes'}))       # not bool
+        self.assertFalse(self._validate({'salary_min': -5}))          # negative
+        self.assertFalse(self._validate({'salary_min': 'lots'}))      # not number
+        self.assertFalse(self._validate({'excluded_companies': [1, 2]}))  # not strings
+
+    def test_accepts_valid_prefs(self):
+        self.assertTrue(self._validate({
+            'remote_ok': True, 'salary_min': 100000, 'location': 'Remote',
+            'excluded_companies': ['Acme'], 'priority_companies': ['Globex'],
+        }))
+
+
 class CostEstimationTests(TestCase):
     def test_gpt4o_not_priced_as_mini(self):
         from analyzer.services.analyzer import _estimate_cost, _MODEL_PRICING

@@ -119,6 +119,17 @@ class SubscriptionChargedWebhookTests(PaymentTestMixin, TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(self._plan_credits(), 0)
 
+    def test_charge_after_cancel_does_not_reactivate_or_grant(self):
+        self.sub.status = RazorpaySubscription.STATUS_CANCELLED
+        self.sub.save(update_fields=['status'])
+        resp = self._post(self._charged_payload(payment_id='pay_late', paid_count=2),
+                          event_id='evt_late')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data.get('status'), 'ignored')
+        self.assertEqual(self._plan_credits(), 0)
+        self.sub.refresh_from_db()
+        self.assertEqual(self.sub.status, RazorpaySubscription.STATUS_CANCELLED)
+
 
 class RefundIdempotencyTests(PaymentTestMixin, TestCase):
     def test_double_refund_credits_once(self):

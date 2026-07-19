@@ -24,9 +24,16 @@ if not DEBUG and SECRET_KEY == 'django-insecure-change-me-in-production':
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
 
-# Railway's health-checker sends Host: healthcheck.railway.app
+# Railway's health-checker sends Host: healthcheck.railway.app.
+# Prefer the specific service domain (RAILWAY_PUBLIC_DOMAIN, injected by
+# Railway) over a blanket '*.railway.app', which would accept any Railway
+# subdomain and widen Host-header / cache-poisoning surface.
 if not DEBUG:
-    ALLOWED_HOSTS += ['.railway.app']
+    _railway_domain = config('RAILWAY_PUBLIC_DOMAIN', default='')
+    if _railway_domain:
+        ALLOWED_HOSTS += [_railway_domain, 'healthcheck.railway.app']
+    else:
+        ALLOWED_HOSTS += ['.railway.app']
 
 INSTALLED_APPS = [
     'django_prometheus',

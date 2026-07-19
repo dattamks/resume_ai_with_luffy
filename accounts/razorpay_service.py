@@ -770,6 +770,20 @@ def _handle_subscription_charged(payload: dict) -> dict:
         except RazorpaySubscription.DoesNotExist:
             return {'status': 'skipped', 'reason': 'subscription not found'}
 
+        # If the user has cancelled (cancel_at_cycle_end leaves the sub active on
+        # Razorpay's side until the cycle ends and can still fire one more
+        # charge), do NOT resurrect the local subscription or grant credits —
+        # that would contradict the cancelled state shown to the user.
+        if subscription.status in (
+            RazorpaySubscription.STATUS_CANCELLED,
+            getattr(RazorpaySubscription, 'STATUS_COMPLETED', 'completed'),
+        ):
+            logger.info(
+                'subscription.charged ignored for cancelled/completed sub: sub_id=%s user=%s',
+                sub_id, user.username,
+            )
+            return {'status': 'ignored', 'reason': 'subscription cancelled', 'subscription_id': sub_id}
+
         # Extend billing cycle
         subscription.current_start = timezone.now()
         subscription.current_end = timezone.now() + timezone.timedelta(days=30)

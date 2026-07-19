@@ -245,7 +245,28 @@ def run_analysis_task(self, analysis_id, user_id):
 
     except Exception as exc:
         logger.exception('Unexpected error during analysis (user=%s)', user_id)
-        # Prometheus: record failure
+
+        # Decide retry FIRST, so we don't flap the status to 'failed' (and push
+        # that to the polling cache) on an attempt that's about to be retried.
+        # Keep this in sync with the task's autoretry_for tuple, and also treat
+        # the transport-level errors raised by the OpenAI/httpx client as
+        # retriable (these are NOT subclasses of OSError, so the previous
+        # isinstance check silently dropped them into a non-retried failure).
+        retriable_types = [ConnectionError, OSError, TimeoutError]
+        try:
+            from openai import APIConnectionError, APITimeoutError, InternalServerError
+            retriable_types += [APIConnectionError, APITimeoutError, InternalServerError]
+        except Exception:
+            pass
+        is_retriable = isinstance(exc, tuple(retriable_types))
+        will_retry = is_retriable and self.request.retries < self.max_retries
+
+        if will_retry:
+            # Leave status as 'processing'; the task will be retried. Credits
+            # stay deducted until final success or final failure.
+            raise
+
+        # Prometheus: record final failure
         try:
             from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
             ANALYSIS_DURATION.labels(status='failed').observe(_time.monotonic() - _task_start)
@@ -263,26 +284,8 @@ def run_analysis_task(self, analysis_id, user_id):
         except Exception:
             pass
 
-        # Keep this in sync with the task's autoretry_for tuple, and also treat
-        # the transport-level errors raised by the OpenAI/httpx client as
-        # retriable (these are NOT subclasses of OSError, so the previous
-        # isinstance check silently dropped them into a non-retried failure).
-        retriable_types = [ConnectionError, OSError, TimeoutError]
-        try:
-            from openai import APIConnectionError, APITimeoutError, InternalServerError
-            retriable_types += [APIConnectionError, APITimeoutError, InternalServerError]
-        except Exception:
-            pass
-        is_retriable = isinstance(exc, tuple(retriable_types))
-        will_retry = is_retriable and self.request.retries < self.max_retries
-
-        if will_retry:
-            # Don't refund — the task will be retried and may succeed.
-            # Credits stay deducted until final success or final failure.
-            raise
-        else:
-            # Final failure — refund credits
-            _refund_analysis_credits(analysis)
+        # Final failure — refund credits
+        _refund_analysis_credits(analysis)
 
 
 def _refund_analysis_credits(analysis):
@@ -608,6 +611,17 @@ def flush_expired_tokens():
     logger.info('Flushing expired JWT tokens...')
     call_command('flushexpiredtokens')
     logger.info('Expired JWT tokens flushed')
+
+    # Prune old webhook-dedup rows (they only guard against replay for the
+    # short window Razorpay retries; keeping them forever grows unbounded).
+    try:
+        from accounts.models import WebhookEvent
+        cutoff = timezone.now() - timezone.timedelta(days=30)
+        deleted, _ = WebhookEvent.objects.filter(created_at__lt=cutoff).delete()
+        if deleted:
+            logger.info('Pruned %d old WebhookEvent row(s)', deleted)
+    except Exception:
+        logger.warning('WebhookEvent prune failed', exc_info=True)
 
 
 # ── Resume generation task ───────────────────────────────────────────────

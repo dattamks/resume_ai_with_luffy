@@ -20,6 +20,18 @@ from datetime import timedelta
 from django.core.cache import cache
 from django.db.models import Avg, Case, Count, F, FloatField, IntegerField, Q, Value, When
 from django.db.models.expressions import ExpressionWrapper
+from django.db.models.functions import Coalesce
+
+
+def _salary_midpoint_expr():
+    """Average of the salary range midpoint (falls back to the lower bound when
+    no upper bound is present) — more representative than averaging min only."""
+    return Avg(
+        ExpressionWrapper(
+            (F('salary_min_usd') + Coalesce('salary_max_usd', F('salary_min_usd'))) / Value(2.0),
+            output_field=FloatField(),
+        )
+    )
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -678,10 +690,10 @@ class FeedInsightsView(APIView):
         # ── Currency ────────────────────────────────────────────────────
         salary_currency = get_currency_for_country(country if not is_global else '')
 
-        # ── Salary: role-level average ──────────────────────────────────
+        # ── Salary: role-level average (range midpoint) ──────────────────
         avg_salary_usd = agg_qs.filter(
             salary_min_usd__isnull=False,
-        ).aggregate(avg=Avg('salary_min_usd'))['avg']
+        ).aggregate(avg=_salary_midpoint_expr())['avg']
         avg_salary_role = convert_usd(avg_salary_usd, salary_currency)
 
         # ── Salary: by seniority level ──────────────────────────────────
@@ -1264,11 +1276,11 @@ class DashboardMarketInsightsView(APIView):
         )
         top_skill = trending[0]['skill'] if trending else None
 
-        # Currency-converted role-level average salary
+        # Currency-converted role-level average salary (range midpoint)
         salary_currency = get_currency_for_country(country if not is_global else '')
         avg_usd = agg_qs.filter(
             salary_min_usd__isnull=False,
-        ).aggregate(avg=Avg('salary_min_usd'))['avg']
+        ).aggregate(avg=_salary_midpoint_expr())['avg']
         avg_salary_role = convert_usd(avg_usd, salary_currency)
 
         data = {

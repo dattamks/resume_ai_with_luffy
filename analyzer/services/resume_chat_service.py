@@ -2222,15 +2222,6 @@ def _build_welcome_message(source: str, resume_data: dict, user) -> str:
     )
     return '\n'.join(lines)
 
-    ResumeChatMessage.objects.create(
-        chat=chat,
-        role=ResumeChatMessage.ROLE_ASSISTANT,
-        content=welcome,
-        step='contact',
-    )
-
-    return chat
-
 
 def process_text_message(chat: ResumeChat, user_text: str) -> dict:
     """

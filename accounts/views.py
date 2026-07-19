@@ -8,10 +8,34 @@ from datetime import datetime
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
+
+
+def get_trusted_client_ip(request):
+    """
+    Return the client IP, trusting only the proxy hops we actually run.
+
+    Mirrors DRF's NUM_PROXIES logic: with N trusted proxies, the client IP is
+    the Nth-from-last entry of X-Forwarded-For (the value the closest trusted
+    proxy reported), NOT the left-most entry, which is fully client-controlled
+    and therefore spoofable.
+    """
+    from django.conf import settings as _settings
+    num_proxies = _settings.REST_FRAMEWORK.get('NUM_PROXIES', 1)
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    remote = request.META.get('REMOTE_ADDR')
+    if num_proxies == 0 or not xff:
+        return remote
+    addrs = [a.strip() for a in xff.split(',') if a.strip()]
+    if not addrs:
+        return remote
+    if num_proxies is None:
+        return addrs[0]
+    return addrs[-min(num_proxies, len(addrs))]
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -122,11 +146,8 @@ class RegisterView(APIView):
 
     @staticmethod
     def _get_client_ip(request):
-        """Extract client IP, respecting X-Forwarded-For behind reverse proxies."""
-        xff = request.META.get('HTTP_X_FORWARDED_FOR')
-        if xff:
-            return xff.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Extract the client IP, trusting only our real proxy hops (NUM_PROXIES)."""
+        return get_trusted_client_ip(request)
 
 
 class VerifyEmailView(APIView):
@@ -636,6 +657,9 @@ class PlanSubscribeView(APIView):
 
 def _sign_temp_token(payload: dict) -> str:
     """Create an HMAC-signed, base64-encoded temporary token."""
+    import uuid as _uuid
+    # Give every token a unique id so it can be enforced single-use on consume.
+    payload = {**payload, 'jti': payload.get('jti') or _uuid.uuid4().hex}
     raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
     sig = hmac.new(
         settings.SECRET_KEY.encode(), raw.encode(), hashlib.sha256,
@@ -901,6 +925,17 @@ class GoogleCompleteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Enforce single-use: mark this token's jti as consumed so a captured
+        # token can't be replayed within its TTL. cache.add is atomic.
+        jti = payload.get('jti')
+        if jti:
+            ttl = getattr(settings, 'GOOGLE_OAUTH2_TEMP_TOKEN_TTL', 600)
+            if not cache.add(f'google_temp_jti:{jti}', 1, ttl):
+                return Response(
+                    {'detail': 'This registration link has already been used. Please sign in with Google again.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         email = payload['email']
         google_sub = payload.get('google_sub', '')
         given_name = payload.get('given_name', '')
@@ -989,11 +1024,8 @@ class GoogleCompleteView(APIView):
 
     @staticmethod
     def _get_client_ip(request):
-        """Extract client IP, respecting X-Forwarded-For behind reverse proxies."""
-        xff = request.META.get('HTTP_X_FORWARDED_FOR')
-        if xff:
-            return xff.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Extract the client IP, trusting only our real proxy hops (NUM_PROXIES)."""
+        return get_trusted_client_ip(request)
 
 
 # ── Wallet CSV export ─────────────────────────────────────────────────────────

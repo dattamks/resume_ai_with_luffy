@@ -575,8 +575,22 @@ class JobAlertCreateSerializer(serializers.ModelSerializer):
                 f'Allowed: {", ".join(sorted(allowed))}'
             )
         for list_key in ('excluded_companies', 'priority_companies'):
-            if list_key in value and not isinstance(value[list_key], list):
-                raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+            if list_key in value:
+                if not isinstance(value[list_key], list):
+                    raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+                if not all(isinstance(x, str) for x in value[list_key]):
+                    raise serializers.ValidationError(f'{list_key} must contain only strings.')
+        # Scalar-typed keys.
+        if 'remote_ok' in value and not isinstance(value['remote_ok'], bool):
+            raise serializers.ValidationError('remote_ok must be a boolean.')
+        if 'location' in value and not isinstance(value['location'], str):
+            raise serializers.ValidationError('location must be a string.')
+        if 'salary_min' in value and (
+            isinstance(value['salary_min'], bool)
+            or not isinstance(value['salary_min'], (int, float))
+            or value['salary_min'] < 0
+        ):
+            raise serializers.ValidationError('salary_min must be a non-negative number.')
         return value
 
 
@@ -597,8 +611,22 @@ class JobAlertUpdateSerializer(serializers.ModelSerializer):
                 f'Allowed: {", ".join(sorted(allowed))}'
             )
         for list_key in ('excluded_companies', 'priority_companies'):
-            if list_key in value and not isinstance(value[list_key], list):
-                raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+            if list_key in value:
+                if not isinstance(value[list_key], list):
+                    raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+                if not all(isinstance(x, str) for x in value[list_key]):
+                    raise serializers.ValidationError(f'{list_key} must contain only strings.')
+        # Scalar-typed keys.
+        if 'remote_ok' in value and not isinstance(value['remote_ok'], bool):
+            raise serializers.ValidationError('remote_ok must be a boolean.')
+        if 'location' in value and not isinstance(value['location'], str):
+            raise serializers.ValidationError('location must be a string.')
+        if 'salary_min' in value and (
+            isinstance(value['salary_min'], bool)
+            or not isinstance(value['salary_min'], (int, float))
+            or value['salary_min'] < 0
+        ):
+            raise serializers.ValidationError('salary_min must be a non-negative number.')
         return value
 
 

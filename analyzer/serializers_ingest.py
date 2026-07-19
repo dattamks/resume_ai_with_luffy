@@ -263,24 +263,11 @@ class DiscoveredJobIngestSerializer(serializers.ModelSerializer):
         return job
 
 
-class DiscoveredJobBulkIngestSerializer(serializers.Serializer):
-    """
-    Accept a list of jobs in a single API call for efficient bulk ingestion.
-    """
-    jobs = DiscoveredJobIngestSerializer(many=True)
-
-    def create(self, validated_data):
-        results = []
-        for job_data in validated_data['jobs']:
-            serializer = DiscoveredJobIngestSerializer(data={})
-            # Use validated data directly since parent already validated
-            job, _created = DiscoveredJob.objects.update_or_create(
-                source=job_data['source'],
-                external_id=job_data['external_id'],
-                defaults=job_data,
-            )
-            results.append({'id': str(job.id), 'external_id': job.external_id, 'created': _created})
-        return results
+# NOTE: bulk job ingest is handled by JobBulkIngestView, which loops the
+# single-item DiscoveredJobIngestSerializer (so entity-linking validation and
+# the _was_created/_needs_reembed flags apply). The previous
+# DiscoveredJobBulkIngestSerializer here was dead, misleading code and has been
+# removed.
 
 
 # ── CrawlSource ──────────────────────────────────────────────────────────────
