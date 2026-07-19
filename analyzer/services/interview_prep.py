@@ -43,9 +43,13 @@ def generate_interview_prep_from_db(analysis) -> dict:
     # Identify weak sections (score < 70)
     weak_sections = []
     for section in section_feedback:
+        if not isinstance(section, dict):
+            continue
         score = section.get('score')
         if score is not None and isinstance(score, (int, float)) and score < 70:
-            weak_sections.append(section.get('section', '').lower())
+            # Schema uses 'section_name'; fall back to legacy 'section'.
+            name = section.get('section_name') or section.get('section') or ''
+            weak_sections.append(name.lower())
 
     # Build query filters
     active_qs = InterviewQuestion.objects.filter(is_active=True)
@@ -241,7 +245,9 @@ def build_interview_prep_prompt(analysis) -> str:
 
     feedback_lines = []
     for section in section_feedback:
-        name = section.get('section', 'Unknown')
+        if not isinstance(section, dict):
+            continue
+        name = section.get('section_name') or section.get('section') or 'Unknown'
         score = section.get('score', 'N/A')
         fb_list = section.get('feedback', [])
         feedback_lines.append(f"- {name} (Score: {score}): {'; '.join(fb_list[:3]) if isinstance(fb_list, list) else str(fb_list)}")

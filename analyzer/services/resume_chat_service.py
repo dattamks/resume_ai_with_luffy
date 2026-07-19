@@ -1619,14 +1619,22 @@ Rules:
     if not isinstance(data, list):
         data = [data] if isinstance(data, dict) else []
 
-    # Normalize entries
+    # Normalize entries — the model may return bare strings instead of objects;
+    # coerce those into a minimal dict rather than crashing on str.setdefault.
+    normalized = []
     for entry in data:
+        if isinstance(entry, str):
+            entry = {'title': entry}
+        elif not isinstance(entry, dict):
+            continue
         entry.setdefault('title', '')
         entry.setdefault('company', '')
         entry.setdefault('location', '')
         entry.setdefault('start_date', '')
         entry.setdefault('end_date', '')
         entry.setdefault('bullets', [])
+        normalized.append(entry)
+    data = normalized
 
     # Save LLM response record
     usage = getattr(response, 'usage', None)
@@ -2035,6 +2043,14 @@ def _merge_data_updates(resume_data: dict, updates: dict) -> dict:
       non-empty, otherwise keep existing. This avoids duplicating entries
       when the LLM echoes back the same data.
     """
+    # Sections whose entries MUST be objects — renderers iterate these and call
+    # entry.get(...). If the LLM returns a list of bare strings, drop the bad
+    # entries so a downstream render task can't crash on str.get.
+    _LIST_OF_OBJECT_SECTIONS = {
+        'experience', 'education', 'projects', 'certifications',
+        'awards', 'publications', 'volunteering',
+    }
+
     result = copy.deepcopy(resume_data)
 
     for section, value in updates.items():
@@ -2048,8 +2064,18 @@ def _merge_data_updates(resume_data: dict, updates: dict) -> dict:
                 if v not in (None, '', []):
                     result[section][k] = v
         elif isinstance(value, list) and value:
-            # For list sections, LLM returns the full list — replace
-            result[section] = value
+            # For list sections, LLM returns the full list — replace.
+            if section in _LIST_OF_OBJECT_SECTIONS:
+                cleaned = [item for item in value if isinstance(item, dict)]
+                if len(cleaned) != len(value):
+                    logger.warning(
+                        'Dropped %d non-object entr(ies) from data_updates["%s"]',
+                        len(value) - len(cleaned), section,
+                    )
+                if cleaned:
+                    result[section] = cleaned
+            else:
+                result[section] = value
         elif isinstance(value, str) and value:
             result[section] = value
 

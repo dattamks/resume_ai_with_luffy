@@ -255,7 +255,8 @@ def validate_resume_output(data: dict) -> dict:
 
     # Contact validation
     contact = data['contact']
-    if 'name' not in contact or not contact['name'].strip():
+    name = contact.get('name') if isinstance(contact, dict) else None
+    if not isinstance(name, str) or not name.strip():
         raise ValueError('Resume output "contact.name" is required and cannot be empty')
 
     # Fill optional contact fields

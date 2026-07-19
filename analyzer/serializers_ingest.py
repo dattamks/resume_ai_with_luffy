@@ -232,16 +232,34 @@ class DiscoveredJobIngestSerializer(serializers.ModelSerializer):
                 pass  # Non-fatal — job is still saved without entity link
         return attrs
 
+    # Fields whose change should invalidate the stored embedding.
+    _EMBED_SOURCE_FIELDS = ('title', 'company', 'description_snippet', 'skills')
+
     def create(self, validated_data):
         source = validated_data['source']
         external_id = validated_data['external_id']
+
+        # Detect whether the embedding-relevant content changed on an update so
+        # the view can re-embed (a re-crawl with an edited title/description
+        # otherwise keeps a stale vector and drifts from the live content).
+        existing = DiscoveredJob.objects.filter(
+            source=source, external_id=external_id,
+        ).first()
+        content_changed = False
+        if existing is not None:
+            for f in self._EMBED_SOURCE_FIELDS:
+                if getattr(existing, f, None) != validated_data.get(f, getattr(existing, f, None)):
+                    content_changed = True
+                    break
+
         job, _created = DiscoveredJob.objects.update_or_create(
             source=source,
             external_id=external_id,
             defaults=validated_data,
         )
-        # Expose creation flag so the view can trigger embedding/matching
+        # Expose flags so the view can trigger embedding/matching.
         job._was_created = _created
+        job._needs_reembed = (not _created) and content_changed
         return job
 
 
@@ -382,35 +400,41 @@ class NewsSnippetIngestSerializer(serializers.Serializer):
     is_active = serializers.BooleanField(required=False, default=True)
 
     def create(self, validated_data):
+        from django.db import transaction, IntegrityError
+
         snippet_uuid = validated_data.pop('uuid')
         source_url = validated_data.get('source_url')
 
-        # Try upsert by uuid first, then fallback to source_url
-        snippet, _created = NewsSnippet.objects.update_or_create(
-            uuid=snippet_uuid,
-            defaults=validated_data,
-        )
-        # If a different record already has this source_url, merge
-        if not _created:
-            return snippet
+        with transaction.atomic():
+            # 1. Same uuid already present → update in place.
+            existing = NewsSnippet.objects.filter(uuid=snippet_uuid).first()
+            if existing:
+                for field, value in validated_data.items():
+                    setattr(existing, field, value)
+                existing.save()
+                return existing
 
-        # Check if source_url collision with a different uuid
-        existing_by_url = (
-            NewsSnippet.objects
-            .filter(source_url=source_url)
-            .exclude(uuid=snippet_uuid)
-            .first()
-        )
-        if existing_by_url:
-            # Update the existing record's uuid to the new one and delete the dup
-            for field, value in validated_data.items():
-                setattr(existing_by_url, field, value)
-            existing_by_url.uuid = snippet_uuid
-            existing_by_url.save()
-            snippet.delete()
-            return existing_by_url
+            # 2. New uuid, but the same source_url already exists (re-crawl under
+            #    a fresh uuid). Update that record instead of inserting a row that
+            #    would violate the unique source_url constraint (previously this
+            #    raised IntegrityError before the merge logic could run).
+            dup = NewsSnippet.objects.filter(source_url=source_url).first()
+            if dup:
+                for field, value in validated_data.items():
+                    setattr(dup, field, value)
+                dup.uuid = snippet_uuid
+                dup.save()
+                return dup
 
-        return snippet
+            # 3. Genuinely new article.
+            try:
+                return NewsSnippet.objects.create(uuid=snippet_uuid, **validated_data)
+            except IntegrityError:
+                # Lost a race with a concurrent ingest of the same source_url.
+                dup = NewsSnippet.objects.filter(source_url=source_url).first()
+                if dup:
+                    return dup
+                raise
 
 
 class NewsSnippetReadSerializer(serializers.ModelSerializer):

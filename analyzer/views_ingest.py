@@ -9,6 +9,7 @@ Settings required:
     CRAWLER_API_KEY  — shared secret (set in both services' env vars)
 """
 
+import hmac
 import logging
 
 from django.conf import settings
@@ -51,7 +52,8 @@ class IsCrawlerAuthenticated(BasePermission):
             logger.warning('CRAWLER_API_KEY is not set — all ingest requests denied.')
             return False
         provided = request.headers.get('X-Crawler-Key', '')
-        return provided == expected
+        # Constant-time comparison to avoid leaking the key via timing.
+        return bool(provided) and hmac.compare_digest(provided, expected)
 
 
 # ── Company Endpoints ────────────────────────────────────────────────────────
@@ -234,15 +236,14 @@ class JobIngestView(APIView):
             'Job ingested: %s @ %s (id=%s, source=%s, external_id=%s)',
             job.title, job.company, job.id, job.source, job.external_id,
         )
-        # Queue for debounced batch processing
-        if getattr(job, '_was_created', False):
+        # Queue for debounced batch processing (new jobs + content-changed re-crawls)
+        if getattr(job, '_was_created', False) or getattr(job, '_needs_reembed', False):
             from django.core.cache import cache
-            from .tasks import process_ingested_jobs_task
+            from .tasks import process_ingested_jobs_task, enqueue_pending_job_id
 
-            # Accumulate job IDs in Redis list; a debounced task drains it
-            queue_key = 'ingest:pending_job_ids'
+            # Atomically accumulate job IDs; a debounced task drains them.
             lock_key = 'ingest:pending_job_ids:scheduled'
-            cache.set(queue_key, cache.get(queue_key, '') + str(job.id) + ',', timeout=120)
+            enqueue_pending_job_id(job.id)
             # Schedule the processing task only once (10s countdown debounce)
             if cache.add(lock_key, 1, timeout=15):
                 process_ingested_jobs_task.apply_async(
@@ -298,12 +299,14 @@ class JobBulkIngestView(APIView):
                     'external_id': job.external_id,
                     'title': job.title,
                 })
-                if getattr(job, '_was_created', False):
+                # Embed newly created jobs AND updated jobs whose embedding-
+                # relevant content changed (so re-crawls don't keep stale vectors).
+                if getattr(job, '_was_created', False) or getattr(job, '_needs_reembed', False):
                     new_job_ids.append(str(job.id))
             else:
                 errors.append({'index': i, 'errors': serializer.errors})
 
-        logger.info('Bulk job ingest: %d success, %d errors, %d new', len(results), len(errors), len(new_job_ids))
+        logger.info('Bulk job ingest: %d success, %d errors, %d to (re)embed', len(results), len(errors), len(new_job_ids))
 
         # Trigger embedding + matching pipeline for newly created jobs
         if new_job_ids:

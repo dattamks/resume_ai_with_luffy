@@ -29,11 +29,15 @@ def _estimate_cost(model: str, prompt_tokens: int | None, completion_tokens: int
         return None
     pricing = _MODEL_PRICING.get(model)
     if not pricing:
-        # Try partial match (model name without provider prefix)
-        for key, val in _MODEL_PRICING.items():
-            if model in key or key in model:
-                pricing = val
-                break
+        # Partial match: choose the LONGEST (most specific) key that the model
+        # name starts with. Using a plain substring test mis-priced e.g.
+        # 'openai/gpt-4o' against 'openai/gpt-4o-mini' (mini rates).
+        candidates = [
+            (key, val) for key, val in _MODEL_PRICING.items()
+            if model.startswith(key) or key.startswith(model)
+        ]
+        if candidates:
+            key, pricing = max(candidates, key=lambda kv: len(kv[0]))
     if not pricing:
         return None
     input_cost = Decimal(str(prompt_tokens)) * Decimal(str(pricing['input'])) / Decimal('1000000')

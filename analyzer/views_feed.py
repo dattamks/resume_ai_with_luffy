@@ -197,15 +197,21 @@ def _get_role_scoped_qs(
       Layer 1: LLM Role Map — explicit title matching via RoleFamily
       Layer 2: Embedding proximity — catches synonyms the map missed
 
-    Returns (filtered_qs, role_info_dict, is_scoped_bool).
-    If no role data is available, returns the original queryset unfiltered.
+    Returns (filtered_qs, role_info_dict, is_scoped_bool, role_qs).
+    ``role_qs`` is the narrow role-only queryset used for skill aggregation.
+    If no role data is available, returns the original queryset unfiltered
+    (for both the listing and the skill-aggregation queryset).
 
     Auto-broadens to unfiltered results if the scoped query yields fewer
     than ``_ROLE_SCOPED_MIN_RESULTS`` results.
     """
     user_titles = _get_user_titles(user)
     if not user_titles:
-        return base_qs, {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}, False
+        # No role data — return the unfiltered queryset for both the listing and
+        # the skill-aggregation queryset. NOTE: all callers unpack FOUR values
+        # (qs, role_info, is_scoped, role_qs); this path must return four too.
+        empty_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
+        return base_qs, empty_info, False, base_qs
 
     # ── Layer 1: LLM Role Map ────────────────────────────────────────
     role_family = RoleFamily.get_or_none(user_titles)
@@ -408,7 +414,11 @@ class FeedJobsView(APIView):
             page_size = 20
 
         offset = (page - 1) * page_size
-        days = int(request.query_params.get('days', 30))
+        try:
+            # Clamp to a sane window; guard against non-int / negative / huge.
+            days = min(max(int(request.query_params.get('days', 30)), 1), 365)
+        except (ValueError, TypeError):
+            days = 30
 
         # Base queryset — recent jobs
         since = timezone.now() - timedelta(days=days)

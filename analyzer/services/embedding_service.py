@@ -66,7 +66,20 @@ def compute_embedding(text: str) -> list[float]:
         if not response.data or not response.data[0].embedding:
             raise ValueError('Embedding API returned empty data.')
 
-        return response.data[0].embedding
+        vector = response.data[0].embedding
+
+        # Guard against a model/config mismatch: the DB columns are fixed at
+        # _DEFAULT_DIMENSIONS, so a wrong-sized vector would fail obscurely at
+        # INSERT time. Fail early with an actionable message instead.
+        expected_dims = getattr(settings, 'EMBEDDING_DIMENSIONS', _DEFAULT_DIMENSIONS)
+        if len(vector) != expected_dims:
+            raise ValueError(
+                f'Embedding model "{model}" returned {len(vector)} dimensions, '
+                f'but the database expects {expected_dims}. Check EMBEDDING_MODEL / '
+                f'EMBEDDING_DIMENSIONS configuration.'
+            )
+
+        return vector
 
     except Exception as exc:
         duration = time.monotonic() - start

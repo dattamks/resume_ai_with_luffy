@@ -74,7 +74,9 @@ class AnalyzeResumeView(APIView):
         if plan and plan.analyses_per_month > 0:
             from django.utils import timezone as tz
             month_start = tz.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            month_count = ResumeAnalysis.objects.filter(
+            # Count against all_objects (incl. soft-deleted) so a user cannot
+            # reset their monthly quota by deleting past analyses.
+            month_count = ResumeAnalysis.all_objects.filter(
                 user=request.user, created_at__gte=month_start,
             ).exclude(status=ResumeAnalysis.STATUS_FAILED).count()
             if month_count >= plan.analyses_per_month:
@@ -1241,13 +1243,24 @@ class GeneratedResumeListView(APIView):
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
 
 
-class JobAlertListCreateView(APIView):
+class _MethodThrottleMixin:
+    """
+    Apply WriteThrottle to mutating methods (POST/PUT/PATCH/DELETE) and
+    ReadOnlyThrottle to safe methods, so a single view with both read and
+    write handlers doesn't run mutations under the permissive read limit.
+    """
+    def get_throttles(self):
+        if self.request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            return [WriteThrottle()]
+        return [ReadOnlyThrottle()]
+
+
+class JobAlertListCreateView(_MethodThrottleMixin, APIView):
     """
     GET  /api/v1/job-alerts/  — List the authenticated user's job alerts.
     POST /api/v1/job-alerts/  — Create a new job alert (Pro plan required).
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
 
     def get(self, request):
         from rest_framework.pagination import PageNumberPagination
@@ -1312,14 +1325,13 @@ class JobAlertListCreateView(APIView):
         )
 
 
-class JobAlertDetailView(APIView):
+class JobAlertDetailView(_MethodThrottleMixin, APIView):
     """
     GET    /api/v1/job-alerts/<id>/  — Alert detail + latest run stats.
     PUT    /api/v1/job-alerts/<id>/  — Update frequency/preferences/is_active.
     DELETE /api/v1/job-alerts/<id>/  — Deactivate the alert.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
 
     def _get_alert(self, request, pk):
         try:
@@ -1402,7 +1414,7 @@ class JobAlertMatchFeedbackView(APIView):
     Update user feedback on a matched job (relevant/irrelevant/applied/dismissed).
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ReadOnlyThrottle]
+    throttle_classes = [WriteThrottle]
 
     def post(self, request, pk, match_pk):
         try:
@@ -1543,41 +1555,50 @@ class AnalysisCancelView(APIView):
     throttle_classes = [WriteThrottle]
 
     def post(self, request, pk):
-        try:
-            analysis = ResumeAnalysis.objects.get(pk=pk, user=request.user)
-        except ResumeAnalysis.DoesNotExist:
-            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        from django.db import transaction
 
-        if analysis.status != ResumeAnalysis.STATUS_PROCESSING:
-            return Response(
-                {'detail': 'Only processing analyses can be cancelled.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Revoke the Celery task if we have the ID
-        if analysis.celery_task_id:
+        # Lock the row and re-check status inside the transaction so a task that
+        # completes concurrently can't leave the user with both a done result
+        # and a refund. The refund itself is idempotent per analysis id.
+        with transaction.atomic():
             try:
-                from resume_ai.celery import app as celery_app
-                celery_app.control.revoke(analysis.celery_task_id, terminate=True)
-                logger.info('Revoked Celery task %s for analysis %s', analysis.celery_task_id, pk)
-            except Exception:
-                logger.warning('Failed to revoke Celery task %s', analysis.celery_task_id)
+                analysis = ResumeAnalysis.objects.select_for_update().get(
+                    pk=pk, user=request.user,
+                )
+            except ResumeAnalysis.DoesNotExist:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Mark as failed
-        analysis.status = ResumeAnalysis.STATUS_FAILED
-        analysis.pipeline_step = ResumeAnalysis.STEP_FAILED
-        analysis.error_message = 'Cancelled by user.'
-        analysis.save(update_fields=['status', 'pipeline_step', 'error_message'])
+            if analysis.status != ResumeAnalysis.STATUS_PROCESSING:
+                return Response(
+                    {'detail': 'Only processing analyses can be cancelled.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        # Refund credits
-        if analysis.credits_deducted:
-            refund_credits(
-                request.user, 'resume_analysis',
-                description=f'Refund: analysis #{analysis.id} cancelled by user',
-                reference_id=str(analysis.id),
-            )
-            analysis.credits_deducted = False
-            analysis.save(update_fields=['credits_deducted'])
+            # Revoke the Celery task if we have the ID
+            if analysis.celery_task_id:
+                try:
+                    from resume_ai.celery import app as celery_app
+                    celery_app.control.revoke(analysis.celery_task_id, terminate=True)
+                    logger.info('Revoked Celery task %s for analysis %s', analysis.celery_task_id, pk)
+                except Exception:
+                    logger.warning('Failed to revoke Celery task %s', analysis.celery_task_id)
+
+            # Mark as failed
+            analysis.status = ResumeAnalysis.STATUS_FAILED
+            analysis.pipeline_step = ResumeAnalysis.STEP_FAILED
+            analysis.error_message = 'Cancelled by user.'
+            analysis.save(update_fields=['status', 'pipeline_step', 'error_message'])
+
+            # Refund credits (idempotent per analysis id — safe against the
+            # task failure handler / stale-cleanup refunding the same analysis)
+            if analysis.credits_deducted:
+                refund_credits(
+                    request.user, 'resume_analysis',
+                    description=f'Refund: analysis #{analysis.id} cancelled by user',
+                    reference_id=str(analysis.id),
+                )
+                analysis.credits_deducted = False
+                analysis.save(update_fields=['credits_deducted'])
 
         cache.delete(f'analysis_status:{request.user.id}:{pk}')
 
@@ -2217,7 +2238,7 @@ class CoverLetterView(APIView):
 
         tone = serializer.validated_data.get('tone', 'professional')
 
-        # Check for existing pending/processing
+        # Check for existing pending/processing (don't charge for a duplicate)
         existing = CoverLetter.objects.filter(
             analysis=analysis, tone=tone,
             status__in=[CoverLetter.STATUS_PENDING, CoverLetter.STATUS_PROCESSING],
@@ -2228,24 +2249,47 @@ class CoverLetterView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        cover_letter = CoverLetter.objects.create(
-            analysis=analysis,
-            user=request.user,
-            tone=tone,
-            status=CoverLetter.STATUS_PROCESSING,
-            credits_deducted=False,
-        )
+        # ── Credit check — deduct upfront, refund on failure ──
+        # (cover_letter cost is admin-configurable; defaults to 0 = free.)
+        try:
+            credit_result = deduct_credits(
+                request.user,
+                'cover_letter',
+                description=f'Cover letter (analysis #{analysis.id})',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {'detail': 'Insufficient credits.', 'balance': e.balance, 'cost': e.cost},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
-        generate_cover_letter_task.delay(str(cover_letter.id), request.user.id)
+        try:
+            cover_letter = CoverLetter.objects.create(
+                analysis=analysis,
+                user=request.user,
+                tone=tone,
+                status=CoverLetter.STATUS_PROCESSING,
+                credits_deducted=bool(credit_result['cost']),
+            )
 
-        from .models import UserActivity
-        UserActivity.record(request.user, UserActivity.ACTION_COVER_LETTER)
+            generate_cover_letter_task.delay(str(cover_letter.id), request.user.id)
 
-        return Response({
-            'id': str(cover_letter.id),
-            'status': cover_letter.status,
-            'tone': tone,
-        }, status=status.HTTP_202_ACCEPTED)
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_COVER_LETTER)
+
+            return Response({
+                'id': str(cover_letter.id),
+                'status': cover_letter.status,
+                'tone': tone,
+                'credits_used': credit_result['cost'],
+                'balance': credit_result['balance_after'],
+            }, status=status.HTTP_202_ACCEPTED)
+        except Exception:
+            refund_credits(
+                request.user, 'cover_letter',
+                description='Refund: cover letter creation failed',
+            )
+            raise
 
 
 class CoverLetterStatusView(APIView):

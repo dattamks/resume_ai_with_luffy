@@ -103,10 +103,15 @@ class OpenRouterProvider(AIProvider):
 
             raw = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
             if not raw:
-                raise LLMValidationError(
+                # Empty completion (transient moderation refusal / empty choices).
+                # Retry rather than aborting the whole loop immediately — this
+                # error previously escaped the retry mechanism entirely.
+                logger.warning('OpenRouter returned an empty response (attempt %d) — retrying', attempt + 1)
+                last_exc = LLMValidationError(
                     'OpenRouter returned an empty response (content moderation refusal or empty choices).',
                     raw_response='',
                 )
+                continue
             last_raw = raw
 
             # Strip markdown code fences (```json ... ```) that LLMs often wrap around JSON

@@ -15,8 +15,10 @@ case "${SERVICE_TYPE}" in
     echo "▶ Starting web service (gunicorn)…"
     # Use flock to prevent concurrent migration runs across replicas.
     # Only one replica acquires the lock; others wait (max 120s) then proceed.
+    # A failed migration must abort the boot — starting gunicorn against a
+    # half-migrated schema causes silent, hard-to-debug 500s.
     echo "▶ Running migrations (with lock)…"
-    flock -w 120 /tmp/migrate.lock python manage.py migrate --noinput || true
+    flock -w 120 /tmp/migrate.lock python manage.py migrate --noinput
     python manage.py seed_email_templates
     python manage.py seed_plans
     python manage.py seed_credit_costs
@@ -44,9 +46,13 @@ case "${SERVICE_TYPE}" in
 
   flower)
     echo "▶ Starting Flower monitoring dashboard…"
+    if [ -z "${FLOWER_PASSWORD}" ]; then
+      echo "ERROR: FLOWER_PASSWORD must be set — refusing to start Flower with a default password."
+      exit 1
+    fi
     exec celery -A resume_ai flower \
       --port="${PORT:-5555}" \
-      --basic-auth="${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-changeme}" \
+      --basic-auth="${FLOWER_USER:-admin}:${FLOWER_PASSWORD}" \
       --broker_api= \
       --persistent=True \
       --db=/tmp/flower.db

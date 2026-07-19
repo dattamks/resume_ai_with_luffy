@@ -19,6 +19,21 @@ logger = logging.getLogger('analyzer')
 
 _MD_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)\n?\s*```$', re.DOTALL)
 
+# Sequences an attacker might embed in resume text to escape the prompt or
+# inject instructions. Neutralised before interpolation.
+_INJECTION_RE = re.compile(
+    r'(?i)\b(ignore|disregard|forget)\b[^.\n]{0,40}\b(previous|prior|above|earlier)\b'
+    r'[^.\n]{0,40}\b(instructions?|prompts?|rules?)\b'
+)
+
+
+def _sanitize(text: str) -> str:
+    """Strip boundary-like markers and defuse obvious prompt-injection phrases."""
+    if not text:
+        return ''
+    text = text.replace('==========', '').replace('[boundary]', '')
+    return _INJECTION_RE.sub('[redacted]', text)
+
 COVER_LETTER_SYSTEM_PROMPT = (
     'You are a professional career coach and cover letter specialist. '
     'Your task is to write a compelling, personalized cover letter based on '
@@ -80,16 +95,20 @@ def build_cover_letter_prompt(analysis, tone='professional') -> str:
     keyword_analysis = analysis.keyword_analysis or {}
     section_feedback = analysis.section_feedback or []
 
-    # Extract strengths from high-scoring sections
+    # Extract strengths from high-scoring sections.
+    # NB: the analysis schema stores the section name under 'section_name'
+    # (see base.ANALYSIS schema); older/alternate payloads used 'section'.
     strengths = []
     for section in section_feedback:
+        if not isinstance(section, dict):
+            continue
         score = section.get('score', 0)
         if isinstance(score, (int, float)) and score >= 70:
-            name = section.get('section', 'Unknown')
-            fb_list = section.get('feedback', [])
+            name = section.get('section_name') or section.get('section') or 'Unknown'
             strengths.append(f"- {name} (Score: {score})")
 
-    resume_excerpt = (analysis.resume_text or '')[:3000]
+    # Sanitize + bound the resume excerpt (prompt-injection / length control).
+    resume_excerpt = _sanitize((analysis.resume_text or ''))[:3000]
 
     prompt = COVER_LETTER_PROMPT_TEMPLATE.format(
         target_role=analysis.jd_role or 'Not specified',

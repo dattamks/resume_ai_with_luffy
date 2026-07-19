@@ -204,9 +204,23 @@ def _activate_subscription(
             'payment_id': razorpay_payment_id,
         }
 
-    # Update payment record
+    # Guard against cross-account use: the subscription being activated must
+    # belong to the calling user. Prevents crediting user A off user B's
+    # (genuinely Razorpay-signed) subscription id.
+    owner_ok = RazorpaySubscription.objects.filter(
+        razorpay_subscription_id=razorpay_subscription_id, user=user,
+    ).exists()
+    if not owner_ok:
+        logger.warning(
+            'Subscription activation ownership mismatch: user=%s sub_id=%s',
+            user.username, razorpay_subscription_id,
+        )
+        raise ValueError('Subscription does not belong to this account.')
+
+    # Update payment record (scoped to this user)
     payment = RazorpayPayment.objects.select_for_update().filter(
         razorpay_subscription_id=razorpay_subscription_id,
+        user=user,
         status=RazorpayPayment.STATUS_CREATED,
     ).first()
 
@@ -513,14 +527,28 @@ def _fulfill_topup(
             'payment_id': razorpay_payment_id,
         }
 
-    # Find and update payment record (with lock)
+    # Find and update payment record (with lock), scoped to this user so a
+    # caller cannot fulfil an order that belongs to a different account.
     payment = RazorpayPayment.objects.select_for_update().filter(
         razorpay_order_id=razorpay_order_id,
+        user=user,
         status=RazorpayPayment.STATUS_CREATED,
     ).first()
 
+    if not payment and not via_webhook:
+        # Frontend verify path: never fabricate a payment record for an order
+        # we have no local CREATED row for under this user — that would let a
+        # signed order_id from another account credit this wallet.
+        logger.warning(
+            'Top-up order not found for user=%s order_id=%s — rejecting',
+            user.username, razorpay_order_id,
+        )
+        raise ValueError('Top-up order not found for this account.')
+
     if not payment:
-        # Could be webhook arriving before frontend, or duplicate
+        # Webhook may arrive before the frontend verify call. The user here is
+        # derived from the order's own notes (user_id), so creating the record
+        # is safe.
         logger.warning('Payment record not found for order_id=%s, creating new', razorpay_order_id)
         # Try to fetch the actual amount from Razorpay
         fetched_amount = 0
@@ -566,6 +594,7 @@ def _fulfill_topup(
         tx_type=WalletTransaction.TYPE_TOPUP,
         description=f'Top-up: {quantity} pack(s) × {credits_to_add // max(quantity, 1)} credits (Razorpay)',
         reference_id=razorpay_payment_id,
+        idempotency_key=f'topup:{razorpay_payment_id}' if razorpay_payment_id else '',
     )
 
     logger.info(
@@ -710,6 +739,9 @@ def _handle_subscription_charged(payload: dict) -> dict:
     sub_entity = payload.get('subscription', {}).get('entity', {})
     sub_id = sub_entity.get('id', '')
     payment_id = sub_entity.get('payment_id', '')
+    # paid_count increments each billing cycle; use it to make the grant
+    # idempotent per-cycle even when payment_id is absent from the payload.
+    paid_count = sub_entity.get('paid_count')
     notes = sub_entity.get('notes', {})
     user_id = notes.get('user_id')
 
@@ -749,8 +781,17 @@ def _handle_subscription_charged(payload: dict) -> dict:
         profile.plan_valid_until = subscription.current_end
         profile.save(update_fields=['plan_valid_until'])
 
-        # Grant monthly credits
-        grant_monthly_credits_for_user(user, subscription.plan)
+        # Grant monthly credits — idempotent per billing cycle.
+        # The FIRST charge coincides with activation, where subscribe_plan()
+        # already granted the same allotment as an "upgrade bonus"; skip cycle 1
+        # here to avoid double-granting, and grant from cycle 2 onward.
+        cycle_ref = payment_id or (f'pc{paid_count}' if paid_count is not None else '')
+        grant_key = f'grant:sub:{sub_id}:{cycle_ref}' if cycle_ref else ''
+        is_first_cycle = paid_count == 1
+        if not is_first_cycle:
+            grant_monthly_credits_for_user(
+                user, subscription.plan, idempotency_key=grant_key,
+            )
 
         # Record payment
         amount = int(subscription.plan.price * 100)

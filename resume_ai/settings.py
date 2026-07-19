@@ -102,6 +102,16 @@ else:
         )
     }
 
+# Refuse to boot a production server on SQLite. The app requires PostgreSQL
+# (pgvector, JSONField lookups, etc.); silently falling back to an ephemeral
+# SQLite file on a missing/typo'd DATABASE_URL means data loss on redeploy and
+# 500s on every Postgres-specific query.
+if not DEBUG and not TESTING and DATABASES['default'].get('ENGINE', '').endswith('sqlite3'):
+    raise ImproperlyConfigured(
+        'Refusing to start in production on SQLite. Set DATABASE_URL to a '
+        'PostgreSQL connection string (PostgreSQL + pgvector are required).'
+    )
+
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
@@ -154,8 +164,13 @@ if _R2_BUCKET:
     # Media URL will be served via signed S3 URLs
     MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{_R2_BUCKET}/'
 else:
-    # No R2 — use WhiteNoise for static files, local filesystem for media
+    # No R2 — use WhiteNoise for static files, local filesystem for media.
+    # 'default' is required by Django 4.2's storages framework; omitting it
+    # raises InvalidStorageError on any file operation.
     STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
         'staticfiles': {
             'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
         },
@@ -259,6 +274,10 @@ REST_FRAMEWORK = {
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # Number of trusted proxies in front of the app (Railway terminates at 1).
+    # Without this, DRF trusts a client-supplied X-Forwarded-For for throttle
+    # identity, letting an attacker rotate the header to defeat rate limits.
+    'NUM_PROXIES': config('NUM_PROXIES', default=1, cast=int),
 }
 
 # During tests: disable throttling entirely so rate limits don't cause
@@ -313,6 +332,11 @@ OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
 MAX_PDF_PAGES = config('MAX_PDF_PAGES', default=50, cast=int)
+
+# Prometheus /metrics protection. When set, scrapers must send
+# `Authorization: Bearer <token>`. When unset, the endpoint is only served in
+# DEBUG so business metrics aren't exposed publicly in production.
+METRICS_TOKEN = config('METRICS_TOKEN', default='')
 
 # Firecrawl
 FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')
@@ -370,14 +394,21 @@ RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default='placeholder_secret'
 RAZORPAY_WEBHOOK_SECRET = config('RAZORPAY_WEBHOOK_SECRET', default='webhook_placeholder_secret')
 RAZORPAY_CURRENCY = 'INR'
 
-# Refuse to start in production with placeholder Razorpay credentials
-if not DEBUG and RAZORPAY_KEY_ID == 'rzp_test_placeholder':
-    import warnings
-    warnings.warn(
-        'Razorpay credentials are still set to placeholder values. '
-        'Set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET '
-        'environment variables for production.',
-        stacklevel=1,
+# Refuse to start in production with placeholder Razorpay credentials.
+# (Set RAZORPAY_REQUIRED=False only for a deployment that genuinely has no
+# payment surface.) Running with the placeholder webhook secret means webhook
+# signatures are validated against a publicly-known value — forgeable.
+_RAZORPAY_REQUIRED = config('RAZORPAY_REQUIRED', default=True, cast=bool)
+if not DEBUG and _RAZORPAY_REQUIRED and (
+    RAZORPAY_KEY_ID == 'rzp_test_placeholder'
+    or RAZORPAY_KEY_SECRET == 'placeholder_secret'
+    or RAZORPAY_WEBHOOK_SECRET == 'webhook_placeholder_secret'
+):
+    raise ImproperlyConfigured(
+        'Razorpay credentials are still set to placeholder values. Set '
+        'RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET for '
+        'production (or set RAZORPAY_REQUIRED=False if this deployment has no '
+        'payment surface).'
     )
 
 # Password reset token expiry (seconds) — default 1 hour

@@ -34,6 +34,33 @@ class InsufficientCreditsError(Exception):
         super().__init__(f'Insufficient credits: balance={balance}, cost={cost}')
 
 
+def _find_idempotent_txn(idempotency_key):
+    """
+    Return an existing WalletTransaction for this idempotency key, or None.
+
+    Must be called inside the same transaction that holds the wallet
+    ``select_for_update`` lock so concurrent callers serialize on the wallet
+    row before racing to insert a duplicate.
+    """
+    if not idempotency_key:
+        return None
+    from .models import WalletTransaction
+    return WalletTransaction.objects.filter(idempotency_key=idempotency_key).first()
+
+
+def _txn_result(txn):
+    """Reconstruct a {balance_before, balance_after, ...} dict from a stored txn."""
+    balance_after = txn.balance_after
+    balance_before = balance_after - txn.amount
+    return {
+        'balance_before': balance_before,
+        'balance_after': balance_after,
+        'cost': abs(txn.amount),
+        'amount': txn.amount,
+        'idempotent': True,
+    }
+
+
 def get_credit_cost(action_slug: str) -> int:
     """
     Look up the credit cost for an action from the CreditCost table.
@@ -77,12 +104,17 @@ def check_balance(user, action_slug: str) -> dict:
 
 
 @transaction.atomic
-def deduct_credits(user, action_slug: str, description: str = '', reference_id: str = '') -> dict:
+def deduct_credits(user, action_slug: str, description: str = '', reference_id: str = '',
+                   idempotency_key: str = '') -> dict:
     """
     Atomically deduct credits for an action.
 
     Uses select_for_update() to prevent race conditions.
     Raises InsufficientCreditsError if balance is too low.
+
+    If ``idempotency_key`` is provided and a transaction with that key already
+    exists, this is a no-op and the original result is returned — safe against
+    double-submit / task-retry double charges.
 
     Returns dict with balance_before, balance_after, cost.
     """
@@ -94,6 +126,12 @@ def deduct_credits(user, action_slug: str, description: str = '', reference_id: 
         return {'balance_before': 0, 'balance_after': 0, 'cost': 0}
 
     wallet, _ = Wallet.objects.select_for_update().get_or_create(user=user)
+
+    existing = _find_idempotent_txn(idempotency_key)
+    if existing is not None:
+        logger.info('Deduct skipped (idempotent): user=%s key=%s', user.username, idempotency_key)
+        return _txn_result(existing)
+
     balance_before = wallet.balance
 
     if balance_before < cost:
@@ -109,6 +147,7 @@ def deduct_credits(user, action_slug: str, description: str = '', reference_id: 
         transaction_type=WalletTransaction.TYPE_ANALYSIS_DEBIT,
         description=description or f'{action_slug} credit deduction',
         reference_id=str(reference_id),
+        idempotency_key=idempotency_key,
     )
 
     logger.info(
@@ -132,9 +171,16 @@ def deduct_credits(user, action_slug: str, description: str = '', reference_id: 
 
 
 @transaction.atomic
-def refund_credits(user, action_slug: str, description: str = '', reference_id: str = '') -> dict:
+def refund_credits(user, action_slug: str, description: str = '', reference_id: str = '',
+                   idempotency_key: str = '') -> dict:
     """
     Refund credits for a failed action.
+
+    Refunds are idempotent per ``(action_slug, reference_id)``: if no explicit
+    ``idempotency_key`` is given, one is derived from the reference so that
+    concurrent/duplicate refund paths (cancel view + task failure handler +
+    stale-cleanup) can never credit the user more than once for the same
+    action.
 
     Returns dict with balance_before, balance_after, cost.
     Silently skips if wallet doesn't exist (user deleted).
@@ -145,11 +191,19 @@ def refund_credits(user, action_slug: str, description: str = '', reference_id: 
     if cost == 0:
         return {'balance_before': 0, 'balance_after': 0, 'cost': 0}
 
+    if not idempotency_key and reference_id:
+        idempotency_key = f'refund:{action_slug}:{reference_id}'
+
     try:
         wallet = Wallet.objects.select_for_update().get(user=user)
     except Wallet.DoesNotExist:
         logger.warning('Refund skipped: wallet not found for user_id=%s', user.id)
         return {'balance_before': 0, 'balance_after': 0, 'cost': cost}
+
+    existing = _find_idempotent_txn(idempotency_key)
+    if existing is not None:
+        logger.info('Refund skipped (idempotent): user=%s key=%s', user.username, idempotency_key)
+        return _txn_result(existing)
 
     balance_before = wallet.balance
     wallet.balance = balance_before + cost
@@ -162,6 +216,7 @@ def refund_credits(user, action_slug: str, description: str = '', reference_id: 
         transaction_type=WalletTransaction.TYPE_REFUND,
         description=description or f'{action_slug} refund (analysis failed)',
         reference_id=str(reference_id),
+        idempotency_key=idempotency_key,
     )
 
     logger.info(
@@ -185,17 +240,36 @@ def refund_credits(user, action_slug: str, description: str = '', reference_id: 
 
 
 @transaction.atomic
-def add_credits(user, amount: int, tx_type: str, description: str = '', reference_id: str = '') -> dict:
+def add_credits(user, amount: int, tx_type: str, description: str = '', reference_id: str = '',
+                idempotency_key: str = '') -> dict:
     """
     Add credits to a user's wallet (for monthly grants, top-ups, admin adjustments).
+
+    If ``idempotency_key`` is provided and already used, this is a no-op — used
+    to make webhook-driven credit grants safe against duplicate delivery.
 
     Returns dict with balance_before, balance_after, amount.
     """
     from .models import Wallet, WalletTransaction
 
     wallet, _ = Wallet.objects.select_for_update().get_or_create(user=user)
+
+    existing = _find_idempotent_txn(idempotency_key)
+    if existing is not None:
+        logger.info('add_credits skipped (idempotent): user=%s key=%s', user.username, idempotency_key)
+        return _txn_result(existing)
+
     balance_before = wallet.balance
-    wallet.balance = balance_before + amount
+    # Never allow a negative wallet balance (e.g. a large negative admin adjustment).
+    new_balance = balance_before + amount
+    if new_balance < 0:
+        logger.warning(
+            'add_credits floored to 0: user=%s amount=%d would make balance %d',
+            user.username, amount, new_balance,
+        )
+        new_balance = 0
+        amount = new_balance - balance_before
+    wallet.balance = new_balance
     wallet.save(update_fields=['balance', 'updated_at'])
 
     WalletTransaction.objects.create(
@@ -205,6 +279,7 @@ def add_credits(user, amount: int, tx_type: str, description: str = '', referenc
         transaction_type=tx_type,
         description=description,
         reference_id=str(reference_id),
+        idempotency_key=idempotency_key,
     )
 
     logger.info(
@@ -437,10 +512,14 @@ def process_expired_plans():
     return count
 
 
-def grant_monthly_credits_for_user(user, plan=None):
+def grant_monthly_credits_for_user(user, plan=None, idempotency_key: str = ''):
     """
     Grant monthly credits to a single user, respecting the plan's max_credits_balance cap.
     Top-ups are not affected by this cap.
+
+    If ``idempotency_key`` is provided and already used, the grant is skipped —
+    used to make recurring-billing (``subscription.charged``) grants safe
+    against duplicate webhook deliveries.
     """
     from .models import Wallet, WalletTransaction
 
@@ -451,6 +530,11 @@ def grant_monthly_credits_for_user(user, plan=None):
         return
 
     wallet, _ = Wallet.objects.select_for_update().get_or_create(user=user)
+
+    if idempotency_key and _find_idempotent_txn(idempotency_key) is not None:
+        logger.info('Monthly grant skipped (idempotent): user=%s key=%s', user.username, idempotency_key)
+        return
+
     balance_before = wallet.balance
 
     # Calculate how many credits to grant (cap applies to monthly grants only)
@@ -475,6 +559,7 @@ def grant_monthly_credits_for_user(user, plan=None):
         balance_after=wallet.balance,
         transaction_type=WalletTransaction.TYPE_PLAN_CREDIT,
         description=f'Monthly {plan.name} plan grant ({credits_to_grant} credits)',
+        idempotency_key=idempotency_key,
     )
 
     logger.info(

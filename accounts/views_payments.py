@@ -14,6 +14,7 @@ Endpoints:
 import json
 import logging
 
+from django.db import transaction
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,6 +29,14 @@ from .serializers import (
 from .throttles import PaymentThrottle
 
 logger = logging.getLogger('accounts')
+
+
+class _WebhookHandlerError(Exception):
+    """Internal: raised to roll back a webhook that a handler could not process."""
+
+    def __init__(self, result):
+        self.result = result
+        super().__init__(str(result))
 
 
 class CreateSubscriptionView(APIView):
@@ -223,11 +232,19 @@ class RazorpayWebhookView(APIView):
         event = body.get('event', '')
         payload = body.get('payload', {})
 
-        # Razorpay sends a unique top-level event ID in each webhook delivery.
-        # Fall back to constructing one from event + entity ID if missing.
-        event_id = body.get('event_id', '') or body.get('id', '')
+        # Razorpay's unique delivery ID is sent in the X-Razorpay-Event-Id
+        # HEADER (not the JSON body). Prefer it for dedup so that recurring
+        # events like subscription.charged — which reuse the same subscription
+        # entity id every billing cycle — are NOT collapsed into one another.
+        event_id = (
+            request.META.get('HTTP_X_RAZORPAY_EVENT_ID', '')
+            or body.get('event_id', '')
+            or body.get('id', '')
+        )
         if not event_id:
-            # Build a deterministic ID from event type + payment/subscription entity ID
+            # Fall back to a per-delivery ID. Prefer the payment entity id
+            # (distinct for each subscription charge) over the subscription id
+            # (constant across cycles) so renewals aren't treated as duplicates.
             entity_id = (
                 payload.get('payment', {}).get('entity', {}).get('id', '')
                 or payload.get('subscription', {}).get('entity', {}).get('id', '')
@@ -235,13 +252,11 @@ class RazorpayWebhookView(APIView):
             )
             event_id = f'{event}:{entity_id}'
 
-        # ── Replay protection: reject duplicate event deliveries ──
+        from django.db import IntegrityError
         from .models import WebhookEvent
-        _, created = WebhookEvent.objects.get_or_create(
-            event_id=event_id,
-            defaults={'event_type': event},
-        )
-        if not created:
+
+        # ── Replay protection (fast path) ──
+        if WebhookEvent.objects.filter(event_id=event_id).exists():
             logger.info('Webhook duplicate skipped: event_id=%s event=%s', event_id, event)
             return Response(
                 {'status': 'duplicate', 'event_id': event_id},
@@ -250,10 +265,29 @@ class RazorpayWebhookView(APIView):
 
         logger.info('Webhook received: event=%s event_id=%s', event, event_id)
 
-        # Process the event
-        result = handle_webhook_event(event, payload)
+        # Process and record atomically. The event is marked processed ONLY if
+        # the handler succeeds; on failure we roll back the WebhookEvent insert
+        # and return a non-2xx so Razorpay redelivers (no silently-lost credit
+        # grants). Concurrent duplicate deliveries collide on the unique
+        # event_id and are treated as duplicates.
+        try:
+            with transaction.atomic():
+                WebhookEvent.objects.create(event_id=event_id, event_type=event)
+                result = handle_webhook_event(event, payload)
+                if isinstance(result, dict) and result.get('status') == 'error':
+                    # Force rollback so the event is not marked processed.
+                    raise _WebhookHandlerError(result)
+        except IntegrityError:
+            logger.info('Webhook duplicate (concurrent) skipped: event_id=%s', event_id)
+            return Response(
+                {'status': 'duplicate', 'event_id': event_id},
+                status=status.HTTP_200_OK,
+            )
+        except _WebhookHandlerError as exc:
+            logger.error('Webhook handler failed, will be retried: event_id=%s result=%s',
+                         event_id, exc.result)
+            return Response(exc.result, status=status.HTTP_502_BAD_GATEWAY)
 
-        # Always return 200 to acknowledge receipt (Razorpay retries on non-2xx)
         return Response(result, status=status.HTTP_200_OK)
 
 
