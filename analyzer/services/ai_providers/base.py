@@ -18,8 +18,23 @@ _DEFAULT_MAX_INPUT_TOKENS = 100_000
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count from character length (4 chars ≈ 1 token)."""
-    return len(text) // _CHARS_PER_TOKEN
+    """
+    Estimate token count from text.
+
+    ASCII English is ~4 chars/token, but non-ASCII scripts (CJK, accented
+    Latin, emoji) tokenize far denser — often ~1-1.5 chars/token. A flat
+    4-chars/token heuristic badly under-counts those and can overflow the
+    context window. We weight non-ASCII characters much more heavily.
+
+    (A per-model tokenizer would be exact, but this backend routes to several
+    providers — OpenAI, Anthropic, Google — with different tokenizers, so a
+    single conservative estimate is more robust than any one model's counter.)
+    """
+    if not text:
+        return 0
+    ascii_chars = sum(1 for c in text if ord(c) < 128)
+    non_ascii = len(text) - ascii_chars
+    return int(ascii_chars / _CHARS_PER_TOKEN + non_ascii / 1.5) + 1
 
 
 # Per-field caps for user-supplied content. These bound the resume/JD text

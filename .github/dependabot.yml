@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Python dependencies (pip / requirements.txt)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # Batch minor/patch bumps into a single PR to reduce noise.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Stay on the Django 4.2 LTS line; take security patches, not 5.x.
+    ignore:
+      - dependency-name: "Django"
+        update-types:
+          - "version-update:semver-major"
+
+  # GitHub Actions used by workflows (if any).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

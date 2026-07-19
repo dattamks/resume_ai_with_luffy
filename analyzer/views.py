@@ -878,9 +878,9 @@ class DashboardStatsView(APIView):
             )
             total_users = all_user_avgs.count()
             if total_users > 1:
-                users_below = sum(
-                    1 for row in all_user_avgs if row['user_avg'] < avg_ats
-                )
+                # Count "users below" in SQL (HAVING user_avg < X) rather than
+                # pulling every user's row into Python and summing.
+                users_below = all_user_avgs.filter(user_avg__lt=avg_ats).count()
                 industry_benchmark = round((users_below / total_users) * 100)
             else:
                 industry_benchmark = 50

@@ -347,6 +347,11 @@ METRICS_TOKEN = config('METRICS_TOKEN', default='')
 
 # Firecrawl
 FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')
+# During tests, use a dummy key so JDFetcher() can be constructed for unit
+# tests of URL validation / form building (no real Firecrawl calls are made —
+# those paths are mocked or raise before any network access).
+if TESTING and not FIRECRAWL_API_KEY:
+    FIRECRAWL_API_KEY = 'test-firecrawl-key'
 
 # Crawler Bot Ingest API — shared secret for X-Crawler-Key auth
 CRAWLER_API_KEY = config('CRAWLER_API_KEY', default='')

@@ -88,6 +88,27 @@ def _is_india_location(location: str) -> bool:
     return any(kw in low for kw in _INDIA_KEYWORDS)
 
 
+def _country_geo_q(country: str) -> Q:
+    """
+    Build a geo-match Q for ``country``.
+
+    For India we also match legacy rows that predate the ``country`` column, by
+    scanning their free-text ``location`` for known Indian cities. That
+    ``location__icontains`` OR can't use an index, so we restrict it to rows
+    where ``country`` is unset — keeping it off the hot path for the vast
+    majority of jobs that are already country-tagged (and avoiding mis-tagging a
+    country='USA' job whose location merely mentions an Indian city).
+    """
+    q = Q(country__iexact=country)
+    if country.lower() == 'india':
+        legacy = Q(country='') | Q(country__isnull=True)
+        loc = Q()
+        for kw in _INDIA_KEYWORDS:
+            loc |= Q(location__icontains=kw)
+        q |= (legacy & loc)
+    return q
+
+
 def _get_user_country(user) -> str:
     """Return the user's profile country, default 'India'."""
     profile = getattr(user, 'profile', None)
@@ -104,14 +125,7 @@ def _filter_by_country(qs, country: str):
     also includes jobs whose free-text ``location`` contains known
     Indian city names (for legacy data without country set).
     """
-    country_q = Q(country__iexact=country)
-    if country.lower() == 'india':
-        # Also match location strings mentioning Indian cities
-        india_q = Q()
-        for kw in _INDIA_KEYWORDS:
-            india_q |= Q(location__icontains=kw)
-        country_q |= india_q
-    return qs.filter(country_q)
+    return qs.filter(_country_geo_q(country))
 
 
 def _get_user_skills(user) -> list[str]:
@@ -501,10 +515,7 @@ class FeedJobsView(APIView):
         # ``geo_priority`` field: 0 = user's country, 1 = other.
         # This is used as the primary sort key so local jobs come first.
         if not strict_country_filter:
-            geo_q = Q(country__iexact=filter_country)
-            if filter_country.lower() == 'india':
-                for kw in _INDIA_KEYWORDS:
-                    geo_q |= Q(location__icontains=kw)
+            geo_q = _country_geo_q(filter_country)
             qs = qs.annotate(
                 geo_priority=Case(
                     When(geo_q, then=Value(0)),

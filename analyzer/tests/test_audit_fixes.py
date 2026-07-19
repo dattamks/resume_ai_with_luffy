@@ -286,6 +286,67 @@ class JobAlertPreferencesValidationTests(TestCase):
         }))
 
 
+class SSRFValidationTests(TestCase):
+    def test_ip_blocking_covers_edge_cases(self):
+        import ipaddress
+        from analyzer.services.jd_fetcher import JDFetcher
+        blocked = [
+            '127.0.0.1', '10.0.0.1', '192.168.1.1', '169.254.1.1',
+            '0.0.0.0', '::1', '::ffff:127.0.0.1', '::ffff:10.0.0.5', '224.0.0.1',
+        ]
+        for addr in blocked:
+            self.assertTrue(
+                JDFetcher._ip_is_blocked(ipaddress.ip_address(addr)),
+                f'{addr} should be blocked',
+            )
+        for addr in ['8.8.8.8', '1.1.1.1']:
+            self.assertFalse(
+                JDFetcher._ip_is_blocked(ipaddress.ip_address(addr)),
+                f'{addr} should be allowed',
+            )
+
+    def test_non_http_scheme_rejected(self):
+        from analyzer.services.jd_fetcher import JDFetcher
+        with self.assertRaises(ValueError):
+            JDFetcher._validate_url('file:///etc/passwd')
+
+
+class TokenEstimationTests(TestCase):
+    def test_non_ascii_counts_more_tokens_than_ascii(self):
+        from analyzer.services.ai_providers.base import estimate_tokens
+        ascii_text = 'a' * 300
+        cjk_text = '文' * 300
+        # CJK tokenizes far denser than 4 chars/token — must estimate higher.
+        self.assertGreater(estimate_tokens(cjk_text), estimate_tokens(ascii_text))
+        self.assertEqual(estimate_tokens(''), 0)
+
+
+class GeoFilterTests(TestCase):
+    def _job(self, **kw):
+        defaults = {
+            'source': 'firecrawl', 'external_id': str(uuid.uuid4()),
+            'url': f'https://example.com/{uuid.uuid4()}', 'title': 'Engineer',
+            'company': 'Co',
+        }
+        defaults.update(kw)
+        return DiscoveredJob.objects.create(**defaults)
+
+    def test_legacy_row_matches_by_location_but_tagged_foreign_does_not(self):
+        from analyzer.views_feed import _country_geo_q
+        legacy = self._job(country='', location='Bangalore, KA')
+        tagged_in = self._job(country='India', location='')
+        tagged_us = self._job(country='USA', location='Bangalore office (remote)')
+
+        matched = set(
+            DiscoveredJob.objects.filter(_country_geo_q('India')).values_list('id', flat=True)
+        )
+        self.assertIn(legacy.id, matched)
+        self.assertIn(tagged_in.id, matched)
+        # A country-tagged USA job must NOT match India just because its
+        # free-text location mentions an Indian city.
+        self.assertNotIn(tagged_us.id, matched)
+
+
 class CostEstimationTests(TestCase):
     def test_gpt4o_not_priced_as_mini(self):
         from analyzer.services.analyzer import _estimate_cost, _MODEL_PRICING
