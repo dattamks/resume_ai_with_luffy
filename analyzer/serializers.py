@@ -317,8 +317,14 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
 
 class SharedAnalysisSerializer(serializers.ModelSerializer):
     """
-    Public read-only serializer for shared analyses.
-    Excludes sensitive fields: resume_file, resume_text, resolved_jd, celery_task_id.
+    Public read-only serializer for shared analyses (served to anyone with the
+    share link, no auth).
+
+    Excludes sensitive fields: resume_file, resume_text, resolved_jd,
+    celery_task_id. Also excludes ``sentence_suggestions`` — it contains the
+    candidate's verbatim original résumé sentences (and rewrites), so exposing
+    it on a public link leaks résumé content beyond what a score-preview
+    implies. It remains available in the owner's authenticated detail view.
     """
 
     class Meta:
@@ -334,7 +340,6 @@ class SharedAnalysisSerializer(serializers.ModelSerializer):
             'ats_disclaimers',
             'keyword_analysis',
             'section_feedback',
-            'sentence_suggestions',
             'formatting_flags',
             'quick_wins',
             'summary',

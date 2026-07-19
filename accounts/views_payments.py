@@ -27,6 +27,7 @@ from .serializers import (
     VerifyTopUpSerializer,
 )
 from .throttles import PaymentThrottle
+from .permissions import IsEmailVerified
 
 logger = logging.getLogger('accounts')
 
@@ -139,7 +140,7 @@ class CreateTopUpOrderView(APIView):
     Request:  { "quantity": 2 }  (default: 1)
     Response: { "order_id", "key_id", "amount", "currency", ... }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmailVerified]
     throttle_classes = [PaymentThrottle]
 
     def post(self, request):

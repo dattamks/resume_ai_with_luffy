@@ -98,6 +98,48 @@ class QuotaSoftDeleteTests(_AuthMixin, TestCase):
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
 
+class EmailVerificationGateTests(_AuthMixin, TestCase):
+    """Analyze is gated on a verified email when enforcement is enabled."""
+
+    def _analyze(self):
+        return self.client.post('/api/v1/analyze/', {
+            'resume_file': _make_pdf(), 'jd_input_type': 'text', 'jd_text': 'Python dev',
+        }, format='multipart')
+
+    @override_settings(REQUIRE_EMAIL_VERIFICATION=True)
+    @patch('analyzer.views.process_resume_upload_task')
+    @patch('analyzer.views.run_analysis_task')
+    def test_unverified_user_blocked(self, mock_task, mock_upload):
+        mock_task.delay.return_value = MagicMock(id='t')
+        mock_upload.delay.return_value = MagicMock()
+        self._give_credits()
+        self.assertFalse(self.user.profile.is_email_verified)
+        resp = self._analyze()
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    @override_settings(REQUIRE_EMAIL_VERIFICATION=True)
+    @patch('analyzer.views.process_resume_upload_task')
+    @patch('analyzer.views.run_analysis_task')
+    def test_verified_user_allowed(self, mock_task, mock_upload):
+        mock_task.delay.return_value = MagicMock(id='t')
+        mock_upload.delay.return_value = MagicMock()
+        self.user.profile.is_email_verified = True
+        self.user.profile.save(update_fields=['is_email_verified'])
+        self._give_credits()
+        resp = self._analyze()
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
+
+    @patch('analyzer.views.process_resume_upload_task')
+    @patch('analyzer.views.run_analysis_task')
+    def test_gate_off_by_default_in_tests(self, mock_task, mock_upload):
+        # Default (enforcement disabled) — unverified user is not blocked.
+        mock_task.delay.return_value = MagicMock(id='t')
+        mock_upload.delay.return_value = MagicMock()
+        self._give_credits()
+        resp = self._analyze()
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
+
+
 class CoverLetterBillingTests(_AuthMixin, TestCase):
     @patch('analyzer.views.generate_cover_letter_task')
     def test_cover_letter_deducts_configured_credits(self, mock_task):

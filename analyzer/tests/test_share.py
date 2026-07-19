@@ -205,8 +205,9 @@ class SharedAnalysisViewTests(TestCase):
         self.assertEqual(data['ats_score'], 82)
         self.assertIn('keyword_analysis', data)
         self.assertIn('section_feedback', data)
-        self.assertIn('sentence_suggestions', data)
         self.assertIn('summary', data)
+        # Verbatim résumé sentences are NOT exposed on the public share link.
+        self.assertNotIn('sentence_suggestions', data)
 
     def test_shared_excludes_sensitive_fields(self):
         """Shared view must NOT expose resume file, user data, or celery IDs."""

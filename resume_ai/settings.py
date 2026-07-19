@@ -421,6 +421,15 @@ if not DEBUG and _RAZORPAY_REQUIRED and (
 # Password reset token expiry (seconds) — default 1 hour
 PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int)
 
+# Require a verified email for high-value actions (analysis, resume generation,
+# purchases). Enforced in production by default; forced off during tests so the
+# suite's unverified fixture users aren't blocked (tests that exercise the gate
+# opt in with override_settings). Existing users are grandfathered to verified
+# via a data migration.
+REQUIRE_EMAIL_VERIFICATION = (
+    config('REQUIRE_EMAIL_VERIFICATION', default=True, cast=bool) and not TESTING
+)
+
 # ── Google OAuth2 ────────────────────────────────────────────────────────────
 GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default='')
 GOOGLE_OAUTH2_CLIENT_SECRET = config('GOOGLE_OAUTH2_CLIENT_SECRET', default='')

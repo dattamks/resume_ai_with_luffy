@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle, WriteThrottle
+from accounts.permissions import IsEmailVerified
 from accounts.services import (
     deduct_credits, refund_credits, check_balance,
     can_use_feature, InsufficientCreditsError,
@@ -54,7 +55,7 @@ class AnalyzeResumeView(APIView):
     POST /api/v1/analyze/
     Upload a PDF resume + job description input → kicks off async analysis.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmailVerified]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     throttle_classes = [AnalyzeThrottle]
 
@@ -1059,7 +1060,7 @@ class GenerateResumeView(APIView):
     Generate an improved resume from analysis findings.
     Costs 1 credit (resume_generation). Requires analysis status == done.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmailVerified]
     throttle_classes = [AnalyzeThrottle]
 
     def post(self, request, pk):
