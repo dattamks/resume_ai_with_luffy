@@ -1326,6 +1326,56 @@ PDF bytes → upload to R2 → return download URL
 - [ ] **APM (Application Performance Monitoring)** — Prometheus metrics (v0.24.0) cover counters and gauges but lack request tracing, slow query detection, and error grouping. Evaluate Sentry Performance or Grafana Tempo for distributed tracing. Requires: hosted service + `sentry-sdk[django]` integration.
 - [ ] **Comprehensive type hints** — Service layer functions (`services/*.py`) and view methods lack type annotations. Blocks static analysis tools (mypy, pyright). Low immediate value but improves IDE experience and onboarding. Start with `resume_generator.py` and `analyzer.py` as highest-impact files.
 
+---
+
+## Backlog — July 2026 Audit Follow-up (Deferred Items + Rationale)
+
+> Context: a full-codebase audit (payments, credits, AI, feed/ingest, config)
+> was completed and the critical/high/medium findings were fixed and shipped on
+> branch `claude/audit-summary-z0tj4w` (see the `fix:`/`feat:` commits). The
+> items below were **consciously deferred** — each entry records *why*, so a
+> future session doesn't re-litigate the decision.
+
+### 🔵 P3 — Do when the dependent piece is ready
+
+- [ ] **Cursor (keyset) pagination for the feed** — `FeedJobsView` uses OFFSET/LIMIT plus a full `qs.count()` on a `CosineDistance`-ordered set; deep pages force a full distance sort. Cursor pagination on `(distance, id)` and dropping the exact count would cut tail latency.
+  **Deferred because:** it changes the paginated response shape (page/count → cursor), a frontend-contract change that needs coordination with the web client. Ship alongside a frontend update.
+- [ ] **Schema-enforced LLM decoding** (`response_format={"type":"json_schema"|"json_object"}`) — would largely eliminate the JSON repair/coerce/validate ladder and the class of "model returned wrong-typed field" bugs.
+  **Deferred because:** it changes live LLM call behavior and support varies across the providers OpenRouter routes to (OpenAI vs Anthropic vs Google). Can't verify correctness without live API calls; introduce behind a per-model capability flag and validate against each provider.
+- [ ] **Provider prompt-caching for the static system prompt + schema** — the large `SYSTEM_PROMPT` + schema block is resent on every call and every retry; provider-side caching would cut input-token cost on the highest-volume path.
+  **Deferred because:** provider-specific (Anthropic `cache_control`, OpenAI automatic) and only verifiable against a live endpoint.
+- [ ] **Per-user LLM spend / quota ledger** — up to ~6 full-prompt calls per analysis (validation × transport retries) with no per-user daily budget. Cost data partly exists (`LLMResponse` stores tokens; `_estimate_cost` computes USD).
+  **Deferred because:** it's a new feature (needs a spend model + a gate in the hot path + product decision on limits), not a bug fix. Scope separately.
+
+### ⚪ DEFERRED — Backlog
+
+- [ ] **Ingest API replay protection + rate limiting** — the `X-Crawler-Key` auth now uses a constant-time compare, but there's no nonce/timestamp (captured requests replay) and no throttle.
+  **Deferred because:** the key is a high-entropy shared secret (not a guessable password), so brute-force/replay value is low, and a throttle risks breaking legitimate high-volume bulk crawls. Real replay protection needs a signed-timestamp/nonce scheme implemented on **both** the crawler bot and the ingest API — coordinate a protocol change.
+- [ ] **jd_fetcher SSRF: DNS-rebind / redirect re-validation** — IP-range checks were broadened (IPv4-mapped IPv6, `0.0.0.0`, multicast/unspecified), but the check is still TOCTOU (DNS re-resolved at fetch) and Firecrawl follows redirects that aren't re-validated.
+  **Deferred because:** impact is bounded — Firecrawl fetches remotely, not from the app's network — so an internal-network SSRF via this path is limited. Full closure needs resolve-then-pin-IP fetching, which Firecrawl (a third party) doesn't expose.
+- [ ] **`makemigrations --check` reports `embedding` drift on SQLite** — the pgvector `embedding` field is conditionally defined by DB engine (`_HAS_PGVECTOR`), so model state matches migration state on Postgres/prod but not on the SQLite test DB; `0016` also imports `pgvector` at module top, so the whole migration graph fails to load if the package is absent.
+  **Deferred because:** fixing it means restructuring the conditional-field pattern (always-declare + `SeparateDatabaseAndState`) and editing a historical, already-applied migration — risky, and it affects neither production nor the passing test suite. Tackle as a dedicated, well-tested migration change.
+- [ ] **pg_trgm GIN index on `DiscoveredJob.location`** — the India geo fallback's `location__icontains` OR is now scoped to legacy (country-less) rows, but `icontains` still can't use a b-tree index. A trigram GIN index would make it searchable.
+  **Deferred because:** it needs `CREATE EXTENSION pg_trgm`, which can require elevated DB privileges; combined with the "don't swallow migration failures" change, a permission error would now hard-fail the deploy. Do it as a reviewed DBA step (enable extension out-of-band, then add the index migration).
+- [ ] **Separate `content_hash` column for re-embedding** — re-crawls now re-embed only when embedding-relevant fields change (field comparison in `DiscoveredJobIngestSerializer`).
+  **Deferred because:** a stored hash is redundant with the field-comparison approach already shipped; only worth adding if we later want to detect "content identical to what was last embedded" independently of the live row.
+- [ ] **Exact per-model tokenizer (tiktoken)** — token estimation is now unicode-aware (weights non-ASCII heavier) instead of a flat 4-chars/token.
+  **Deferred because:** `tiktoken` only tokenizes OpenAI models accurately, while this backend routes to Claude/Gemini too; a single conservative heuristic is more robust than one model's exact counter. Revisit only if we pin to a single provider.
+- [ ] **Chat `action` field `ChoiceField` validation** — `ResumeChatSubmitSerializer.action` is an unconstrained `CharField`.
+  **Deferred because:** 30+ actions are dispatched dynamically across the chat service; a strict allowlist risks silently breaking a valid flow if one is missed. Enumerate them into a shared constant first, then constrain.
+- [ ] **Health-check endpoint hardening** — `/api/v1/health/` is `AllowAny`/unthrottled and returns component (db/cache/celery) status, and pings Celery on every hit.
+  **Deferred because:** it's intentionally reachable by load balancers; the info leak is low-value and throttling a health check can cause false-negative outages. If tightened, add a lightweight cache on the celery ping and consider a separate deep-vs-shallow endpoint.
+
+### ✅ Shipped in this pass (recorded for context — not TODO)
+
+- Email-verification enforcement is **implemented and ON by default in prod**
+  (`REQUIRE_EMAIL_VERIFICATION`, gating analyze / resume-generation / top-up),
+  with a data migration grandfathering existing users. Operators can stage the
+  rollout by setting `REQUIRE_EMAIL_VERIFICATION=False` until ready.
+- Public share payload no longer exposes `sentence_suggestions` (verbatim
+  résumé sentences); still available in the owner's authenticated view.
+- Django `4.2.16 → 4.2.30`, gunicorn `22 → 23`, `.github/dependabot.yml` added.
+
 
 
 
