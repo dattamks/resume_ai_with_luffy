@@ -16,7 +16,7 @@ boto3==1.36.14
 django-redis==5.4.0
 
 # WSGI server
-gunicorn==23.0.0
+gunicorn==26.0.0
 
 # Static files (WhiteNoise for production)
 whitenoise==6.8.2
