@@ -24,9 +24,16 @@ if not DEBUG and SECRET_KEY == 'django-insecure-change-me-in-production':
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
 
-# Railway's health-checker sends Host: healthcheck.railway.app
+# Railway's health-checker sends Host: healthcheck.railway.app.
+# Prefer the specific service domain (RAILWAY_PUBLIC_DOMAIN, injected by
+# Railway) over a blanket '*.railway.app', which would accept any Railway
+# subdomain and widen Host-header / cache-poisoning surface.
 if not DEBUG:
-    ALLOWED_HOSTS += ['.railway.app']
+    _railway_domain = config('RAILWAY_PUBLIC_DOMAIN', default='')
+    if _railway_domain:
+        ALLOWED_HOSTS += [_railway_domain, 'healthcheck.railway.app']
+    else:
+        ALLOWED_HOSTS += ['.railway.app']
 
 INSTALLED_APPS = [
     'django_prometheus',
@@ -102,6 +109,16 @@ else:
         )
     }
 
+# Refuse to boot a production server on SQLite. The app requires PostgreSQL
+# (pgvector, JSONField lookups, etc.); silently falling back to an ephemeral
+# SQLite file on a missing/typo'd DATABASE_URL means data loss on redeploy and
+# 500s on every Postgres-specific query.
+if not DEBUG and not TESTING and DATABASES['default'].get('ENGINE', '').endswith('sqlite3'):
+    raise ImproperlyConfigured(
+        'Refusing to start in production on SQLite. Set DATABASE_URL to a '
+        'PostgreSQL connection string (PostgreSQL + pgvector are required).'
+    )
+
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
@@ -154,8 +171,13 @@ if _R2_BUCKET:
     # Media URL will be served via signed S3 URLs
     MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{_R2_BUCKET}/'
 else:
-    # No R2 — use WhiteNoise for static files, local filesystem for media
+    # No R2 — use WhiteNoise for static files, local filesystem for media.
+    # 'default' is required by Django 4.2's storages framework; omitting it
+    # raises InvalidStorageError on any file operation.
     STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
         'staticfiles': {
             'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
         },
@@ -259,6 +281,10 @@ REST_FRAMEWORK = {
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # Number of trusted proxies in front of the app (Railway terminates at 1).
+    # Without this, DRF trusts a client-supplied X-Forwarded-For for throttle
+    # identity, letting an attacker rotate the header to defeat rate limits.
+    'NUM_PROXIES': config('NUM_PROXIES', default=1, cast=int),
 }
 
 # During tests: disable throttling entirely so rate limits don't cause
@@ -310,12 +336,27 @@ if not DEBUG:
 OPENROUTER_API_KEY = config('OPENROUTER_API_KEY', default='')
 OPENROUTER_MODEL = config('OPENROUTER_MODEL', default='anthropic/claude-3.5-haiku')
 OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')
+# NOTE: intentionally NOT setting a dummy OPENROUTER_API_KEY during tests. With
+# a key present, eager Celery tasks (crawl/match/generation) construct the
+# provider and attempt real network calls. Tests that need the analyzer mock
+# get_ai_provider or the task; the few that construct ResumeAnalyzer directly
+# rely on the key being absent.
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
 MAX_PDF_PAGES = config('MAX_PDF_PAGES', default=50, cast=int)
 
+# Prometheus /metrics protection. When set, scrapers must send
+# `Authorization: Bearer <token>`. When unset, the endpoint is only served in
+# DEBUG so business metrics aren't exposed publicly in production.
+METRICS_TOKEN = config('METRICS_TOKEN', default='')
+
 # Firecrawl
 FIRECRAWL_API_KEY = config('FIRECRAWL_API_KEY', default='')
+# During tests, use a dummy key so JDFetcher() can be constructed for unit
+# tests of URL validation / form building (no real Firecrawl calls are made —
+# those paths are mocked or raise before any network access).
+if TESTING and not FIRECRAWL_API_KEY:
+    FIRECRAWL_API_KEY = 'test-firecrawl-key'
 
 # Crawler Bot Ingest API — shared secret for X-Crawler-Key auth
 CRAWLER_API_KEY = config('CRAWLER_API_KEY', default='')
@@ -370,18 +411,34 @@ RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default='placeholder_secret'
 RAZORPAY_WEBHOOK_SECRET = config('RAZORPAY_WEBHOOK_SECRET', default='webhook_placeholder_secret')
 RAZORPAY_CURRENCY = 'INR'
 
-# Refuse to start in production with placeholder Razorpay credentials
-if not DEBUG and RAZORPAY_KEY_ID == 'rzp_test_placeholder':
-    import warnings
-    warnings.warn(
-        'Razorpay credentials are still set to placeholder values. '
-        'Set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET '
-        'environment variables for production.',
-        stacklevel=1,
+# Refuse to start in production with placeholder Razorpay credentials.
+# (Set RAZORPAY_REQUIRED=False only for a deployment that genuinely has no
+# payment surface.) Running with the placeholder webhook secret means webhook
+# signatures are validated against a publicly-known value — forgeable.
+_RAZORPAY_REQUIRED = config('RAZORPAY_REQUIRED', default=True, cast=bool)
+if not DEBUG and _RAZORPAY_REQUIRED and (
+    RAZORPAY_KEY_ID == 'rzp_test_placeholder'
+    or RAZORPAY_KEY_SECRET == 'placeholder_secret'
+    or RAZORPAY_WEBHOOK_SECRET == 'webhook_placeholder_secret'
+):
+    raise ImproperlyConfigured(
+        'Razorpay credentials are still set to placeholder values. Set '
+        'RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET for '
+        'production (or set RAZORPAY_REQUIRED=False if this deployment has no '
+        'payment surface).'
     )
 
 # Password reset token expiry (seconds) — default 1 hour
 PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=3600, cast=int)
+
+# Require a verified email for high-value actions (analysis, resume generation,
+# purchases). Enforced in production by default; forced off during tests so the
+# suite's unverified fixture users aren't blocked (tests that exercise the gate
+# opt in with override_settings). Existing users are grandfathered to verified
+# via a data migration.
+REQUIRE_EMAIL_VERIFICATION = (
+    config('REQUIRE_EMAIL_VERIFICATION', default=True, cast=bool) and not TESTING
+)
 
 # ── Google OAuth2 ────────────────────────────────────────────────────────────
 GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default='')

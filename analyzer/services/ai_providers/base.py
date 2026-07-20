@@ -18,14 +18,55 @@ _DEFAULT_MAX_INPUT_TOKENS = 100_000
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count from character length (4 chars ≈ 1 token)."""
-    return len(text) // _CHARS_PER_TOKEN
+    """
+    Estimate token count from text.
+
+    ASCII English is ~4 chars/token, but non-ASCII scripts (CJK, accented
+    Latin, emoji) tokenize far denser — often ~1-1.5 chars/token. A flat
+    4-chars/token heuristic badly under-counts those and can overflow the
+    context window. We weight non-ASCII characters much more heavily.
+
+    (A per-model tokenizer would be exact, but this backend routes to several
+    providers — OpenAI, Anthropic, Google — with different tokenizers, so a
+    single conservative estimate is more robust than any one model's counter.)
+    """
+    if not text:
+        return 0
+    ascii_chars = sum(1 for c in text if ord(c) < 128)
+    non_ascii = len(text) - ascii_chars
+    return int(ascii_chars / _CHARS_PER_TOKEN + non_ascii / 1.5) + 1
+
+
+# Per-field caps for user-supplied content. These bound the resume/JD text
+# *before* it is interpolated into a prompt template, so truncation never eats
+# the JSON schema or output rules that live at the END of the template.
+_MAX_USER_FIELD_CHARS = 24_000  # ~6K tokens; comfortably fits any real resume/JD
+
+
+def truncate_user_field(text: str, max_chars: int = _MAX_USER_FIELD_CHARS) -> str:
+    """
+    Truncate a single user-supplied field (resume text / job description) to a
+    safe length. Applied to the variable content only, leaving fixed prompt
+    scaffolding (schema, instructions) intact.
+    """
+    if not text:
+        return text or ''
+    if len(text) <= max_chars:
+        return text
+    logger.warning(
+        'User content too long (%d chars). Truncating to %d chars before prompt build.',
+        len(text), max_chars,
+    )
+    return text[:max_chars] + '\n\n[... content truncated for length ...]'
 
 
 def check_prompt_length(prompt_text: str, max_output_tokens: int = 8192) -> str:
     """
-    Check if prompt is within safe context window limits.
-    Truncates the prompt text if it would exceed the limit.
+    Backstop safety net: if a fully-assembled prompt is still over the context
+    limit, truncate it. Per-field truncation (``truncate_user_field``) should
+    keep this from firing in practice — and callers that build prompts with a
+    trailing JSON schema should prefer field-level truncation so this fallback
+    never removes the schema/output rules.
 
     Returns the (possibly truncated) prompt text.
     """
@@ -37,7 +78,8 @@ def check_prompt_length(prompt_text: str, max_output_tokens: int = 8192) -> str:
         # Truncate to safe length (chars = tokens * 4)
         safe_chars = safe_input_limit * _CHARS_PER_TOKEN
         logger.warning(
-            'Prompt too long (~%d tokens, limit %d). Truncating input.',
+            'Prompt still too long after field truncation (~%d tokens, limit %d). '
+            'Truncating assembled prompt — schema/rules at the tail may be lost.',
             est_tokens, safe_input_limit,
         )
         return prompt_text[:safe_chars]
@@ -450,9 +492,11 @@ class AIProvider(ABC):
 
     def _build_prompt(self, resume_text: str, job_description: str) -> str:
         boundary = uuid.uuid4().hex[:16]
+        # Truncate the variable user content FIRST so the schema + output rules
+        # at the end of the template are never cut off.
         prompt = ANALYSIS_PROMPT_TEMPLATE.format(
-            resume_text=self._sanitize_user_content(resume_text),
-            job_description=self._sanitize_user_content(job_description),
+            resume_text=truncate_user_field(self._sanitize_user_content(resume_text)),
+            job_description=truncate_user_field(self._sanitize_user_content(job_description)),
             boundary=boundary,
         )
         max_tokens = getattr(settings, 'AI_MAX_TOKENS', 8192)

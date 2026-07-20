@@ -21,10 +21,28 @@ class JDFetcher:
             raise ValueError('FIRECRAWL_API_KEY must be configured.')
         self.app = FirecrawlApp(api_key=api_key)
 
-    def _validate_url(self, url: str) -> None:
+    @staticmethod
+    def _ip_is_blocked(ip) -> bool:
+        """True if an IP is in a non-public range we must not reach (SSRF)."""
+        # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1), which otherwise slips
+        # past the IPv6 loopback/private checks.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        return (
+            ip.is_private or ip.is_reserved or ip.is_loopback
+            or ip.is_link_local or ip.is_multicast or ip.is_unspecified
+        )
+
+    @staticmethod
+    def _validate_url(url: str) -> None:
         """
         Validate URL scheme and ensure hostname does not resolve to a
         private/reserved IP address (SSRF protection).
+
+        Static so it can be exercised without a Firecrawl client. Note: this is
+        a best-effort guard — the actual fetch is delegated to Firecrawl (a
+        remote service), so this mainly stops obviously-internal targets rather
+        than fully closing DNS-rebind/redirect vectors.
         """
         parsed = urlparse(url)
         if parsed.scheme not in ('http', 'https'):
@@ -41,7 +59,7 @@ class JDFetcher:
 
         for family, _type, _proto, _canonname, sockaddr in addr_infos:
             ip = ipaddress.ip_address(sockaddr[0])
-            if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+            if JDFetcher._ip_is_blocked(ip):
                 raise ValueError(
                     f'URL resolves to a private/reserved IP address ({ip}). '
                     'Only public URLs are allowed.'

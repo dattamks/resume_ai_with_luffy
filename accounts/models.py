@@ -430,6 +430,17 @@ class WalletTransaction(models.Model):
         blank=True,
         help_text='Links to analysis ID or other context.',
     )
+    idempotency_key = models.CharField(
+        max_length=120,
+        blank=True,
+        default='',
+        help_text=(
+            'Optional dedup key. When set, a second attempt to write a '
+            'transaction with the same key is a no-op (enforced by a partial '
+            'unique constraint). Used to make refunds and credit grants '
+            'idempotent against retries and duplicate webhook deliveries.'
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -439,6 +450,15 @@ class WalletTransaction(models.Model):
         indexes = [
             models.Index(fields=['wallet', '-created_at']),
             models.Index(fields=['transaction_type', '-created_at']),
+        ]
+        constraints = [
+            # Only non-empty keys are constrained (partial unique index),
+            # so ordinary transactions with a blank key are unaffected.
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                condition=~models.Q(idempotency_key=''),
+                name='uniq_wallet_txn_idempotency_key',
+            ),
         ]
 
     def __str__(self):

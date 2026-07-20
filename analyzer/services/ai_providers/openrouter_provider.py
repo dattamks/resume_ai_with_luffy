@@ -76,10 +76,11 @@ class OpenRouterProvider(AIProvider):
             finish_reason = None
             if response.choices:
                 finish_reason = getattr(response.choices[0], 'finish_reason', None)
-            if finish_reason == 'length':
+            was_truncated = finish_reason == 'length'
+            if was_truncated:
                 logger.warning(
                     'OpenRouter: output truncated (finish_reason=length, max_tokens=%d). '
-                    'Will attempt JSON repair.',
+                    'Repairing, but the result is degraded — flagging it.',
                     max_tokens,
                 )
 
@@ -103,10 +104,15 @@ class OpenRouterProvider(AIProvider):
 
             raw = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
             if not raw:
-                raise LLMValidationError(
+                # Empty completion (transient moderation refusal / empty choices).
+                # Retry rather than aborting the whole loop immediately — this
+                # error previously escaped the retry mechanism entirely.
+                logger.warning('OpenRouter returned an empty response (attempt %d) — retrying', attempt + 1)
+                last_exc = LLMValidationError(
                     'OpenRouter returned an empty response (content moderation refusal or empty choices).',
                     raw_response='',
                 )
+                continue
             last_raw = raw
 
             # Strip markdown code fences (```json ... ```) that LLMs often wrap around JSON
@@ -152,6 +158,9 @@ class OpenRouterProvider(AIProvider):
                 'duration': total_elapsed,
                 'usage': total_usage if total_usage else usage,
                 'coerce_fixes': coerce_fixes,
+                # True when the model hit max_tokens: the JSON was repaired and
+                # some fields may be default/placeholder rather than real.
+                'truncated': was_truncated,
             }
 
         # All attempts exhausted — raise last error with raw response attached

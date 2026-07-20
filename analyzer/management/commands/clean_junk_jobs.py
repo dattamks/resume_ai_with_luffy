@@ -11,8 +11,10 @@ Usage:
     python manage.py clean_junk_jobs --apply      # actually delete
     python manage.py clean_junk_jobs --apply -v2  # verbose
 """
+import re
+
 from django.core.management.base import BaseCommand
-from django.db.models import Q, Count, Min
+from django.db.models import Q, Count
 from django.db.models.functions import Length
 
 
@@ -76,10 +78,13 @@ class Command(BaseCommand):
         to_delete_ids = set()
 
         # ── 1. Keyword-based junk titles ────────────────────────
-        q = Q()
-        for kw in JUNK_TITLE_KEYWORDS:
-            q |= Q(title__icontains=kw)
-        junk_qs = DiscoveredJob.objects.filter(q)
+        # Word-boundary regex so ambiguous tokens ('404', 'forbidden',
+        # 'unavailable', 'sorry') don't match legitimate titles that merely
+        # contain them as substrings.
+        junk_pattern = r'(^|[^a-z0-9])(?:' + '|'.join(
+            re.escape(kw) for kw in JUNK_TITLE_KEYWORDS
+        ) + r')([^a-z0-9]|$)'
+        junk_qs = DiscoveredJob.objects.filter(title__iregex=junk_pattern)
         junk_count = junk_qs.count()
         self.stdout.write(f'\n1) Junk titles (error/empty page keywords): {junk_count}')
         if verbosity >= 2:
@@ -115,21 +120,27 @@ class Command(BaseCommand):
         self.stdout.write(f'4) Blank/null titles: {blank_count}')
         to_delete_ids.update(blank_qs.values_list('id', flat=True))
 
-        # ── 4. Duplicate URL (keep newest) ──────────────────────
+        # ── 4. Duplicate URL within the SAME source (keep newest) ───────
+        # Scope dedup to (source, url) so a crawled job that happens to share a
+        # URL with a user's own analysis job isn't purged (which would also
+        # cascade-delete that user's JobMatch rows).
         dup_urls = (
             DiscoveredJob.objects
-            .values('url')
-            .annotate(n=Count('id'), keep=Min('created_at'))  # keep oldest by default? No, keep newest.
+            .exclude(url='')
+            .values('source', 'url')
+            .annotate(n=Count('id'))
             .filter(n__gt=1)
         )
         dup_delete_count = 0
         for dup in dup_urls:
             # Keep the newest record, delete the rest
-            dupes = DiscoveredJob.objects.filter(url=dup['url']).order_by('-created_at')
+            dupes = DiscoveredJob.objects.filter(
+                source=dup['source'], url=dup['url'],
+            ).order_by('-created_at')
             ids_to_remove = list(dupes.values_list('id', flat=True)[1:])  # skip first (newest)
             to_delete_ids.update(ids_to_remove)
             dup_delete_count += len(ids_to_remove)
-        self.stdout.write(f'5) Duplicate URLs (keeping newest): {dup_delete_count}')
+        self.stdout.write(f'5) Duplicate URLs within source (keeping newest): {dup_delete_count}')
 
         # ── Summary ─────────────────────────────────────────────
         unique_count = len(to_delete_ids)

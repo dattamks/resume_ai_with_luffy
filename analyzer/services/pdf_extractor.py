@@ -13,6 +13,20 @@ class PDFExtractor:
     # PDF magic bytes: every valid PDF starts with %PDF
     _PDF_MAGIC = b'%PDF'
 
+    def _max_bytes(self) -> int:
+        """Hard byte cap for a PDF we're willing to load into memory."""
+        # Allow a little slack over the configured resume size limit.
+        mb = getattr(settings, 'MAX_RESUME_SIZE_MB', 5)
+        return int(mb * 1024 * 1024 * 1.2)
+
+    def _check_size(self, num_bytes: int) -> None:
+        limit = self._max_bytes()
+        if num_bytes > limit:
+            raise ValueError(
+                f'The uploaded PDF is too large ({num_bytes // (1024 * 1024)} MB). '
+                f'Please upload a file under {getattr(settings, "MAX_RESUME_SIZE_MB", 5)} MB.'
+            )
+
     def _validate_pdf_magic(self, data: bytes) -> None:
         """Check that the file starts with the PDF magic bytes (%PDF)."""
         if not data[:4].startswith(self._PDF_MAGIC):
@@ -41,19 +55,30 @@ class PDFExtractor:
         # Determine how to open the PDF
         if isinstance(file_field, str):
             # Plain file path (backward compat / local dev)
+            import os
             logger.debug('PDFExtractor: opening local path %s', file_field)
+            try:
+                self._check_size(os.path.getsize(file_field))
+            except OSError:
+                pass  # size unknown — magic/parse checks still apply
             # Validate magic bytes for local files
             with open(file_field, 'rb') as f:
                 self._validate_pdf_magic(f.read(8))
             pdf_source = file_field
         elif hasattr(file_field, 'open'):
-            # Django FieldFile — works with local and R2/S3 storage
+            # Django FieldFile — works with local and R2/S3 storage.
+            # Cap the size BEFORE reading the whole file into memory when the
+            # backend can report it, to avoid OOM on a huge/bomb upload.
+            size = getattr(file_field, 'size', None)
+            if isinstance(size, int):
+                self._check_size(size)
             logger.debug('PDFExtractor: reading from storage backend')
             try:
                 file_field.open('rb')
                 raw = file_field.read()
             finally:
                 file_field.close()
+            self._check_size(len(raw))
             self._validate_pdf_magic(raw[:8])
             pdf_source = io.BytesIO(raw)
         else:
@@ -65,7 +90,22 @@ class PDFExtractor:
                 self._validate_pdf_magic(header)
             pdf_source = file_field
 
-        with pdfplumber.open(pdf_source) as pdf:
+        try:
+            pdf_ctx = pdfplumber.open(pdf_source)
+        except Exception as exc:
+            # Encrypted/password-protected or otherwise unparseable PDF.
+            msg = str(exc).lower()
+            if 'password' in msg or 'encrypt' in msg:
+                raise ValueError(
+                    'This PDF is password-protected. Please remove the password '
+                    'and upload an unlocked copy.'
+                )
+            raise ValueError(
+                'Could not open the uploaded PDF — it may be corrupted or in an '
+                'unsupported format.'
+            )
+
+        with pdf_ctx as pdf:
             total_pages = len(pdf.pages)
             max_pages = getattr(settings, 'MAX_PDF_PAGES', 50)
             logger.debug('PDFExtractor: PDF has %d page(s)', total_pages)

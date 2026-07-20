@@ -20,6 +20,18 @@ from datetime import timedelta
 from django.core.cache import cache
 from django.db.models import Avg, Case, Count, F, FloatField, IntegerField, Q, Value, When
 from django.db.models.expressions import ExpressionWrapper
+from django.db.models.functions import Coalesce
+
+
+def _salary_midpoint_expr():
+    """Average of the salary range midpoint (falls back to the lower bound when
+    no upper bound is present) — more representative than averaging min only."""
+    return Avg(
+        ExpressionWrapper(
+            (F('salary_min_usd') + Coalesce('salary_max_usd', F('salary_min_usd'))) / Value(2.0),
+            output_field=FloatField(),
+        )
+    )
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -76,6 +88,27 @@ def _is_india_location(location: str) -> bool:
     return any(kw in low for kw in _INDIA_KEYWORDS)
 
 
+def _country_geo_q(country: str) -> Q:
+    """
+    Build a geo-match Q for ``country``.
+
+    For India we also match legacy rows that predate the ``country`` column, by
+    scanning their free-text ``location`` for known Indian cities. That
+    ``location__icontains`` OR can't use an index, so we restrict it to rows
+    where ``country`` is unset — keeping it off the hot path for the vast
+    majority of jobs that are already country-tagged (and avoiding mis-tagging a
+    country='USA' job whose location merely mentions an Indian city).
+    """
+    q = Q(country__iexact=country)
+    if country.lower() == 'india':
+        legacy = Q(country='') | Q(country__isnull=True)
+        loc = Q()
+        for kw in _INDIA_KEYWORDS:
+            loc |= Q(location__icontains=kw)
+        q |= (legacy & loc)
+    return q
+
+
 def _get_user_country(user) -> str:
     """Return the user's profile country, default 'India'."""
     profile = getattr(user, 'profile', None)
@@ -92,14 +125,7 @@ def _filter_by_country(qs, country: str):
     also includes jobs whose free-text ``location`` contains known
     Indian city names (for legacy data without country set).
     """
-    country_q = Q(country__iexact=country)
-    if country.lower() == 'india':
-        # Also match location strings mentioning Indian cities
-        india_q = Q()
-        for kw in _INDIA_KEYWORDS:
-            india_q |= Q(location__icontains=kw)
-        country_q |= india_q
-    return qs.filter(country_q)
+    return qs.filter(_country_geo_q(country))
 
 
 def _get_user_skills(user) -> list[str]:
@@ -197,15 +223,21 @@ def _get_role_scoped_qs(
       Layer 1: LLM Role Map — explicit title matching via RoleFamily
       Layer 2: Embedding proximity — catches synonyms the map missed
 
-    Returns (filtered_qs, role_info_dict, is_scoped_bool).
-    If no role data is available, returns the original queryset unfiltered.
+    Returns (filtered_qs, role_info_dict, is_scoped_bool, role_qs).
+    ``role_qs`` is the narrow role-only queryset used for skill aggregation.
+    If no role data is available, returns the original queryset unfiltered
+    (for both the listing and the skill-aggregation queryset).
 
     Auto-broadens to unfiltered results if the scoped query yields fewer
     than ``_ROLE_SCOPED_MIN_RESULTS`` results.
     """
     user_titles = _get_user_titles(user)
     if not user_titles:
-        return base_qs, {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}, False
+        # No role data — return the unfiltered queryset for both the listing and
+        # the skill-aggregation queryset. NOTE: all callers unpack FOUR values
+        # (qs, role_info, is_scoped, role_qs); this path must return four too.
+        empty_info = {'source_titles': [], 'related_titles': [], 'method': 'none', 'scoped': False, 'broadened': False}
+        return base_qs, empty_info, False, base_qs
 
     # ── Layer 1: LLM Role Map ────────────────────────────────────────
     role_family = RoleFamily.get_or_none(user_titles)
@@ -408,7 +440,11 @@ class FeedJobsView(APIView):
             page_size = 20
 
         offset = (page - 1) * page_size
-        days = int(request.query_params.get('days', 30))
+        try:
+            # Clamp to a sane window; guard against non-int / negative / huge.
+            days = min(max(int(request.query_params.get('days', 30)), 1), 365)
+        except (ValueError, TypeError):
+            days = 30
 
         # Base queryset — recent jobs
         since = timezone.now() - timedelta(days=days)
@@ -479,10 +515,7 @@ class FeedJobsView(APIView):
         # ``geo_priority`` field: 0 = user's country, 1 = other.
         # This is used as the primary sort key so local jobs come first.
         if not strict_country_filter:
-            geo_q = Q(country__iexact=filter_country)
-            if filter_country.lower() == 'india':
-                for kw in _INDIA_KEYWORDS:
-                    geo_q |= Q(location__icontains=kw)
+            geo_q = _country_geo_q(filter_country)
             qs = qs.annotate(
                 geo_priority=Case(
                     When(geo_q, then=Value(0)),
@@ -668,10 +701,10 @@ class FeedInsightsView(APIView):
         # ── Currency ────────────────────────────────────────────────────
         salary_currency = get_currency_for_country(country if not is_global else '')
 
-        # ── Salary: role-level average ──────────────────────────────────
+        # ── Salary: role-level average (range midpoint) ──────────────────
         avg_salary_usd = agg_qs.filter(
             salary_min_usd__isnull=False,
-        ).aggregate(avg=Avg('salary_min_usd'))['avg']
+        ).aggregate(avg=_salary_midpoint_expr())['avg']
         avg_salary_role = convert_usd(avg_salary_usd, salary_currency)
 
         # ── Salary: by seniority level ──────────────────────────────────
@@ -1254,11 +1287,11 @@ class DashboardMarketInsightsView(APIView):
         )
         top_skill = trending[0]['skill'] if trending else None
 
-        # Currency-converted role-level average salary
+        # Currency-converted role-level average salary (range midpoint)
         salary_currency = get_currency_for_country(country if not is_global else '')
         avg_usd = agg_qs.filter(
             salary_min_usd__isnull=False,
-        ).aggregate(avg=Avg('salary_min_usd'))['avg']
+        ).aggregate(avg=_salary_midpoint_expr())['avg']
         avg_salary_role = convert_usd(avg_usd, salary_currency)
 
         data = {

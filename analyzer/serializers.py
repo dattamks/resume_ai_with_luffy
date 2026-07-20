@@ -317,8 +317,14 @@ class ResumeAnalysisListSerializer(serializers.ModelSerializer):
 
 class SharedAnalysisSerializer(serializers.ModelSerializer):
     """
-    Public read-only serializer for shared analyses.
-    Excludes sensitive fields: resume_file, resume_text, resolved_jd, celery_task_id.
+    Public read-only serializer for shared analyses (served to anyone with the
+    share link, no auth).
+
+    Excludes sensitive fields: resume_file, resume_text, resolved_jd,
+    celery_task_id. Also excludes ``sentence_suggestions`` — it contains the
+    candidate's verbatim original résumé sentences (and rewrites), so exposing
+    it on a public link leaks résumé content beyond what a score-preview
+    implies. It remains available in the owner's authenticated detail view.
     """
 
     class Meta:
@@ -334,7 +340,6 @@ class SharedAnalysisSerializer(serializers.ModelSerializer):
             'ats_disclaimers',
             'keyword_analysis',
             'section_feedback',
-            'sentence_suggestions',
             'formatting_flags',
             'quick_wins',
             'summary',
@@ -575,8 +580,22 @@ class JobAlertCreateSerializer(serializers.ModelSerializer):
                 f'Allowed: {", ".join(sorted(allowed))}'
             )
         for list_key in ('excluded_companies', 'priority_companies'):
-            if list_key in value and not isinstance(value[list_key], list):
-                raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+            if list_key in value:
+                if not isinstance(value[list_key], list):
+                    raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+                if not all(isinstance(x, str) for x in value[list_key]):
+                    raise serializers.ValidationError(f'{list_key} must contain only strings.')
+        # Scalar-typed keys.
+        if 'remote_ok' in value and not isinstance(value['remote_ok'], bool):
+            raise serializers.ValidationError('remote_ok must be a boolean.')
+        if 'location' in value and not isinstance(value['location'], str):
+            raise serializers.ValidationError('location must be a string.')
+        if 'salary_min' in value and (
+            isinstance(value['salary_min'], bool)
+            or not isinstance(value['salary_min'], (int, float))
+            or value['salary_min'] < 0
+        ):
+            raise serializers.ValidationError('salary_min must be a non-negative number.')
         return value
 
 
@@ -597,8 +616,22 @@ class JobAlertUpdateSerializer(serializers.ModelSerializer):
                 f'Allowed: {", ".join(sorted(allowed))}'
             )
         for list_key in ('excluded_companies', 'priority_companies'):
-            if list_key in value and not isinstance(value[list_key], list):
-                raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+            if list_key in value:
+                if not isinstance(value[list_key], list):
+                    raise serializers.ValidationError(f'{list_key} must be a list of strings.')
+                if not all(isinstance(x, str) for x in value[list_key]):
+                    raise serializers.ValidationError(f'{list_key} must contain only strings.')
+        # Scalar-typed keys.
+        if 'remote_ok' in value and not isinstance(value['remote_ok'], bool):
+            raise serializers.ValidationError('remote_ok must be a boolean.')
+        if 'location' in value and not isinstance(value['location'], str):
+            raise serializers.ValidationError('location must be a string.')
+        if 'salary_min' in value and (
+            isinstance(value['salary_min'], bool)
+            or not isinstance(value['salary_min'], (int, float))
+            or value['salary_min'] < 0
+        ):
+            raise serializers.ValidationError('salary_min must be a non-negative number.')
         return value
 
 

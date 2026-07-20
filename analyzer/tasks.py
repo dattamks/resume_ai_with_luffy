@@ -179,9 +179,11 @@ def run_analysis_task(self, analysis_id, user_id):
     import time as _time
     _task_start = _time.monotonic()
 
-    # Release the idempotency lock as soon as the task starts — the analysis
-    # record already exists so a duplicate submission would be harmless.
-    cache.delete(f'analyze_lock:{user_id}')
+    # NOTE: the submission idempotency lock (set by AnalyzeResumeView) is
+    # intentionally NOT released here — it is left to expire on its short TTL so
+    # a duplicate submission that arrives while the worker is starting up is
+    # still blocked. Releasing it at task start (as this code previously did)
+    # reopened the double-submit / double-charge window.
 
     try:
         analysis = ResumeAnalysis.objects.get(id=analysis_id)
@@ -243,7 +245,28 @@ def run_analysis_task(self, analysis_id, user_id):
 
     except Exception as exc:
         logger.exception('Unexpected error during analysis (user=%s)', user_id)
-        # Prometheus: record failure
+
+        # Decide retry FIRST, so we don't flap the status to 'failed' (and push
+        # that to the polling cache) on an attempt that's about to be retried.
+        # Keep this in sync with the task's autoretry_for tuple, and also treat
+        # the transport-level errors raised by the OpenAI/httpx client as
+        # retriable (these are NOT subclasses of OSError, so the previous
+        # isinstance check silently dropped them into a non-retried failure).
+        retriable_types = [ConnectionError, OSError, TimeoutError]
+        try:
+            from openai import APIConnectionError, APITimeoutError, InternalServerError
+            retriable_types += [APIConnectionError, APITimeoutError, InternalServerError]
+        except Exception:
+            pass
+        is_retriable = isinstance(exc, tuple(retriable_types))
+        will_retry = is_retriable and self.request.retries < self.max_retries
+
+        if will_retry:
+            # Leave status as 'processing'; the task will be retried. Credits
+            # stay deducted until final success or final failure.
+            raise
+
+        # Prometheus: record final failure
         try:
             from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
             ANALYSIS_DURATION.labels(status='failed').observe(_time.monotonic() - _task_start)
@@ -261,16 +284,8 @@ def run_analysis_task(self, analysis_id, user_id):
         except Exception:
             pass
 
-        is_retriable = isinstance(exc, (ConnectionError, OSError))
-        will_retry = is_retriable and self.request.retries < self.max_retries
-
-        if will_retry:
-            # Don't refund — the task will be retried and may succeed.
-            # Credits stay deducted until final success or final failure.
-            raise
-        else:
-            # Final failure — refund credits
-            _refund_analysis_credits(analysis)
+        # Final failure — refund credits
+        _refund_analysis_credits(analysis)
 
 
 def _refund_analysis_credits(analysis):
@@ -557,6 +572,11 @@ def cleanup_stale_analyses():
             updated_at__lt=cutoff,
         )
 
+        # Collect task ids to revoke: if a worker is merely slow (not dead),
+        # revoking prevents it from completing and setting the analysis to
+        # 'done' after we've already refunded (which would be a free analysis).
+        task_ids = [tid for tid in stale.values_list('celery_task_id', flat=True) if tid]
+
         # Refund credits for each stale analysis before bulk-updating
         for analysis in stale.filter(credits_deducted=True):
             _refund_analysis_credits(analysis)
@@ -566,6 +586,16 @@ def cleanup_stale_analyses():
             pipeline_step=ResumeAnalysis.STEP_FAILED,
             error_message='Analysis timed out (worker may have crashed). Please retry.',
         )
+
+    # Revoke outside the transaction (broker call, best-effort).
+    if task_ids:
+        try:
+            from resume_ai.celery import app as celery_app
+            celery_app.control.revoke(task_ids, terminate=True)
+            logger.info('Revoked %d stale Celery task(s)', len(task_ids))
+        except Exception:
+            logger.warning('Failed to revoke stale Celery tasks', exc_info=True)
+
     if count:
         logger.info('Marked %d stale analyses as failed', count)
 
@@ -581,6 +611,17 @@ def flush_expired_tokens():
     logger.info('Flushing expired JWT tokens...')
     call_command('flushexpiredtokens')
     logger.info('Expired JWT tokens flushed')
+
+    # Prune old webhook-dedup rows (they only guard against replay for the
+    # short window Razorpay retries; keeping them forever grows unbounded).
+    try:
+        from accounts.models import WebhookEvent
+        cutoff = timezone.now() - timezone.timedelta(days=30)
+        deleted, _ = WebhookEvent.objects.filter(created_at__lt=cutoff).delete()
+        if deleted:
+            logger.info('Pruned %d old WebhookEvent row(s)', deleted)
+    except Exception:
+        logger.warning('WebhookEvent prune failed', exc_info=True)
 
 
 # ── Resume generation task ───────────────────────────────────────────────
@@ -1748,6 +1789,57 @@ _EMBED_BATCH_SIZE = 100
 # Lock TTL for match_all_alerts_task dedup (seconds)
 _MATCH_LOCK_TTL = 300  # 5 minutes
 
+# Keys for the single-job ingest debounce queue.
+_INGEST_LIST_KEY = 'ingest:pending_job_ids_list'   # atomic Redis list (prod)
+_INGEST_STR_KEY = 'ingest:pending_job_ids'          # string fallback (LocMem/dev)
+_INGEST_SCHEDULED_KEY = 'ingest:pending_job_ids:scheduled'
+
+
+def _ingest_redis_client():
+    """Return the raw Redis client if the cache is backed by Redis, else None."""
+    try:
+        from django_redis import get_redis_connection
+        return get_redis_connection('default')
+    except Exception:
+        return None
+
+
+def enqueue_pending_job_id(job_id):
+    """
+    Append a job id to the debounce queue atomically.
+
+    Uses a Redis list (RPUSH) when available so concurrent single-job ingests
+    can't clobber each other via read-modify-write; falls back to the string
+    accumulator for LocMemCache/dev.
+    """
+    from django.core.cache import cache
+    client = _ingest_redis_client()
+    if client is not None:
+        client.rpush(_INGEST_LIST_KEY, str(job_id))
+        client.expire(_INGEST_LIST_KEY, 120)
+    else:
+        cache.set(_INGEST_STR_KEY, cache.get(_INGEST_STR_KEY, '') + str(job_id) + ',', timeout=120)
+
+
+def drain_pending_job_ids():
+    """Atomically drain and return all queued job ids from both backends."""
+    from django.core.cache import cache
+    ids = []
+    client = _ingest_redis_client()
+    if client is not None:
+        pipe = client.pipeline()
+        pipe.lrange(_INGEST_LIST_KEY, 0, -1)
+        pipe.delete(_INGEST_LIST_KEY)
+        res = pipe.execute()
+        for item in (res[0] or []):
+            ids.append(item.decode() if isinstance(item, bytes) else str(item))
+    # Also drain any string-fallback entries.
+    raw = cache.get(_INGEST_STR_KEY, '')
+    cache.delete(_INGEST_STR_KEY)
+    cache.delete(_INGEST_SCHEDULED_KEY)
+    ids += [jid.strip() for jid in raw.split(',') if jid.strip()]
+    return ids
+
 
 @shared_task(
     bind=True,
@@ -1782,11 +1874,7 @@ def process_ingested_jobs_task(self, job_ids):
 
     # If job_ids is None, drain the Redis queue (debounced single-job ingests)
     if job_ids is None:
-        queue_key = 'ingest:pending_job_ids'
-        raw = cache.get(queue_key, '')
-        cache.delete(queue_key)
-        cache.delete('ingest:pending_job_ids:scheduled')
-        job_ids = [jid.strip() for jid in raw.split(',') if jid.strip()]
+        job_ids = drain_pending_job_ids()
 
     if not job_ids:
         return
@@ -2245,6 +2333,7 @@ def generate_cover_letter_task(self, cover_letter_id, user_id):
         cl.status = CoverLetter.STATUS_FAILED
         cl.error_message = str(exc)
         cl.save(update_fields=['status', 'error_message'])
+        _refund_cover_letter_credits(cl, user_id)
 
     except Exception as exc:
         logger.exception('Unexpected error in cover letter: id=%s', cl.id)
@@ -2254,6 +2343,26 @@ def generate_cover_letter_task(self, cover_letter_id, user_id):
         if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)
+        _refund_cover_letter_credits(cl, user_id)
+
+
+def _refund_cover_letter_credits(cover_letter, user_id):
+    """Refund cover-letter credits on failure (idempotent per cover letter id)."""
+    try:
+        if not getattr(cover_letter, 'credits_deducted', False):
+            return
+        from accounts.services import refund_credits
+        from django.contrib.auth.models import User
+        user = User.objects.get(id=user_id)
+        refund_credits(
+            user, 'cover_letter',
+            description=f'Refund: cover letter #{cover_letter.id} failed',
+            reference_id=str(cover_letter.id),
+        )
+        cover_letter.credits_deducted = False
+        cover_letter.save(update_fields=['credits_deducted'])
+    except Exception:
+        logger.exception('Failed to refund cover letter credits: id=%s', cover_letter.id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
