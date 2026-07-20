@@ -7,8 +7,8 @@ root URL configuration.
 from django.urls import path
 
 from .views_feed import (
-    DashboardActivityView,
     DashboardActivityHistoryView,
+    DashboardActivityView,
     DashboardMarketInsightsView,
     DashboardSkillGapView,
     FeedHubView,

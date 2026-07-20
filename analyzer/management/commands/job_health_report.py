@@ -9,9 +9,8 @@ Usage:
     python manage.py job_health_report -v2     # show sample records
 """
 from django.core.management.base import BaseCommand
-from django.db.models import Q, Count
+from django.db.models import Count, Q
 from django.db.models.functions import Length
-
 
 # Same junk keywords as clean_junk_jobs for consistency
 JUNK_TITLE_KEYWORDS = [
@@ -28,14 +27,14 @@ class Command(BaseCommand):
     help = 'Print a health report for the DiscoveredJob database'
 
     def handle(self, *args, **options):
-        from analyzer.models import DiscoveredJob, Company, CompanyEntity
+        from analyzer.models import Company, CompanyEntity, DiscoveredJob
 
         verbosity = options['verbosity']
         issues = []
 
         total = DiscoveredJob.objects.count()
         self.stdout.write(f'\n{"=" * 60}')
-        self.stdout.write(f'  JOB DATABASE HEALTH REPORT')
+        self.stdout.write('  JOB DATABASE HEALTH REPORT')
         self.stdout.write(f'{"=" * 60}')
         self.stdout.write(f'\nTotal DiscoveredJobs:  {total}')
         self.stdout.write(f'Total Companies:       {Company.objects.count()}')
@@ -107,12 +106,12 @@ class Command(BaseCommand):
         issues.append(('Blank company', no_co, None))
 
         # ── 9. Jobs by source breakdown ────────────────────────
-        self.stdout.write(f'\n  Source breakdown:')
+        self.stdout.write('\n  Source breakdown:')
         for row in DiscoveredJob.objects.values('source').annotate(n=Count('id')).order_by('-n'):
             self.stdout.write(f'    {row["source"]:<20} {row["n"]:>6} jobs')
 
         # ── 10. Top companies ──────────────────────────────────
-        self.stdout.write(f'\n  Top 5 companies:')
+        self.stdout.write('\n  Top 5 companies:')
         for row in DiscoveredJob.objects.values('company').annotate(
             n=Count('id'),
         ).order_by('-n')[:5]:

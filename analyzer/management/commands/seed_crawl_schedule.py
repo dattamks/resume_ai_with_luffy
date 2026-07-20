@@ -19,7 +19,7 @@ class Command(BaseCommand):
 
     def _seed_periodic_task(self):
         """Create or update the crawl-jobs-daily PeriodicTask."""
-        from django_celery_beat.models import PeriodicTask, CrontabSchedule
+        from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
         schedule, _ = CrontabSchedule.objects.get_or_create(
             minute='30',
@@ -42,7 +42,7 @@ class Command(BaseCommand):
 
         if created:
             self.stdout.write(self.style.SUCCESS(
-                f'Created periodic task: crawl-jobs-daily (crontab: 20:30 UTC)'
+                'Created periodic task: crawl-jobs-daily (crontab: 20:30 UTC)'
             ))
         else:
             self.stdout.write(self.style.WARNING(

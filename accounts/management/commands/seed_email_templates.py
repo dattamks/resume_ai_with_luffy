@@ -4,8 +4,8 @@ Run:  python manage.py seed_email_templates
 """
 
 from django.core.management.base import BaseCommand
-from accounts.models import EmailTemplate
 
+from accounts.models import EmailTemplate
 
 # ── Default templates ─────────────────────────────────────────────────────────
 

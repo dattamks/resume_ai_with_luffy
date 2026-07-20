@@ -18,9 +18,9 @@ import uuid
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
+from django.test import TestCase
 from rest_framework import status as http_status
+from rest_framework.test import APIClient
 
 from analyzer.models import Resume
 

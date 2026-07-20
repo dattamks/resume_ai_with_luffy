@@ -46,7 +46,6 @@ from .models import (
     DiscoveredJob,
     InterviewPrep,
     JobAlert,
-    JobMatch,
     JobSearchProfile,
     Resume,
     ResumeAnalysis,
@@ -56,10 +55,8 @@ from .serializers_feed import (
     ActivitySerializer,
     FeedJobSerializer,
     HubSerializer,
-    InsightsSerializer,
     RecommendationSerializer,
     SkillGapRadarItemSerializer,
-    TrendingVsUserSerializer,
 )
 
 logger = logging.getLogger('analyzer')

@@ -11,12 +11,12 @@ Covers:
 """
 from decimal import Decimal
 from io import StringIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth.models import User
 from django.core.management import call_command
-from django.test import TestCase, RequestFactory, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 
 from accounts.admin import PlanAdmin
 from accounts.models import Plan

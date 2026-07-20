@@ -8,6 +8,7 @@ Usage:
     python manage.py backfill_embeddings --apply --batch-size=50
 """
 import time
+
 from django.core.management.base import BaseCommand
 
 

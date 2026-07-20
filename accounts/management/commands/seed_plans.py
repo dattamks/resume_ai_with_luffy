@@ -6,8 +6,8 @@ Usage:
     python manage.py seed_plans
 """
 from django.core.management.base import BaseCommand
-from accounts.models import Plan
 
+from accounts.models import Plan
 
 PLANS = [
     {

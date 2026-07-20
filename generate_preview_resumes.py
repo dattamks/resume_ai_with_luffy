@@ -4,6 +4,7 @@ One-off script: generate 5 PDF resumes (one per template) for analysis 16,
 upload to R2, and print signed URLs.
 """
 import os
+
 import django
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'resume_ai.settings')
@@ -11,9 +12,10 @@ os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', '/tmp/pw-browsers')
 django.setup()
 
 from django.core.files.base import ContentFile
-from analyzer.models import ResumeAnalysis, GeneratedResume
-from analyzer.services.template_registry import get_renderer
+
+from analyzer.models import GeneratedResume, ResumeAnalysis
 from analyzer.services.resume_html_renderer import shutdown_browser
+from analyzer.services.template_registry import get_renderer
 
 ANALYSIS_PK = 16
 TEMPLATES = ['ats_classic', 'modern', 'executive', 'creative', 'minimal']

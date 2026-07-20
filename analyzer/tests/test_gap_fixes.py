@@ -20,7 +20,6 @@ Covers:
 """
 import uuid
 from datetime import timedelta
-from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -32,8 +31,12 @@ from rest_framework.test import APIClient
 
 from accounts.models import Plan, Wallet, WalletTransaction
 from analyzer.models import (
-    ResumeAnalysis, Resume, GeneratedResume,
-    JobAlert, JobMatch, DiscoveredJob, JobSearchProfile,
+    DiscoveredJob,
+    GeneratedResume,
+    JobAlert,
+    JobMatch,
+    Resume,
+    ResumeAnalysis,
 )
 
 
@@ -451,8 +454,9 @@ class AnalysisCompareTests(TestMixin, TestCase):
 
 class AvatarUploadTests(TestMixin, TestCase):
     def _make_image(self, name='avatar.png', content_type='image/png'):
-        from PIL import Image
         import io
+
+        from PIL import Image
         img = Image.new('RGB', (100, 100), color='red')
         buf = io.BytesIO()
         img.save(buf, format='PNG')

@@ -157,7 +157,6 @@ def verify_subscription_payment(
 
     Returns result dict.
     """
-    from .models import RazorpayPayment, RazorpaySubscription
 
     # Signature verification
     expected = hmac.new(
@@ -642,7 +641,6 @@ def handle_webhook_event(event: str, payload: dict) -> dict:
 
     Returns a result dict with processing status.
     """
-    from django.contrib.auth.models import User
 
     handler_map = {
         'payment.captured': _handle_payment_captured,
@@ -733,6 +731,7 @@ def _handle_subscription_charged(payload: dict) -> dict:
     Extends the billing cycle and grants monthly credits.
     """
     from django.contrib.auth.models import User
+
     from .models import RazorpayPayment, RazorpaySubscription
     from .services import grant_monthly_credits_for_user
 

@@ -12,17 +12,15 @@ Covers:
 
 import io
 import tempfile
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
-from rest_framework import status
 
-from analyzer.models import ResumeAnalysis, Resume
-
+from analyzer.models import Resume, ResumeAnalysis
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

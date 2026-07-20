@@ -6,8 +6,8 @@ Usage:
     python manage.py seed_credit_costs
 """
 from django.core.management.base import BaseCommand
-from accounts.models import CreditCost
 
+from accounts.models import CreditCost
 
 CREDIT_COSTS = [
     {

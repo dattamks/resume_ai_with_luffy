@@ -13,16 +13,16 @@ Covered:
 """
 import uuid
 from io import BytesIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
-from accounts.models import Plan, Wallet, CreditCost
-from analyzer.models import ResumeAnalysis, DiscoveredJob, NewsSnippet
+from accounts.models import CreditCost, Plan, Wallet
+from analyzer.models import DiscoveredJob, NewsSnippet, ResumeAnalysis
 
 
 def _make_pdf(content=b'%PDF-1.4 hello world resume text'):
@@ -289,6 +289,7 @@ class JobAlertPreferencesValidationTests(TestCase):
 class SSRFValidationTests(TestCase):
     def test_ip_blocking_covers_edge_cases(self):
         import ipaddress
+
         from analyzer.services.jd_fetcher import JDFetcher
         blocked = [
             '127.0.0.1', '10.0.0.1', '192.168.1.1', '169.254.1.1',
@@ -349,7 +350,7 @@ class GeoFilterTests(TestCase):
 
 class CostEstimationTests(TestCase):
     def test_gpt4o_not_priced_as_mini(self):
-        from analyzer.services.analyzer import _estimate_cost, _MODEL_PRICING
+        from analyzer.services.analyzer import _MODEL_PRICING, _estimate_cost
         # A versioned id that isn't an exact key exercises the partial match.
         cost = _estimate_cost('openai/gpt-4o-2024-08-06', 1_000_000, 1_000_000)
         p = _MODEL_PRICING['openai/gpt-4o']

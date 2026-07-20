@@ -1,6 +1,19 @@
 from django.contrib import admin
-from .models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse, GeneratedResume, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
-from .models import Company, CompanyEntity, CompanyCareerPage
+
+from .models import (
+    Company,
+    CompanyCareerPage,
+    CompanyEntity,
+    CoverLetter,
+    GeneratedResume,
+    InterviewPrep,
+    LLMResponse,
+    Resume,
+    ResumeAnalysis,
+    ResumeTemplate,
+    ResumeVersion,
+    ScrapeResult,
+)
 
 
 @admin.register(Resume)
@@ -131,7 +144,15 @@ class CompanyCareerPageAdmin(admin.ModelAdmin):
 
 # ── Phase 11: Smart Job Alerts ────────────────────────────────────────────────
 
-from .models import JobSearchProfile, JobAlert, DiscoveredJob, JobMatch, JobAlertRun, CrawlSource, RoleFamily  # noqa: E402
+from .models import (  # noqa: E402
+    CrawlSource,
+    DiscoveredJob,
+    JobAlert,
+    JobAlertRun,
+    JobMatch,
+    JobSearchProfile,
+    RoleFamily,
+)
 
 
 @admin.register(RoleFamily)
@@ -233,7 +254,7 @@ class CrawlSourceAdmin(admin.ModelAdmin):
 
 # ── Phase 12: Notifications & Dedup ──────────────────────────────────────────
 
-from .models import SentAlert, Notification, UserCompanyFollow  # noqa: E402
+from .models import Notification, SentAlert, UserCompanyFollow  # noqa: E402
 
 
 @admin.register(SentAlert)

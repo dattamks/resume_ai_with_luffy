@@ -21,7 +21,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db.models import Avg, Q
+from django.db.models import Q
 from django.utils import timezone
 
 from analyzer.models import DiscoveredJob, Skill

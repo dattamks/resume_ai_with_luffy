@@ -7,8 +7,7 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import UserProfile, NotificationPreference, Plan, Wallet, WalletTransaction, ContactSubmission
-
+from .models import ContactSubmission, NotificationPreference, Plan, UserProfile, Wallet, WalletTransaction
 
 # ── Reserved usernames that cannot be registered ───────────────────────────
 _RESERVED_USERNAMES = frozenset({

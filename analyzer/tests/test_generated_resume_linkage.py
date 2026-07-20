@@ -17,21 +17,21 @@ Covers:
   - Integration: render_builder_resume_task chains auto-create
 """
 import hashlib
-import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
-from rest_framework import status as drf_status
 
 from accounts.models import Plan, Wallet
 from analyzer.models import (
-    Resume, ResumeAnalysis, GeneratedResume, ResumeVersion,
-    JobSearchProfile, LLMResponse, ResumeTemplate,
+    GeneratedResume,
+    JobSearchProfile,
+    Resume,
+    ResumeAnalysis,
+    ResumeTemplate,
+    ResumeVersion,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
 

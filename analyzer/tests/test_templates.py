@@ -8,18 +8,18 @@ Tests for the resume template marketplace:
 - GenerateResumeView with template selection
 """
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
-from django.test import TestCase, SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Plan, UserProfile
-from analyzer.models import ResumeTemplate, ResumeAnalysis, Resume, GeneratedResume
+from analyzer.models import Resume, ResumeAnalysis, ResumeTemplate
 from analyzer.services.template_registry import (
-    get_renderer, get_available_slugs, TEMPLATE_RENDERERS,
+    get_available_slugs,
+    get_renderer,
 )
-
 
 SAMPLE_RESUME_CONTENT = {
     'contact': {
@@ -468,8 +468,9 @@ class SeedTemplatesCommandTests(TestCase):
     """Test the seed_templates management command."""
 
     def test_seed_creates_templates(self):
-        from django.core.management import call_command
         from io import StringIO
+
+        from django.core.management import call_command
         out = StringIO()
         call_command('seed_templates', stdout=out)
         self.assertEqual(ResumeTemplate.objects.count(), 6)
@@ -480,23 +481,26 @@ class SeedTemplatesCommandTests(TestCase):
             )
 
     def test_seed_modern_luxe_is_active(self):
-        from django.core.management import call_command
         from io import StringIO
+
+        from django.core.management import call_command
         call_command('seed_templates', stdout=StringIO())
         luxe = ResumeTemplate.objects.get(slug='modern_luxe')
         self.assertTrue(luxe.is_active)
         self.assertTrue(luxe.is_premium)
 
     def test_seed_modern_is_inactive(self):
-        from django.core.management import call_command
         from io import StringIO
+
+        from django.core.management import call_command
         call_command('seed_templates', stdout=StringIO())
         modern = ResumeTemplate.objects.get(slug='modern')
         self.assertFalse(modern.is_active)
 
     def test_seed_is_idempotent(self):
-        from django.core.management import call_command
         from io import StringIO
+
+        from django.core.management import call_command
         call_command('seed_templates', stdout=StringIO())
         call_command('seed_templates', stdout=StringIO())
         self.assertEqual(ResumeTemplate.objects.count(), 6)

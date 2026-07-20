@@ -2,14 +2,14 @@ import functools
 import logging
 
 from django.conf import settings
-from openai import OpenAI, APITimeoutError, RateLimitError, APIConnectionError, APIStatusError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 from tenacity import (
+    before_sleep_log,
     retry,
-    retry_if_exception_type,
     retry_if_exception,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    before_sleep_log,
 )
 
 from .base import AIProvider

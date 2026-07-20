@@ -7,7 +7,6 @@ CSS support (flexbox, grid, @font-face, etc.).
 Falls back to ReportLab if Playwright/Chromium is unavailable.
 """
 import logging
-import os
 import threading
 from pathlib import Path
 

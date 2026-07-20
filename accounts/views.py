@@ -3,16 +3,43 @@ import hmac
 import json
 import logging
 import time
-from datetime import datetime
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
-from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
+from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+from rest_framework_simplejwt.tokens import OutstandingToken, RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
+
+from .email_utils import send_templated_email
+from .models import ConsentLog, EmailVerificationToken
+from .serializers import (
+    ChangePasswordSerializer,
+    CustomTokenObtainPairSerializer,
+    ForgotPasswordSerializer,
+    GoogleAuthSerializer,
+    GoogleCompleteSerializer,
+    NotificationPreferenceSerializer,
+    PlanSerializer,
+    RegisterSerializer,
+    ResetPasswordSerializer,
+    UpdateUserSerializer,
+    UserSerializer,
+    WalletTransactionSerializer,
+)
+from .throttles import AuthEndpointThrottle
+
+logger = logging.getLogger('accounts')
 
 
 def get_trusted_client_ip(request):
@@ -24,8 +51,7 @@ def get_trusted_client_ip(request):
     proxy reported), NOT the left-most entry, which is fully client-controlled
     and therefore spoofable.
     """
-    from django.conf import settings as _settings
-    num_proxies = _settings.REST_FRAMEWORK.get('NUM_PROXIES', 1)
+    num_proxies = settings.REST_FRAMEWORK.get('NUM_PROXIES', 1)
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
     remote = request.META.get('REMOTE_ADDR')
     if num_proxies == 0 or not xff:
@@ -36,35 +62,6 @@ def get_trusted_client_ip(request):
     if num_proxies is None:
         return addrs[0]
     return addrs[-min(num_proxies, len(addrs))]
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.throttling import AnonRateThrottle
-from rest_framework_simplejwt.views import TokenObtainPairView
-from rest_framework_simplejwt.tokens import RefreshToken, OutstandingToken
-from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
-
-from .serializers import (
-    RegisterSerializer,
-    UserSerializer,
-    UpdateUserSerializer,
-    ChangePasswordSerializer,
-    ForgotPasswordSerializer,
-    ResetPasswordSerializer,
-    NotificationPreferenceSerializer,
-    CustomTokenObtainPairSerializer,
-    PlanSerializer,
-    WalletSerializer,
-    WalletTransactionSerializer,
-    GoogleAuthSerializer,
-    GoogleCompleteSerializer,
-)
-from .email_utils import send_templated_email
-from .models import ConsentLog, EmailVerificationToken
-from .throttles import AuthEndpointThrottle
-
-logger = logging.getLogger('accounts')
 
 
 class RegisterView(APIView):
@@ -259,9 +256,10 @@ class LoginView(TokenObtainPairView):
         response = super().post(request, *args, **kwargs)
         if response.status_code == 200:
             try:
-                from analyzer.models import UserActivity
                 # Serializer validates credentials; extract user from the token
                 from rest_framework_simplejwt.tokens import AccessToken
+
+                from analyzer.models import UserActivity
                 token = AccessToken(response.data['access'])
                 from django.contrib.auth.models import User
                 user = User.objects.get(id=token['user_id'])
@@ -300,7 +298,8 @@ class LogoutAllDevicesView(APIView):
 
     def post(self, request):
         from rest_framework_simplejwt.token_blacklist.models import (
-            OutstandingToken, BlacklistedToken,
+            BlacklistedToken,
+            OutstandingToken,
         )
 
         outstanding = OutstandingToken.objects.filter(user=request.user)
@@ -336,7 +335,7 @@ class MeView(APIView):
 
     def get(self, request):
         # Ensure profile exists (for users created before migration)
-        from .models import UserProfile, NotificationPreference
+        from .models import NotificationPreference, UserProfile
         UserProfile.objects.get_or_create(user=request.user)
         NotificationPreference.objects.get_or_create(user=request.user)
         return Response(UserSerializer(request.user).data)
@@ -556,8 +555,9 @@ class WalletTransactionListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from .models import Wallet, WalletTransaction
         from rest_framework.pagination import PageNumberPagination
+
+        from .models import Wallet, WalletTransaction
 
         wallet, _ = Wallet.objects.get_or_create(user=request.user)
         transactions = WalletTransaction.objects.filter(wallet=wallet)
@@ -616,8 +616,8 @@ class PlanSubscribeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from .services import subscribe_plan
         from .models import Plan
+        from .services import subscribe_plan
 
         plan_slug = request.data.get('plan_slug')
         if not plan_slug:
@@ -741,8 +741,8 @@ class GoogleLoginView(APIView):
 
         # Verify Google ID token
         try:
-            from google.oauth2 import id_token as google_id_token
             from google.auth.transport import requests as google_requests
+            from google.oauth2 import id_token as google_id_token
 
             idinfo = google_id_token.verify_oauth2_token(
                 id_token_str,
@@ -1040,7 +1040,9 @@ class WalletTransactionExportView(APIView):
 
     def get(self, request):
         import csv
+
         from django.http import HttpResponse
+
         from .models import Wallet, WalletTransaction
 
         wallet, _ = Wallet.objects.get_or_create(user=request.user)
@@ -1084,9 +1086,9 @@ class AvatarUploadView(APIView):
     ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
 
     def post(self, request):
+
         from django.core.files.storage import default_storage
         from PIL import Image
-        import io
 
         f = request.FILES.get('avatar')
         if not f:

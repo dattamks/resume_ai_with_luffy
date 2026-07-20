@@ -157,7 +157,7 @@ def deduct_credits(user, action_slug: str, description: str = '', reference_id: 
 
     # Prometheus metrics
     try:
-        from resume_ai.metrics import CREDIT_OPS, CREDIT_AMOUNT
+        from resume_ai.metrics import CREDIT_AMOUNT, CREDIT_OPS
         CREDIT_OPS.labels(operation='debit').inc()
         CREDIT_AMOUNT.labels(operation='debit').inc(cost)
     except Exception:
@@ -226,7 +226,7 @@ def refund_credits(user, action_slug: str, description: str = '', reference_id: 
 
     # Prometheus metrics
     try:
-        from resume_ai.metrics import CREDIT_OPS, CREDIT_AMOUNT
+        from resume_ai.metrics import CREDIT_AMOUNT, CREDIT_OPS
         CREDIT_OPS.labels(operation='refund').inc()
         CREDIT_AMOUNT.labels(operation='refund').inc(cost)
     except Exception:
@@ -289,7 +289,7 @@ def add_credits(user, amount: int, tx_type: str, description: str = '', referenc
 
     # Prometheus metrics
     try:
-        from resume_ai.metrics import CREDIT_OPS, CREDIT_AMOUNT
+        from resume_ai.metrics import CREDIT_AMOUNT, CREDIT_OPS
         CREDIT_OPS.labels(operation=tx_type).inc()
         CREDIT_AMOUNT.labels(operation=tx_type).inc(amount)
     except Exception:
@@ -477,7 +477,7 @@ def process_expired_plans():
     - Grant new plan's monthly credits (with cap)
     - Clear pending_plan and plan_valid_until
     """
-    from .models import UserProfile, WalletTransaction
+    from .models import UserProfile
 
     now = timezone.now()
     expired_profiles = UserProfile.objects.filter(

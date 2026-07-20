@@ -8,8 +8,7 @@ unless explicitly needed.
 """
 from rest_framework import serializers
 
-from .models import DiscoveredJob, JobAlert, InterviewPrep, CoverLetter
-
+from .models import CoverLetter, DiscoveredJob, InterviewPrep, JobAlert
 
 # ── Feed Jobs ────────────────────────────────────────────────────────────
 

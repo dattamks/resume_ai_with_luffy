@@ -18,27 +18,29 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.throttles import WriteThrottle, ReadOnlyThrottle
 from accounts.services import (
-    deduct_credits, refund_credits, check_balance,
     InsufficientCreditsError,
+    deduct_credits,
+    refund_credits,
 )
-from .models import ResumeChat, GeneratedResume, ResumeTemplate
+from accounts.throttles import ReadOnlyThrottle, WriteThrottle
+
+from .models import ResumeChat
 from .serializers import (
-    ResumeChatSerializer,
+    ResumeChatFinalizeSerializer,
     ResumeChatListSerializer,
+    ResumeChatMessageSerializer,
+    ResumeChatSerializer,
     ResumeChatStartSerializer,
     ResumeChatSubmitSerializer,
-    ResumeChatFinalizeSerializer,
-    ResumeChatMessageSerializer,
     ResumeChatTextMessageSerializer,
 )
 from .services.resume_chat_service import (
-    start_session,
-    process_step,
-    process_text_message,
     finalize_resume,
     get_user_resumes_for_selection,
+    process_step,
+    process_text_message,
+    start_session,
 )
 
 logger = logging.getLogger('analyzer')
@@ -158,7 +160,7 @@ class ResumeChatSubmitView(APIView):
 
         try:
             new_messages = process_step(chat, action, payload)
-        except Exception as exc:
+        except Exception:
             logger.exception('Error processing chat step: chat=%s action=%s', pk, action)
             return Response(
                 {'detail': 'An unexpected error occurred while processing your request. Please try again.'},
@@ -221,7 +223,7 @@ class ResumeChatTextMessageView(APIView):
 
         try:
             result = process_text_message(chat, user_text)
-        except Exception as exc:
+        except Exception:
             logger.exception('Error processing text message: chat=%s', pk)
             return Response(
                 {'detail': 'An unexpected error occurred while processing your message. Please try again.'},

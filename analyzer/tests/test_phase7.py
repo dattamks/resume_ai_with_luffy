@@ -1,15 +1,16 @@
 """
 Tests for Phase 7: Resume model, soft-delete, and dashboard analytics.
 """
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
-from analyzer.models import ResumeAnalysis, Resume, ScrapeResult, LLMResponse
+from analyzer.models import LLMResponse, Resume, ResumeAnalysis, ScrapeResult
 
 
 def _ensure_free_plan():

@@ -13,7 +13,7 @@ All throttle classes inherit from ``_HeaderAwareMixin`` which stashes
 the resolved throttle instance on ``request._throttle_instances`` so
 the ``RateLimitHeadersMiddleware`` can inject ``X-RateLimit-*`` headers.
 """
-from rest_framework.throttling import SimpleRateThrottle, UserRateThrottle, AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle, UserRateThrottle
 
 
 class _HeaderAwareMixin:

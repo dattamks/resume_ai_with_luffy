@@ -18,14 +18,18 @@ import json
 import logging
 import re
 import time
-import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import User
 
 from ..models import (
-    ResumeChat, ResumeChatMessage, Resume, ResumeAnalysis, GeneratedResume,
-    LLMResponse, JobSearchProfile,
+    GeneratedResume,
+    JobSearchProfile,
+    LLMResponse,
+    Resume,
+    ResumeAnalysis,
+    ResumeChat,
+    ResumeChatMessage,
 )
 
 logger = logging.getLogger('analyzer')
@@ -1537,8 +1541,8 @@ def _llm_structure_experience(user, raw_text, target_role=''):
 
     Returns (list_of_experience_dicts, LLMResponse_record).
     """
-    from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.base import check_prompt_length
+    from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.json_repair import repair_json
 
     client = get_openai_client()
@@ -1755,8 +1759,8 @@ def _llm_polish_resume(chat):
 
     Returns (polished_resume_data_dict, LLMResponse_record).
     """
-    from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.base import check_prompt_length
+    from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.json_repair import repair_json
 
     client = get_openai_client()
@@ -2302,7 +2306,7 @@ def process_text_message(chat: ResumeChat, user_text: str) -> dict:
 
     try:
         response = _call()
-    except Exception as exc:
+    except Exception:
         logger.exception('Text chat LLM call failed: chat=%s', chat.id)
         # Return a graceful fallback
         fallback_msg = ResumeChatMessage.objects.create(

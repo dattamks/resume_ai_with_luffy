@@ -14,9 +14,8 @@ Usage:
 import re
 
 from django.core.management.base import BaseCommand
-from django.db.models import Q, Count
+from django.db.models import Count, Q
 from django.db.models.functions import Length
-
 
 # ── Patterns that indicate a failed / empty crawl ──────────────────
 JUNK_TITLE_KEYWORDS = [

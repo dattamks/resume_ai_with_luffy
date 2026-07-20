@@ -1,7 +1,24 @@
-from rest_framework import serializers
 from django.conf import settings
+from rest_framework import serializers
 
-from .models import ResumeAnalysis, ScrapeResult, LLMResponse, Resume, GeneratedResume, JobAlert, JobMatch, DiscoveredJob, JobAlertRun, JobSearchProfile, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate, ResumeChat, ResumeChatMessage
+from .models import (
+    CoverLetter,
+    DiscoveredJob,
+    GeneratedResume,
+    InterviewPrep,
+    JobAlert,
+    JobAlertRun,
+    JobMatch,
+    JobSearchProfile,
+    LLMResponse,
+    Resume,
+    ResumeAnalysis,
+    ResumeChat,
+    ResumeChatMessage,
+    ResumeTemplate,
+    ResumeVersion,
+    ScrapeResult,
+)
 
 
 class ResumeSerializer(serializers.ModelSerializer):
