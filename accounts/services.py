@@ -19,9 +19,11 @@ _DEFAULT_COSTS = {
     'resume_analysis': 1,
     'resume_generation': 1,
     'job_alert_run': 0,
-    'interview_prep': 0,
-    'cover_letter': 0,
-    'resume_builder': 2,
+    'interview_prep': 0,        # question-bank path — no LLM call, free
+    'interview_prep_ai': 1,     # LLM fallback path (bank empty) — charged
+    'cover_letter': 1,          # documented 1 credit; every LLM call is metered
+    'resume_builder': 2,        # entry charge to start a builder session
+    'chat_ai_action': 1,        # per LLM-backed action inside a builder session
 }
 
 

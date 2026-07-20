@@ -2269,6 +2269,7 @@ def generate_interview_prep_task(self, prep_id, user_id):
         prep.status = InterviewPrep.STATUS_FAILED
         prep.error_message = str(exc)
         prep.save(update_fields=['status', 'error_message'])
+        _refund_interview_prep_credits(prep, user_id)
     except Exception as exc:
         logger.exception('Unexpected error in interview prep: id=%s', prep.id)
         prep.status = InterviewPrep.STATUS_FAILED
@@ -2277,6 +2278,27 @@ def generate_interview_prep_task(self, prep_id, user_id):
         if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)
+        _refund_interview_prep_credits(prep, user_id)
+
+
+def _refund_interview_prep_credits(prep, user_id):
+    """Refund interview-prep (LLM) credits on failure (idempotent per prep id)."""
+    try:
+        if not getattr(prep, 'credits_deducted', False):
+            return
+        from django.contrib.auth.models import User
+
+        from accounts.services import refund_credits
+        user = User.objects.get(id=user_id)
+        refund_credits(
+            user, 'interview_prep_ai',
+            description=f'Refund: interview prep #{prep.id} failed',
+            reference_id=str(prep.id),
+        )
+        prep.credits_deducted = False
+        prep.save(update_fields=['credits_deducted'])
+    except Exception:
+        logger.exception('Failed to refund interview prep credits: id=%s', prep.id)
 
 
 # ── Cover Letter Generation ─────────────────────────────────────────────────

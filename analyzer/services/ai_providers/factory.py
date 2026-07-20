@@ -48,14 +48,18 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
 
 
 # Shared retry decorator for all LLM API calls.
-# Retries on rate limits (429), timeouts, connection errors, and 5xx.
-# Exponential backoff: 2s → 4s → 8s (3 attempts total).
+# Retries ONLY transient failures (rate limits, timeouts, connection errors,
+# 5xx) — never validation/parse errors. Those transient retries produce no
+# billable output; combined with the provider's single validation retry, this
+# bounds an analysis to at most AI_MAX_ATTEMPTS × 2 total HTTP requests (and at
+# most 2 *billable* completions), capping provider cost per analysis.
+_AI_MAX_ATTEMPTS = getattr(settings, 'AI_MAX_ATTEMPTS', 2)
 llm_retry = retry(
     retry=(
         retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, ConnectionError, OSError))
         | retry_if_exception(_is_retryable_api_error)
     ),
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(max(1, _AI_MAX_ATTEMPTS)),
     wait=wait_exponential(multiplier=2, min=2, max=30),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,

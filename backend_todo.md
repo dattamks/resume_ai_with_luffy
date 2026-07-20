@@ -1377,6 +1377,22 @@ PDF bytes → upload to R2 → return download URL
 - Public share payload no longer exposes `sentence_suggestions` (verbatim
   résumé sentences); still available in the owner's authenticated view.
 - Django `4.2.16 → 4.2.30`, gunicorn `22 → 23`, `.github/dependabot.yml` added.
+- **CI** (`.github/workflows/ci.yml`): ruff lint, migrations validated on real
+  Postgres+pgvector, full suite on SQLite. `ruff.toml` added; 248 unused
+  imports/vars cleaned.
+- **Credits enforced on every LLM path**: cover letter now costs 1; interview-prep
+  LLM fallback charges `interview_prep_ai`; the conversational builder charges
+  `chat_ai_action` per AI action (structure / rewrite / polish / free-text turn),
+  so the credit balance is the usage ceiling (out of credits → HTTP 402);
+  analysis LLM retries bounded via `AI_MAX_ATTEMPTS`.
+- **Upload hardening**: PDFs containing active content (`/JavaScript`, `/JS`,
+  `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/XFA`, `/AA`) are rejected before
+  parsing (`PDF_REJECT_ACTIVE_CONTENT`).
+- **DB-level email uniqueness**: partial, case-insensitive unique index on
+  `auth_user(LOWER(email))` (migration `0023`, guarded by a duplicate pre-check;
+  `check_duplicate_emails` command added).
+- **Application tracker**: design proposed in `docs/APPLICATION_TRACKER_DESIGN.md`
+  (awaiting approval — no code yet).
 
 
 

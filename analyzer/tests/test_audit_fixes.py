@@ -140,6 +140,46 @@ class EmailVerificationGateTests(_AuthMixin, TestCase):
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
 
 
+class LLMCreditEnforcementTests(_AuthMixin, TestCase):
+    """Item 3: every LLM path is metered; credits are the ceiling."""
+
+    def test_llm_action_default_costs(self):
+        from accounts.services import get_credit_cost
+        # LLM-backed actions cost credits by default (no seeding required).
+        self.assertEqual(get_credit_cost('cover_letter'), 1)
+        self.assertEqual(get_credit_cost('interview_prep_ai'), 1)
+        self.assertEqual(get_credit_cost('chat_ai_action'), 1)
+        # The free question-bank interview path stays free.
+        self.assertEqual(get_credit_cost('interview_prep'), 0)
+
+    def test_chat_ai_action_charges_and_blocks(self):
+        from accounts.models import Wallet
+        from accounts.services import InsufficientCreditsError
+        from analyzer.services.resume_chat_service import _charge_ai_action
+        wallet, _ = Wallet.objects.get_or_create(user=self.user)
+        wallet.balance = 1
+        wallet.save(update_fields=['balance'])
+        # First AI action deducts the single credit...
+        _charge_ai_action(self.user)
+        self.assertEqual(Wallet.objects.get(user=self.user).balance, 0)
+        # ...and the next is blocked — credits are the ceiling.
+        with self.assertRaises(InsufficientCreditsError):
+            _charge_ai_action(self.user)
+
+    @patch('analyzer.views.generate_cover_letter_task')
+    def test_cover_letter_charges_one_by_default(self, mock_task):
+        # No CreditCost row seeded — the default (1) applies.
+        mock_task.delay.return_value = MagicMock()
+        self._give_credits(3)
+        analysis = ResumeAnalysis.objects.create(
+            user=self.user, status=ResumeAnalysis.STATUS_DONE, jd_role='SWE',
+        )
+        resp = self.client.post(f'/api/v1/analyses/{analysis.id}/cover-letter/',
+                                {'tone': 'professional'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(Wallet.objects.get(user=self.user).balance, 2)
+
+
 class CoverLetterBillingTests(_AuthMixin, TestCase):
     @patch('analyzer.views.generate_cover_letter_task')
     def test_cover_letter_deducts_configured_credits(self, mock_task):
@@ -346,6 +386,36 @@ class GeoFilterTests(TestCase):
         # A country-tagged USA job must NOT match India just because its
         # free-text location mentions an Indian city.
         self.assertNotIn(tagged_us.id, matched)
+
+
+class PDFActiveContentTests(TestCase):
+    def test_pdf_with_javascript_rejected(self):
+        from analyzer.services.pdf_extractor import PDFExtractor
+        # A structurally-PDF file that embeds JavaScript / an OpenAction.
+        malicious = (
+            b'%PDF-1.4\n1 0 obj<</Type/Catalog/OpenAction<</S/JavaScript'
+            b'/JS(app.alert(1))>>>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF'
+        )
+        with self.assertRaises(ValueError) as ctx:
+            PDFExtractor().extract(BytesIO(malicious))
+        self.assertIn('active content', str(ctx.exception).lower())
+
+
+class EmailUniquenessTests(TestCase):
+    def test_case_insensitive_email_unique_at_db_level(self):
+        from django.db import IntegrityError, transaction
+        User.objects.create_user(username='e1', email='Dupe@Example.com', password='StrongPass123!')
+        # A different-cased duplicate must be rejected by the DB index, even if
+        # some code path bypasses the serializer-level check.
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                User.objects.create_user(username='e2', email='dupe@example.com', password='StrongPass123!')
+
+    def test_blank_emails_are_allowed_to_repeat(self):
+        # The unique index is partial (email <> ''), so multiple blank emails are fine.
+        User.objects.create_user(username='b1', email='', password='StrongPass123!')
+        User.objects.create_user(username='b2', email='', password='StrongPass123!')
+        self.assertEqual(User.objects.filter(email='').count(), 2)
 
 
 class CostEstimationTests(TestCase):

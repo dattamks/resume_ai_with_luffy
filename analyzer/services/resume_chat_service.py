@@ -1535,12 +1535,27 @@ _STEP_UI_BUILDERS = {
 _MD_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)\n?\s*```$', re.DOTALL)
 
 
+def _charge_ai_action(user):
+    """
+    Deduct one credit for an LLM-backed builder action.
+
+    Credits are the usage ceiling for the conversational builder: every AI
+    action (structure experience, rewrite bullets, polish, free-text turn)
+    consumes credits, so when the user runs out the action is blocked. Raises
+    InsufficientCreditsError (surfaced by the views as HTTP 402) when the
+    balance is too low.
+    """
+    from accounts.services import deduct_credits
+    return deduct_credits(user, 'chat_ai_action', description='Resume builder AI action')
+
+
 def _llm_structure_experience(user, raw_text, target_role=''):
     """
     Call LLM to structure free-text work experience into the resume JSON schema.
 
     Returns (list_of_experience_dicts, LLMResponse_record).
     """
+    _charge_ai_action(user)
     from .ai_providers.base import check_prompt_length
     from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.json_repair import repair_json
@@ -1666,6 +1681,7 @@ def _llm_rewrite_bullets(user, experience_entry, focus_areas, target_role=''):
 
     Returns (list_of_new_bullets, LLMResponse_record).
     """
+    _charge_ai_action(user)
     from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.json_repair import repair_json
 
@@ -1759,6 +1775,7 @@ def _llm_polish_resume(chat):
 
     Returns (polished_resume_data_dict, LLMResponse_record).
     """
+    _charge_ai_action(chat.user)
     from .ai_providers.base import check_prompt_length
     from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.json_repair import repair_json
@@ -2252,6 +2269,10 @@ def process_text_message(chat: ResumeChat, user_text: str) -> dict:
     """
     from .ai_providers.factory import get_openai_client, llm_retry
     from .ai_providers.json_repair import repair_json
+
+    # Free-text turns always call the LLM — charge before doing anything so an
+    # out-of-credits user is blocked (raises InsufficientCreditsError → 402).
+    _charge_ai_action(chat.user)
 
     # 1. Save user message
     user_msg = ResumeChatMessage.objects.create(

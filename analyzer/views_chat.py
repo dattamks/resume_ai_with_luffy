@@ -160,6 +160,11 @@ class ResumeChatSubmitView(APIView):
 
         try:
             new_messages = process_step(chat, action, payload)
+        except InsufficientCreditsError as e:
+            return Response(
+                {'detail': 'Insufficient credits for this AI action.', 'balance': e.balance, 'cost': e.cost},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         except Exception:
             logger.exception('Error processing chat step: chat=%s action=%s', pk, action)
             return Response(
@@ -223,6 +228,11 @@ class ResumeChatTextMessageView(APIView):
 
         try:
             result = process_text_message(chat, user_text)
+        except InsufficientCreditsError as e:
+            return Response(
+                {'detail': 'Insufficient credits for this AI action.', 'balance': e.balance, 'cost': e.cost},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         except Exception:
             logger.exception('Error processing text message: chat=%s', pk)
             return Response(

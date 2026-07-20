@@ -2163,23 +2163,44 @@ class InterviewPrepView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Fallback: no questions in DB → use legacy LLM path (async)
-        prep = InterviewPrep.objects.create(
-            analysis=analysis,
-            user=request.user,
-            status=InterviewPrep.STATUS_PROCESSING,
-            credits_deducted=False,
-        )
+        # Fallback: no questions in DB → LLM path (async). This path DOES make
+        # an LLM call, so it is charged (the question-bank path above is free).
+        try:
+            credit_result = deduct_credits(
+                request.user, 'interview_prep_ai',
+                description=f'Interview prep (LLM) for analysis #{analysis.id}',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {'detail': 'Insufficient credits.', 'balance': e.balance, 'cost': e.cost},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
-        generate_interview_prep_task.delay(str(prep.id), request.user.id)
+        try:
+            prep = InterviewPrep.objects.create(
+                analysis=analysis,
+                user=request.user,
+                status=InterviewPrep.STATUS_PROCESSING,
+                credits_deducted=bool(credit_result['cost']),
+            )
 
-        from .models import UserActivity
-        UserActivity.record(request.user, UserActivity.ACTION_INTERVIEW_PREP)
+            generate_interview_prep_task.delay(str(prep.id), request.user.id)
 
-        return Response({
-            'id': str(prep.id),
-            'status': prep.status,
-        }, status=status.HTTP_202_ACCEPTED)
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_INTERVIEW_PREP)
+
+            return Response({
+                'id': str(prep.id),
+                'status': prep.status,
+                'credits_used': credit_result['cost'],
+                'balance': credit_result['balance_after'],
+            }, status=status.HTTP_202_ACCEPTED)
+        except Exception:
+            refund_credits(
+                request.user, 'interview_prep_ai',
+                description='Refund: interview prep creation failed',
+            )
+            raise
 
 
 class InterviewPrepStatusView(APIView):

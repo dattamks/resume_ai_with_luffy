@@ -348,6 +348,10 @@ OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.
 # rely on the key being absent.
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
+# Max HTTP attempts per LLM call (transient-error retries). Bounds provider
+# cost: with the provider's single validation retry, one analysis makes at most
+# AI_MAX_ATTEMPTS × 2 total requests.
+AI_MAX_ATTEMPTS = config('AI_MAX_ATTEMPTS', default=2, cast=int)
 MAX_PDF_PAGES = config('MAX_PDF_PAGES', default=50, cast=int)
 
 # Prometheus /metrics protection. When set, scrapers must send

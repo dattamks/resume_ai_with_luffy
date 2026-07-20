@@ -28,17 +28,28 @@ CREDIT_COSTS = [
     {
         'action': 'interview_prep',
         'cost': 0,
-        'description': 'Interview preparation is free — no credit cost.',
+        'description': 'Interview prep from the question bank — no LLM, free.',
+    },
+    {
+        'action': 'interview_prep_ai',
+        'cost': 1,
+        'description': 'Interview prep LLM fallback (used only when the question bank is empty).',
     },
     {
         'action': 'cover_letter',
-        'cost': 0,
-        'description': 'Cover letter generation is free — no credit cost.',
+        'cost': 1,
+        'description': 'Cost per AI-generated cover letter.',
     },
     {
         'action': 'resume_builder',
         'cost': 2,
-        'description': 'Cost per resume created via the conversational resume builder.',
+        'description': 'Entry charge to start a conversational resume-builder session.',
+    },
+    {
+        'action': 'chat_ai_action',
+        'cost': 1,
+        'description': 'Per AI-backed action inside a builder chat (rewrite, structure, message). '
+                       'Credits act as the usage ceiling — when they run out, AI actions stop.',
     },
 ]
 

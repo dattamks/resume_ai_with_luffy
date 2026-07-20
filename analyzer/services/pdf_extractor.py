@@ -35,6 +35,28 @@ class PDFExtractor:
                 'Please upload a PDF document.'
             )
 
+    # High-signal "active content" markers. A résumé exported from Word / LaTeX
+    # / Canva / a browser never contains these; their presence indicates an
+    # embedded script, launch action, or embedded file — reject before parsing.
+    # (Best-effort heuristic, not a substitute for a real AV scanner: it catches
+    # markers in uncompressed catalog objects, the common malicious case.)
+    _ACTIVE_CONTENT_MARKERS = (
+        b'/JavaScript', b'/JS', b'/Launch', b'/EmbeddedFile',
+        b'/RichMedia', b'/XFA', b'/AA',
+    )
+
+    def _scan_active_content(self, raw: bytes) -> None:
+        if not getattr(settings, 'PDF_REJECT_ACTIVE_CONTENT', True):
+            return
+        found = [m.decode() for m in self._ACTIVE_CONTENT_MARKERS if m in raw]
+        if found:
+            logger.warning('PDFExtractor: rejected active-content PDF (markers=%s)', found)
+            raise ValueError(
+                'This PDF contains active content (scripts, launch actions, or '
+                'embedded files) and was rejected for security. Please upload a '
+                'plain PDF exported from your resume editor.'
+            )
+
     def extract(self, file_field) -> str:
         """
         Extract all text from a PDF.
@@ -61,9 +83,10 @@ class PDFExtractor:
                 self._check_size(os.path.getsize(file_field))
             except OSError:
                 pass  # size unknown — magic/parse checks still apply
-            # Validate magic bytes for local files
             with open(file_field, 'rb') as f:
-                self._validate_pdf_magic(f.read(8))
+                raw = f.read()
+            self._validate_pdf_magic(raw[:8])
+            self._scan_active_content(raw)
             pdf_source = file_field
         elif hasattr(file_field, 'open'):
             # Django FieldFile — works with local and R2/S3 storage.
@@ -80,15 +103,22 @@ class PDFExtractor:
                 file_field.close()
             self._check_size(len(raw))
             self._validate_pdf_magic(raw[:8])
+            self._scan_active_content(raw)
             pdf_source = io.BytesIO(raw)
         else:
-            # Generic file-like object
+            # Generic file-like object — read it fully so we can validate the
+            # magic bytes and scan for active content, then hand pdfplumber a
+            # fresh BytesIO.
             if hasattr(file_field, 'seek'):
                 pos = file_field.tell()
-                header = file_field.read(8)
+                raw = file_field.read()
                 file_field.seek(pos)
-                self._validate_pdf_magic(header)
-            pdf_source = file_field
+                self._check_size(len(raw))
+                self._validate_pdf_magic(raw[:8])
+                self._scan_active_content(raw)
+                pdf_source = io.BytesIO(raw)
+            else:
+                pdf_source = file_field
 
         try:
             pdf_ctx = pdfplumber.open(pdf_source)
