@@ -5,7 +5,7 @@ django-cors-headers==4.6.0
 python-decouple==3.8
 
 # Database (PostgreSQL on Railway, SQLite locally)
-dj-database-url==2.3.0
+dj-database-url==3.1.2
 psycopg2-binary==2.9.10
 
 # File storage (Cloudflare R2 / S3-compatible)
