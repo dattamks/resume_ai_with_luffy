@@ -15,7 +15,7 @@ Usage:
     python manage.py populate_company_entities --apply -v2  # verbose
 """
 from django.core.management.base import BaseCommand
-from django.db.models import Q, Count
+from django.db.models import Q
 from django.utils.text import slugify
 
 
@@ -37,7 +37,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from analyzer.models import DiscoveredJob, Company, CompanyEntity
+        from analyzer.models import Company, CompanyEntity, DiscoveredJob
 
         apply = options['apply']
         default_country = options['country']

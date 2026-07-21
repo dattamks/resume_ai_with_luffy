@@ -8,14 +8,13 @@ Endpoints:
 import logging
 
 from django.db.models import Q
-from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 from accounts.throttles import ReadOnlyThrottle
+
 from .models import Skill
-from .serializers_skills import SkillListSerializer, SkillDetailSerializer
+from .serializers_skills import SkillDetailSerializer, SkillListSerializer
 
 logger = logging.getLogger('analyzer')
 

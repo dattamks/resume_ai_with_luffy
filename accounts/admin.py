@@ -1,10 +1,18 @@
-from django.contrib import admin
-from django.contrib import messages
+from django.contrib import admin, messages
+
 from .models import (
-    UserProfile, NotificationPreference, EmailTemplate, Plan,
-    Wallet, WalletTransaction, CreditCost,
-    RazorpayPayment, RazorpaySubscription, WebhookEvent,
-    ConsentLog, ContactSubmission,
+    ConsentLog,
+    ContactSubmission,
+    CreditCost,
+    EmailTemplate,
+    NotificationPreference,
+    Plan,
+    RazorpayPayment,
+    RazorpaySubscription,
+    UserProfile,
+    Wallet,
+    WalletTransaction,
+    WebhookEvent,
 )
 
 

@@ -1,10 +1,11 @@
 import sys
-from pathlib import Path
-from decouple import config
 from datetime import timedelta
-from django.core.exceptions import ImproperlyConfigured
-from celery.schedules import crontab
+from pathlib import Path
+
 import dj_database_url
+from celery.schedules import crontab
+from decouple import config
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -90,10 +91,14 @@ WSGI_APPLICATION = 'resume_ai.wsgi.application'
 
 # Database — uses DATABASE_URL env var in production (PostgreSQL on Railway),
 # falls back to SQLite for local development.
-# During tests with DEBUG=True, always use SQLite so tests run fast without
-# needing access to a remote database.
+# During tests with DEBUG=True, use SQLite by default so tests run fast without
+# needing a database — UNLESS TEST_ON_POSTGRES=True, which forces the real
+# DATABASE_URL (used by CI to exercise the pgvector/Postgres-specific code
+# paths that SQLite silently skips, while keeping DEBUG=True so prod-only
+# middleware like SECURE_SSL_REDIRECT doesn't break the test client).
 _DATABASE_URL = config('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db.sqlite3"}')
-if TESTING and DEBUG:
+_TEST_ON_POSTGRES = TESTING and config('TEST_ON_POSTGRES', default=False, cast=bool)
+if TESTING and DEBUG and not _TEST_ON_POSTGRES:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -343,6 +348,10 @@ OPENROUTER_BASE_URL = config('OPENROUTER_BASE_URL', default='https://openrouter.
 # rely on the key being absent.
 
 AI_MAX_TOKENS = config('AI_MAX_TOKENS', default=4096, cast=int)
+# Max HTTP attempts per LLM call (transient-error retries). Bounds provider
+# cost: with the provider's single validation retry, one analysis makes at most
+# AI_MAX_ATTEMPTS × 2 total requests.
+AI_MAX_ATTEMPTS = config('AI_MAX_ATTEMPTS', default=2, cast=int)
 MAX_PDF_PAGES = config('MAX_PDF_PAGES', default=50, cast=int)
 
 # Prometheus /metrics protection. When set, scrapers must send

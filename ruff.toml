@@ -1,0 +1,26 @@
+# Ruff configuration — lint the backend.
+target-version = "py312"
+line-length = 120
+
+# Migrations are largely auto-generated; don't lint them.
+extend-exclude = ["*/migrations/*", "staticfiles", "media"]
+
+[lint]
+# Pyflakes (F) catches real bugs (undefined names, unused imports/vars);
+# a focused pycodestyle (E/W) subset catches obvious style errors. We keep the
+# set tight so CI stays a signal, not noise, on an existing codebase.
+select = ["F", "E", "W", "I"]
+ignore = [
+    "E402",  # module-level import not at top — settings.py and lazy imports need it
+    "E501",  # line length handled by `line-length`, don't hard-fail long strings
+    "E741",  # ambiguous variable name (l/I/O) — cosmetic
+    "F841",  # unused local var — low signal (common in tests); F401 stays enforced
+]
+
+[lint.isort]
+known-first-party = ["accounts", "analyzer", "resume_ai"]
+
+[lint.per-file-ignores]
+# __init__.py commonly re-exports; settings assembles config imperatively.
+"__init__.py" = ["F401"]
+"resume_ai/settings.py" = ["F401"]

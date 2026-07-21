@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint, migrations & tests
+    runs-on: ubuntu-latest
+
+    # Postgres+pgvector and Redis are provisioned so migrations are validated
+    # against the REAL engine (the pgvector/JSON/Window paths SQLite can't run).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: resume_ai
+          POSTGRES_USER: resume_ai
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U resume_ai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      SECRET_KEY: ci-secret-not-used-in-prod
+      DEBUG: "True"
+      RAZORPAY_REQUIRED: "False"
+      ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # Validate migrations against real Postgres + pgvector: no missing
+      # migrations (drift) and the full graph applies cleanly (incl. the
+      # pgvector columns and HNSW indexes).
+      - name: Migrations (Postgres + pgvector)
+        env:
+          DATABASE_URL: postgres://resume_ai:postgres@localhost:5432/resume_ai
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          python manage.py makemigrations --check --dry-run
+          python manage.py migrate --noinput
+
+      # Run the full test suite. It is authored for SQLite (the settings force
+      # SQLite for tests). Running on Postgres currently fails during test-DB
+      # setup due to a known pgvector migration issue — tracked in
+      # backend_todo.md; until fixed, tests run on SQLite here.
+      - name: Test suite (SQLite)
+        run: python manage.py test --verbosity=2

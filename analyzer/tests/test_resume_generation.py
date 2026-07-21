@@ -11,20 +11,18 @@ Covers:
   - render_resume_pdf() — integration test from sample JSON
   - render_resume_docx() — integration test from sample JSON
 """
-import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
+from django.test import TestCase
 from rest_framework import status
+from rest_framework.test import APIClient
 
 from accounts.models import Plan, Wallet
-from analyzer.models import ResumeAnalysis, Resume, GeneratedResume, LLMResponse, ResumeTemplate
-
+from analyzer.models import GeneratedResume, ResumeAnalysis, ResumeTemplate
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -542,8 +540,9 @@ class ValidateResumeOutputTests(TestCase):
 
     def test_valid_full_content_passes(self):
         """Full SAMPLE_RESUME_CONTENT should pass validation."""
-        from analyzer.services.resume_generator import validate_resume_output
         import copy
+
+        from analyzer.services.resume_generator import validate_resume_output
         result = validate_resume_output(copy.deepcopy(SAMPLE_RESUME_CONTENT))
         self.assertEqual(result['contact']['name'], 'John Doe')
         self.assertEqual(len(result['experience']), 2)
@@ -994,6 +993,7 @@ class RenderResumePDFTests(TestCase):
     def test_render_with_empty_optional_sections(self):
         """PDF renders when certifications and projects are empty."""
         import copy
+
         from analyzer.services.resume_pdf_renderer import render_resume_pdf
         data = copy.deepcopy(SAMPLE_RESUME_CONTENT)
         data['certifications'] = []
@@ -1005,6 +1005,7 @@ class RenderResumePDFTests(TestCase):
     def test_render_with_special_characters(self):
         """PDF handles special characters (XML entities, unicode) without crashing."""
         import copy
+
         from analyzer.services.resume_pdf_renderer import render_resume_pdf
         data = copy.deepcopy(SAMPLE_RESUME_CONTENT)
         data['contact']['name'] = 'John "O\'Brien" Doe & Partners'
@@ -1020,6 +1021,7 @@ class RenderResumePDFTests(TestCase):
     def test_render_with_many_experience_entries(self):
         """PDF handles many experience entries (multi-page resume)."""
         import copy
+
         from analyzer.services.resume_pdf_renderer import render_resume_pdf
         data = copy.deepcopy(SAMPLE_RESUME_CONTENT)
         data['experience'] = [
@@ -1075,6 +1077,7 @@ class RenderResumeDOCXTests(TestCase):
     def test_render_with_special_characters(self):
         """DOCX handles special characters without crashing."""
         import copy
+
         from analyzer.services.resume_docx_renderer import render_resume_docx
         data = copy.deepcopy(SAMPLE_RESUME_CONTENT)
         data['contact']['name'] = 'José García-López'
@@ -1169,6 +1172,7 @@ class RenderHtmlPdfTests(TestCase):
         """HTML→PDF handles XSS-like chars and unicode safely (Jinja2 auto-escapes)."""
         self._skip_if_no_playwright()
         import copy
+
         from analyzer.services.resume_html_pdf_renderers import render_ats_classic_html_pdf
         data = copy.deepcopy(SAMPLE_RESUME_CONTENT)
         data['contact']['name'] = 'John "O\'Brien" & <Partners>'
@@ -1194,10 +1198,10 @@ class RenderHtmlPdfTests(TestCase):
         self._skip_if_no_playwright()
         from analyzer.services.resume_html_pdf_renderers import (
             render_ats_classic_html_pdf,
-            render_modern_luxe_html_pdf,
-            render_executive_html_pdf,
             render_creative_html_pdf,
+            render_executive_html_pdf,
             render_minimal_html_pdf,
+            render_modern_luxe_html_pdf,
         )
         pdfs = {
             'ats_classic': render_ats_classic_html_pdf(SAMPLE_RESUME_CONTENT),

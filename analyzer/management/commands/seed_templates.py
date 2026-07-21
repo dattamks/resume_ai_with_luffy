@@ -10,7 +10,6 @@ from django.core.management.base import BaseCommand
 
 from analyzer.models import ResumeTemplate
 
-
 TEMPLATES = [
     {
         'slug': 'ats_classic',

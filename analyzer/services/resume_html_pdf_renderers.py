@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 def _render_html_pdf(template_name: str, resume_content: dict) -> bytes:
     """Render a Jinja2 HTML template to PDF via Playwright."""
-    from .resume_template_env import render_template
     from .resume_html_renderer import render_html_to_pdf
+    from .resume_template_env import render_template
 
     html = render_template(template_name, resume_content)
     return render_html_to_pdf(html)

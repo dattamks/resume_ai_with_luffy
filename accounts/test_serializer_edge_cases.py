@@ -12,10 +12,9 @@ Run:  python manage.py test accounts.test_serializer_edge_cases -v2
 """
 
 from django.contrib.auth.models import User
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Register Serializer Edge Cases

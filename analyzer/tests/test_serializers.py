@@ -1,6 +1,6 @@
-from django.test import TestCase
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
 
 from analyzer.serializers import ResumeAnalysisCreateSerializer
 

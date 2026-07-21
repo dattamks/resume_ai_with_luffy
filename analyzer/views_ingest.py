@@ -13,24 +13,29 @@ import hmac
 import logging
 
 from django.conf import settings
+from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from django.db.models import Prefetch
-
 from .models import (
-    Company, CompanyEntity, CompanyCareerPage, CrawlSource, DiscoveredJob,
+    Company,
+    CompanyCareerPage,
+    CompanyEntity,
+    CrawlSource,
     NewsSnippet,
 )
 from .serializers_ingest import (
-    CompanyIngestSerializer, CompanyEntityIngestSerializer,
     CompanyCareerPageIngestSerializer,
+    CompanyEntityIngestSerializer,
+    CompanyEntityReadSerializer,
+    CompanyIngestSerializer,
+    CompanyReadSerializer,
+    CrawlSourceSerializer,
+    CrawlSourceUpdateSerializer,
     DiscoveredJobIngestSerializer,
-    CrawlSourceSerializer, CrawlSourceUpdateSerializer,
-    CompanyReadSerializer, CompanyEntityReadSerializer,
     NewsSnippetIngestSerializer,
 )
 
@@ -239,7 +244,8 @@ class JobIngestView(APIView):
         # Queue for debounced batch processing (new jobs + content-changed re-crawls)
         if getattr(job, '_was_created', False) or getattr(job, '_needs_reembed', False):
             from django.core.cache import cache
-            from .tasks import process_ingested_jobs_task, enqueue_pending_job_id
+
+            from .tasks import enqueue_pending_job_id, process_ingested_jobs_task
 
             # Atomically accumulate job IDs; a debounced task drains them.
             lock_key = 'ingest:pending_job_ids:scheduled'

@@ -13,9 +13,9 @@ Covers:
 import uuid
 from datetime import timedelta
 from decimal import Decimal
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.utils import timezone
 
 from analyzer.models import DiscoveredJob, Skill
@@ -458,9 +458,10 @@ class PipelineHookTests(TestCase):
     @patch('analyzer.services.job_sources.factory.get_job_sources')
     def test_crawl_jobs_daily_calls_enrichment(self, mock_sources, mock_match, mock_enrich):
         """crawl_jobs_daily_task calls _enrich_skills_from_jobs for new jobs."""
-        from analyzer.services.job_sources.base import RawJobListing
-        from analyzer.models import JobAlert, JobSearchProfile, Resume
         from django.contrib.auth.models import User
+
+        from analyzer.models import JobAlert, JobSearchProfile, Resume
+        from analyzer.services.job_sources.base import RawJobListing
 
         mock_enrich.return_value = []
         mock_match.delay.return_value = MagicMock()
@@ -498,6 +499,7 @@ class PipelineHookTests(TestCase):
     def test_sync_analyzed_job_calls_enrichment(self, mock_enrich):
         """sync_analyzed_job_task calls _enrich_skills_from_jobs."""
         from django.contrib.auth.models import User
+
         from analyzer.models import Resume, ResumeAnalysis
 
         mock_enrich.return_value = []

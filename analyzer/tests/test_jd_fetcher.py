@@ -1,4 +1,5 @@
 from unittest.mock import patch
+
 from django.test import TestCase
 
 from analyzer.services.jd_fetcher import JDFetcher

@@ -12,13 +12,11 @@ Template: ats_classic — maximally ATS-safe:
 - Consistent spacing
 """
 import io
-from xml.sax.saxutils import escape as xml_escape
 
 from docx import Document
-from docx.shared import Pt, Inches, Cm, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
-
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Cm, Inches, Pt, RGBColor
 
 # ── Colours ──────────────────────────────────────────────────────────────
 
@@ -79,8 +77,8 @@ def _add_divider(doc):
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(4)
     # Use a border-bottom on the paragraph
-    from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
     pPr = p._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
     bottom = OxmlElement('w:bottom')

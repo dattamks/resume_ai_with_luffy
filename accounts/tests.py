@@ -2,8 +2,8 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
 
 class RegisterViewTests(TestCase):
@@ -475,8 +475,9 @@ class GoogleCompleteViewTests(TestCase):
         self.url = '/api/v1/auth/google/complete/'
 
     def _make_temp_token(self, email='new@gmail.com', ttl=600, **extra):
-        from accounts.views import _sign_temp_token
         import time
+
+        from accounts.views import _sign_temp_token
         payload = {
             'email': email,
             'google_sub': 'google-sub-test',

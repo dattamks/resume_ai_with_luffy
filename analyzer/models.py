@@ -2,9 +2,9 @@ import hashlib
 import uuid
 
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.db import models
 from django.db.models import Q
-from django.contrib.auth.models import User
 from django.utils import timezone
 
 # pgvector — only enabled when BOTH the Python package is available
@@ -13,7 +13,7 @@ _HAS_PGVECTOR = False
 _db_engine = settings.DATABASES.get('default', {}).get('ENGINE', '')
 if 'postgresql' in _db_engine:
     try:
-        from pgvector.django import VectorField, HnswIndex
+        from pgvector.django import VectorField
         _HAS_PGVECTOR = True
     except ImportError:
         pass

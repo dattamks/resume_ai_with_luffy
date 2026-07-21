@@ -12,7 +12,6 @@ from rest_framework.test import APIClient
 
 from analyzer.models import NewsSnippet
 
-
 CRAWLER_KEY = 'test-crawler-key-12345'
 
 

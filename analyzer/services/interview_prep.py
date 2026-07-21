@@ -13,7 +13,6 @@ import re
 import time
 
 from django.conf import settings
-from django.db.models import Q
 
 logger = logging.getLogger('analyzer')
 
@@ -177,8 +176,8 @@ def _generate_tips(analysis, weak_sections, missing_keywords) -> list:
 
 _MD_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)\n?\s*```$', re.DOTALL)
 
-from .ai_providers.factory import get_openai_client, llm_retry
 from .ai_providers.base import check_prompt_length
+from .ai_providers.factory import get_openai_client, llm_retry
 from .ai_providers.json_repair import repair_json
 
 INTERVIEW_PREP_SYSTEM_PROMPT = (

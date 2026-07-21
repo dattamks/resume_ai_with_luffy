@@ -54,7 +54,7 @@ def process_resume_upload_task(self, resume_id):
     Triggered automatically on resume upload (for new resumes only).
     Pipeline: PDF extract → merged LLM call → save → chain embedding.
     """
-    from .models import Resume, JobSearchProfile
+    from .models import JobSearchProfile, Resume
     from .services.pdf_extractor import PDFExtractor
     from .services.resume_understanding import understand_resume
 
@@ -202,7 +202,7 @@ def run_analysis_task(self, analysis_id, user_id):
 
         # Prometheus: record success duration
         try:
-            from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
+            from resume_ai.metrics import ACTIVE_ANALYSES, ANALYSIS_DURATION, ANALYSIS_TOTAL
             ANALYSIS_DURATION.labels(status='done').observe(_time.monotonic() - _task_start)
             ANALYSIS_TOTAL.labels(status='done').inc()
             ACTIVE_ANALYSES.dec()
@@ -225,7 +225,7 @@ def run_analysis_task(self, analysis_id, user_id):
         logger.warning('Analysis failed (user=%s): %s', user_id, exc)
         # Prometheus: record failure
         try:
-            from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
+            from resume_ai.metrics import ACTIVE_ANALYSES, ANALYSIS_DURATION, ANALYSIS_TOTAL
             ANALYSIS_DURATION.labels(status='failed').observe(_time.monotonic() - _task_start)
             ANALYSIS_TOTAL.labels(status='failed').inc()
             ACTIVE_ANALYSES.dec()
@@ -268,7 +268,7 @@ def run_analysis_task(self, analysis_id, user_id):
 
         # Prometheus: record final failure
         try:
-            from resume_ai.metrics import ANALYSIS_DURATION, ANALYSIS_TOTAL, ACTIVE_ANALYSES
+            from resume_ai.metrics import ACTIVE_ANALYSES, ANALYSIS_DURATION, ANALYSIS_TOTAL
             ANALYSIS_DURATION.labels(status='failed').observe(_time.monotonic() - _task_start)
             ANALYSIS_TOTAL.labels(status='failed').inc()
             ACTIVE_ANALYSES.dec()
@@ -299,8 +299,9 @@ def _refund_analysis_credits(analysis):
         if not analysis.credits_deducted:
             return
 
-        from accounts.services import refund_credits
         from django.contrib.auth.models import User
+
+        from accounts.services import refund_credits
 
         user = User.objects.get(id=analysis.user_id)
         refund_credits(
@@ -378,7 +379,7 @@ def sync_analyzed_job_task(self, analysis_id):
     For text/form-based JDs we still create a local DiscoveredJob if
     we have enough metadata (title + company).
     """
-    from .models import ResumeAnalysis, DiscoveredJob
+    from .models import DiscoveredJob, ResumeAnalysis
 
     try:
         analysis = ResumeAnalysis.objects.get(id=analysis_id)
@@ -560,6 +561,7 @@ def cleanup_stale_analyses():
     Also refunds credits for these stale analyses.
     """
     from django.db import transaction
+
     from .models import ResumeAnalysis
 
     cutoff = timezone.now() - timezone.timedelta(minutes=30)
@@ -742,8 +744,9 @@ def _refund_generation_credits(gen):
         if not gen.credits_deducted:
             return
 
-        from accounts.services import refund_credits
         from django.contrib.auth.models import User
+
+        from accounts.services import refund_credits
 
         user = User.objects.get(id=gen.user_id)
         refund_credits(
@@ -777,7 +780,8 @@ def _create_resume_from_generated(gen, resume_content, file_bytes, ext):
     6. Chain embedding computation
     """
     import hashlib
-    from .models import Resume, JobSearchProfile, ResumeVersion
+
+    from .models import JobSearchProfile, Resume, ResumeVersion
     from .services.template_registry import get_renderer
 
     user = gen.user
@@ -1086,8 +1090,9 @@ def _refund_builder_credits(gen):
         if not gen.credits_deducted:
             return
 
-        from accounts.services import refund_credits
         from django.contrib.auth.models import User
+
+        from accounts.services import refund_credits
 
         user = User.objects.get(id=gen.user_id)
         refund_credits(
@@ -1124,7 +1129,7 @@ def extract_job_search_profile_task(self, resume_id):
     Triggered automatically when a JobAlert is created.
     Saves (or updates) the JobSearchProfile OneToOne record for the resume.
     """
-    from .models import Resume, JobSearchProfile
+    from .models import JobSearchProfile, Resume
 
     logger.info('Job search profile extraction started: resume_id=%s', resume_id)
 
@@ -1196,8 +1201,8 @@ def match_jobs_task(self, job_alert_id, discovered_job_ids):
     Phase E: Uses embedding matcher instead of LLM-based job_matcher.
     """
     import time as _time
-    from django.utils import timezone
-    from .models import JobAlert, DiscoveredJob, JobMatch, JobAlertRun
+
+    from .models import DiscoveredJob, JobAlert, JobAlertRun, JobMatch
     from .services.embedding_matcher import match_jobs_for_alert
 
     logger.info('match_jobs_task: alert=%s jobs=%d', job_alert_id, len(discovered_job_ids))
@@ -1362,7 +1367,7 @@ def compute_resume_embedding_task(self, resume_id):
     - After resume upload (if JobSearchProfile exists)
     - After extract_job_search_profile_task completes
     """
-    from .models import Resume, JobSearchProfile
+    from .models import JobSearchProfile, Resume
 
     logger.info('Computing resume embedding: resume_id=%s', resume_id)
 
@@ -1415,11 +1420,13 @@ def crawl_jobs_daily_task():
     This replaces the per-alert discover_jobs_task from Phase 11.
     """
     import time as _time
+
     from django.utils import timezone
     from django.utils.dateparse import parse_datetime
-    from .models import JobAlert, DiscoveredJob, JobSearchProfile, CrawlSource
-    from .services.job_sources.factory import get_job_sources
+
+    from .models import CrawlSource, DiscoveredJob, JobAlert, JobSearchProfile
     from .services.embedding_service import compute_job_embedding
+    from .services.job_sources.factory import get_job_sources
 
     start = _time.monotonic()
     now = timezone.now()
@@ -1571,16 +1578,24 @@ def crawl_jobs_for_alert_task(alert_id):
     5. Chain email notification
     """
     import time as _time
+
     from django.utils import timezone
     from django.utils.dateparse import parse_datetime
+
+    from accounts.services import InsufficientCreditsError, deduct_credits, refund_credits
+
     from .models import (
-        JobAlert, JobAlertRun, DiscoveredJob, JobMatch, JobSearchProfile,
-        SentAlert, Notification,
+        DiscoveredJob,
+        JobAlert,
+        JobAlertRun,
+        JobMatch,
+        JobSearchProfile,
+        Notification,
+        SentAlert,
     )
-    from .services.job_sources.factory import get_job_sources
-    from .services.embedding_service import compute_job_embedding
     from .services.embedding_matcher import match_jobs_for_alert
-    from accounts.services import deduct_credits, refund_credits, InsufficientCreditsError
+    from .services.embedding_service import compute_job_embedding
+    from .services.job_sources.factory import get_job_sources
 
     logger.info('crawl_jobs_for_alert_task: alert=%s', alert_id)
 
@@ -1870,6 +1885,7 @@ def process_ingested_jobs_task(self, job_ids):
     but never embedded or matched against user profiles.
     """
     import time as _time
+
     from .models import DiscoveredJob
 
     # If job_ids is None, drain the Redis queue (debounced single-job ingests)
@@ -1992,10 +2008,16 @@ def match_all_alerts_task():
     This replaces per-alert match_jobs_task chaining from Phase 11.
     """
     import time as _time
+
     from django.utils import timezone
+
     from .models import (
-        JobAlert, DiscoveredJob, JobMatch, JobAlertRun,
-        SentAlert, Notification,
+        DiscoveredJob,
+        JobAlert,
+        JobAlertRun,
+        JobMatch,
+        Notification,
+        SentAlert,
     )
     from .services.embedding_matcher import match_jobs_for_alert
 
@@ -2114,6 +2136,7 @@ def send_weekly_digest_task():
     Respects user notification preferences (newsletters_email).
     """
     from django.contrib.auth.models import User
+
     from .models import ResumeAnalysis
 
     one_week_ago = timezone.now() - timezone.timedelta(days=7)
@@ -2246,6 +2269,7 @@ def generate_interview_prep_task(self, prep_id, user_id):
         prep.status = InterviewPrep.STATUS_FAILED
         prep.error_message = str(exc)
         prep.save(update_fields=['status', 'error_message'])
+        _refund_interview_prep_credits(prep, user_id)
     except Exception as exc:
         logger.exception('Unexpected error in interview prep: id=%s', prep.id)
         prep.status = InterviewPrep.STATUS_FAILED
@@ -2254,6 +2278,27 @@ def generate_interview_prep_task(self, prep_id, user_id):
         if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)
+        _refund_interview_prep_credits(prep, user_id)
+
+
+def _refund_interview_prep_credits(prep, user_id):
+    """Refund interview-prep (LLM) credits on failure (idempotent per prep id)."""
+    try:
+        if not getattr(prep, 'credits_deducted', False):
+            return
+        from django.contrib.auth.models import User
+
+        from accounts.services import refund_credits
+        user = User.objects.get(id=user_id)
+        refund_credits(
+            user, 'interview_prep_ai',
+            description=f'Refund: interview prep #{prep.id} failed',
+            reference_id=str(prep.id),
+        )
+        prep.credits_deducted = False
+        prep.save(update_fields=['credits_deducted'])
+    except Exception:
+        logger.exception('Failed to refund interview prep credits: id=%s', prep.id)
 
 
 # ── Cover Letter Generation ─────────────────────────────────────────────────
@@ -2351,8 +2396,9 @@ def _refund_cover_letter_credits(cover_letter, user_id):
     try:
         if not getattr(cover_letter, 'credits_deducted', False):
             return
-        from accounts.services import refund_credits
         from django.contrib.auth.models import User
+
+        from accounts.services import refund_credits
         user = User.objects.get(id=user_id)
         refund_credits(
             user, 'cover_letter',
@@ -2536,13 +2582,12 @@ def enrich_new_skills_task(self, skill_names: list[str]):
     Called automatically from the job ingestion pipeline when new skills
     are discovered.  Processes skills in a single LLM batch call.
     """
-    import json
     import time
 
-    from .models import Skill
     from .management.commands.aggregate_skills import (
         _generate_descriptions_batch,
     )
+    from .models import Skill
 
     if not skill_names:
         return
@@ -2630,7 +2675,6 @@ def _enrich_skills_from_jobs(jobs, source_label='pipeline'):
 # We need Q imported for the task above
 from django.db.models import Q as models_Q  # noqa: E402
 
-
 # ── Admin Daily Digest ───────────────────────────────────────────────────────
 
 
@@ -2641,6 +2685,7 @@ def send_admin_digest_task():
     Compute 40+ platform metrics and email them to ADMIN_DIGEST_EMAILS.
     """
     from accounts.email_utils import send_templated_email
+
     from .services.admin_digest import compute_digest_metrics
 
     recipients = getattr(settings, 'ADMIN_DIGEST_EMAILS', [])

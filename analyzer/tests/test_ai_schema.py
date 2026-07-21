@@ -3,9 +3,10 @@ import copy
 from django.test import TestCase
 
 from analyzer.services.ai_providers.base import (
-    validate_ai_response, coerce_ai_response, LLMValidationError,
+    LLMValidationError,
+    coerce_ai_response,
+    validate_ai_response,
 )
-
 
 VALID_RESPONSE = {
     'job_metadata': {

@@ -11,9 +11,9 @@ class AnalyzerConfig(AppConfig):
 
     def ready(self):
         """Validate required settings at startup so misconfiguration is caught early."""
-        import analyzer.signals  # noqa: F401 — register signal handlers
-
         from django.conf import settings
+
+        import analyzer.signals  # noqa: F401 — register signal handlers
 
         if not getattr(settings, 'OPENROUTER_API_KEY', ''):
             logger.warning(

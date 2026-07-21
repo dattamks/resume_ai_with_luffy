@@ -6,46 +6,66 @@ from django.db import models
 from django.db.models import Avg, Count, Prefetch, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
-from rest_framework import status, filters
+from rest_framework import filters, status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle, WriteThrottle
 from accounts.permissions import IsEmailVerified
 from accounts.services import (
-    deduct_credits, refund_credits, check_balance,
-    can_use_feature, InsufficientCreditsError,
+    InsufficientCreditsError,
+    can_use_feature,
+    deduct_credits,
+    refund_credits,
 )
-from .models import ResumeAnalysis, Resume, GeneratedResume, JobAlert, JobAlertRun, JobMatch, DiscoveredJob, Notification, ResumeVersion, InterviewPrep, CoverLetter, ResumeTemplate
+from accounts.throttles import AnalyzeThrottle, ReadOnlyThrottle, WriteThrottle
+
+from .models import (
+    CoverLetter,
+    GeneratedResume,
+    InterviewPrep,
+    JobAlert,
+    JobAlertRun,
+    JobMatch,
+    Notification,
+    Resume,
+    ResumeAnalysis,
+    ResumeTemplate,
+    ResumeVersion,
+)
 from .serializers import (
+    CoverLetterCreateSerializer,
+    CoverLetterSerializer,
+    GeneratedResumeCreateSerializer,
+    GeneratedResumeRenameSerializer,
+    GeneratedResumeSerializer,
+    InterviewPrepSerializer,
+    JobAlertCreateSerializer,
+    JobAlertSerializer,
+    JobAlertUpdateSerializer,
+    JobMatchFeedbackSerializer,
+    JobMatchSerializer,
+    NotificationMarkReadSerializer,
+    NotificationSerializer,
     ResumeAnalysisCreateSerializer,
     ResumeAnalysisDetailSerializer,
     ResumeAnalysisListSerializer,
-    ResumeSerializer,
     ResumeRenameSerializer,
-    SharedAnalysisSerializer,
-    GeneratedResumeSerializer,
-    GeneratedResumeCreateSerializer,
-    GeneratedResumeRenameSerializer,
-    JobAlertSerializer,
-    JobAlertCreateSerializer,
-    JobAlertUpdateSerializer,
-    JobMatchSerializer,
-    JobMatchFeedbackSerializer,
-    JobAlertRunSerializer,
-    NotificationSerializer,
-    NotificationMarkReadSerializer,
-    ResumeVersionSerializer,
-    InterviewPrepSerializer,
-    InterviewPrepCreateSerializer,
-    CoverLetterSerializer,
-    CoverLetterCreateSerializer,
+    ResumeSerializer,
     ResumeTemplateSerializer,
+    ResumeVersionSerializer,
+    SharedAnalysisSerializer,
 )
-from .tasks import run_analysis_task, generate_improved_resume_task, extract_job_search_profile_task, match_jobs_task, generate_interview_prep_task, generate_cover_letter_task, process_resume_upload_task
+from .tasks import (
+    extract_job_search_profile_task,
+    generate_cover_letter_task,
+    generate_improved_resume_task,
+    generate_interview_prep_task,
+    process_resume_upload_task,
+    run_analysis_task,
+)
 
 logger = logging.getLogger('analyzer')
 
@@ -637,9 +657,11 @@ class DashboardStatsView(APIView):
         if cached:
             return Response(cached)
 
-        from accounts.models import WalletTransaction
-        from .models import UserActivity, ResumeChat, LLMResponse
         from collections import Counter
+
+        from accounts.models import WalletTransaction
+
+        from .models import LLMResponse, ResumeChat, UserActivity
 
         # ───── Default resume scoping ──────────────────────────────────
         default_resume = Resume.get_default_for_user(user)
@@ -1680,6 +1702,7 @@ class AnalysisExportJSONView(APIView):
         serializer = ResumeAnalysisDetailSerializer(analysis, context={'request': request})
 
         import json
+
         from django.http import HttpResponse
         json_bytes = json.dumps(serializer.data, indent=2, default=str).encode('utf-8')
 
@@ -1705,8 +1728,10 @@ class AccountDataExportView(APIView):
 
     def get(self, request):
         import json
+
         from django.http import HttpResponse
-        from accounts.models import WalletTransaction, ConsentLog
+
+        from accounts.models import ConsentLog, WalletTransaction
 
         user = request.user
 
@@ -2117,8 +2142,8 @@ class InterviewPrepView(APIView):
             )
 
         # Phase C: Try DB question bank first (instant, no LLM)
-        from .services.interview_prep import generate_interview_prep_from_db
         from .models import InterviewQuestion
+        from .services.interview_prep import generate_interview_prep_from_db
         if InterviewQuestion.objects.filter(is_active=True).exists():
             result = generate_interview_prep_from_db(analysis)
             prep = InterviewPrep.objects.create(
@@ -2138,23 +2163,44 @@ class InterviewPrepView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Fallback: no questions in DB → use legacy LLM path (async)
-        prep = InterviewPrep.objects.create(
-            analysis=analysis,
-            user=request.user,
-            status=InterviewPrep.STATUS_PROCESSING,
-            credits_deducted=False,
-        )
+        # Fallback: no questions in DB → LLM path (async). This path DOES make
+        # an LLM call, so it is charged (the question-bank path above is free).
+        try:
+            credit_result = deduct_credits(
+                request.user, 'interview_prep_ai',
+                description=f'Interview prep (LLM) for analysis #{analysis.id}',
+            )
+        except InsufficientCreditsError as e:
+            return Response(
+                {'detail': 'Insufficient credits.', 'balance': e.balance, 'cost': e.cost},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
-        generate_interview_prep_task.delay(str(prep.id), request.user.id)
+        try:
+            prep = InterviewPrep.objects.create(
+                analysis=analysis,
+                user=request.user,
+                status=InterviewPrep.STATUS_PROCESSING,
+                credits_deducted=bool(credit_result['cost']),
+            )
 
-        from .models import UserActivity
-        UserActivity.record(request.user, UserActivity.ACTION_INTERVIEW_PREP)
+            generate_interview_prep_task.delay(str(prep.id), request.user.id)
 
-        return Response({
-            'id': str(prep.id),
-            'status': prep.status,
-        }, status=status.HTTP_202_ACCEPTED)
+            from .models import UserActivity
+            UserActivity.record(request.user, UserActivity.ACTION_INTERVIEW_PREP)
+
+            return Response({
+                'id': str(prep.id),
+                'status': prep.status,
+                'credits_used': credit_result['cost'],
+                'balance': credit_result['balance_after'],
+            }, status=status.HTTP_202_ACCEPTED)
+        except Exception:
+            refund_credits(
+                request.user, 'interview_prep_ai',
+                description='Refund: interview prep creation failed',
+            )
+            raise
 
 
 class InterviewPrepStatusView(APIView):

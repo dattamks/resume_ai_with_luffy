@@ -11,19 +11,22 @@ Covers:
 """
 import uuid
 from datetime import timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.utils import timezone
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
 from accounts.models import Plan, Wallet
 from analyzer.models import (
-    Resume, JobAlert, DiscoveredJob, JobMatch,
-    JobAlertRun, JobSearchProfile,
+    DiscoveredJob,
+    JobAlert,
+    JobMatch,
+    JobSearchProfile,
+    Resume,
 )
 
 

@@ -18,7 +18,7 @@ Usage:
     PAYMENT_FAILURES.labels(reason='verification_failed').inc()
 """
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # ── Analysis Pipeline ────────────────────────────────────────────────────────
 

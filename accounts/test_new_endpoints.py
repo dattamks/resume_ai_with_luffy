@@ -18,8 +18,8 @@ from django.contrib.auth.tokens import default_token_generator
 from django.test import TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
 
 def _auth(client, username='testuser', email='test@example.com', password='StrongPass123!'):

@@ -5,7 +5,7 @@ import time
 
 from django.conf import settings
 
-from .base import AIProvider, SYSTEM_PROMPT, validate_ai_response, coerce_ai_response, LLMValidationError
+from .base import SYSTEM_PROMPT, AIProvider, LLMValidationError, coerce_ai_response, validate_ai_response
 from .json_repair import repair_json
 
 logger = logging.getLogger('analyzer')

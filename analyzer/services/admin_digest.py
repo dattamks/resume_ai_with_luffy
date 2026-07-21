@@ -6,12 +6,11 @@ Called by the `send_admin_digest_task` Celery task twice daily (9 AM + 11 PM IST
 """
 
 import logging
-from datetime import timedelta
 from collections import Counter
+from datetime import timedelta
 
-from django.conf import settings
 from django.contrib.auth.models import User
-from django.db.models import Avg, Count, F, Q, Sum
+from django.db.models import Avg, Count, Sum
 from django.utils import timezone
 
 logger = logging.getLogger('analyzer')
@@ -35,9 +34,19 @@ def compute_digest_metrics() -> dict:
         users, revenue, credits, analyses, resumes,
         llm, job_alerts, features, news, notifications, infra
     """
+    from accounts.models import (
+        ContactSubmission,
+        RazorpayPayment,
+        RazorpaySubscription,
+        UserProfile,
+        Wallet,
+        WalletTransaction,
+        WebhookEvent,
+    )
     from analyzer.models import (
         CoverLetter,
         DiscoveredJob,
+        GeneratedResume,
         InterviewPrep,
         JobAlert,
         JobAlertRun,
@@ -50,16 +59,6 @@ def compute_digest_metrics() -> dict:
         ResumeChat,
         SentAlert,
         UserActivity,
-        GeneratedResume,
-    )
-    from accounts.models import (
-        ContactSubmission,
-        RazorpayPayment,
-        RazorpaySubscription,
-        UserProfile,
-        Wallet,
-        WalletTransaction,
-        WebhookEvent,
     )
 
     now = timezone.now()

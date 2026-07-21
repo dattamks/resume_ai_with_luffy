@@ -15,10 +15,10 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
-from analyzer.models import Resume, GeneratedResume, ResumeAnalysis
+from analyzer.models import GeneratedResume, Resume
 
 
 def _ensure_free_plan():

@@ -14,7 +14,6 @@ import logging
 import re
 
 from django.conf import settings
-from django.db.models import F
 
 logger = logging.getLogger('analyzer')
 

@@ -8,14 +8,19 @@ All endpoints live under ``/api/v1/ingest/`` and require the
 from django.urls import path
 
 from .views_ingest import (
-    CompanyIngestView, CompanyBulkIngestView,
-    CompanyEntityIngestView, CompanyEntityBulkIngestView,
     CareerPageIngestView,
-    JobIngestView, JobBulkIngestView,
-    CrawlSourceListView, CrawlSourceUpdateView,
+    CompanyBulkIngestView,
+    CompanyEntityBulkIngestView,
+    CompanyEntityIngestView,
+    CompanyIngestView,
+    CrawlSourceListView,
+    CrawlSourceUpdateView,
     IngestPingView,
-    NewsSnippetIngestView, NewsSnippetBulkIngestView,
+    JobBulkIngestView,
+    JobIngestView,
+    NewsSnippetBulkIngestView,
     NewsSnippetDeactivateView,
+    NewsSnippetIngestView,
 )
 
 urlpatterns = [

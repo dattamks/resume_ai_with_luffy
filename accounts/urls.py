@@ -2,18 +2,37 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
-    RegisterView, LoginView, LogoutView, LogoutAllDevicesView, MeView, ChangePasswordView,
-    NotificationPreferenceView, ForgotPasswordView, ResetPasswordView,
-    WalletView, WalletTransactionListView, WalletTopUpView, WalletTransactionExportView,
-    PlanListView, PlanSubscribeView,
-    GoogleLoginView, GoogleCompleteView,
-    AvatarUploadView, ContactSubmissionView,
-    VerifyEmailView, ResendVerificationEmailView,
+    AvatarUploadView,
+    ChangePasswordView,
+    ContactSubmissionView,
+    ForgotPasswordView,
+    GoogleCompleteView,
+    GoogleLoginView,
+    LoginView,
+    LogoutAllDevicesView,
+    LogoutView,
+    MeView,
+    NotificationPreferenceView,
+    PlanListView,
+    PlanSubscribeView,
+    RegisterView,
+    ResendVerificationEmailView,
+    ResetPasswordView,
+    VerifyEmailView,
+    WalletTopUpView,
+    WalletTransactionExportView,
+    WalletTransactionListView,
+    WalletView,
 )
 from .views_payments import (
-    CreateSubscriptionView, VerifySubscriptionView, CancelSubscriptionView,
-    SubscriptionStatusView, CreateTopUpOrderView, VerifyTopUpView,
-    RazorpayWebhookView, PaymentHistoryView,
+    CancelSubscriptionView,
+    CreateSubscriptionView,
+    CreateTopUpOrderView,
+    PaymentHistoryView,
+    RazorpayWebhookView,
+    SubscriptionStatusView,
+    VerifySubscriptionView,
+    VerifyTopUpView,
 )
 
 urlpatterns = [

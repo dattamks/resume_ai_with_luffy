@@ -7,8 +7,8 @@ Tests for profile management endpoints:
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
 
 
 def _auth(client, username='profuser', password='StrongPass123!'):
@@ -134,7 +134,7 @@ class DeleteAccountTests(TestCase):
 
     def test_delete_cascades_analyses(self):
         """Analyses are soft-deleted, then user cascade-deletes everything."""
-        from analyzer.models import ResumeAnalysis, Resume
+        from analyzer.models import Resume, ResumeAnalysis
         resume, _ = Resume.get_or_create_from_upload(
             self.user,
             SimpleUploadedFile('r.pdf', b'%PDF-1.4 fake', content_type='application/pdf'),

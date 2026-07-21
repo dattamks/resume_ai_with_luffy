@@ -8,10 +8,13 @@ Authentication is via a shared ``X-Crawler-Key`` header.
 from rest_framework import serializers
 
 from .models import (
-    Company, CompanyEntity, CompanyCareerPage, CrawlSource,
-    DiscoveredJob, UserCompanyFollow, NewsSnippet,
+    Company,
+    CompanyCareerPage,
+    CompanyEntity,
+    CrawlSource,
+    DiscoveredJob,
+    NewsSnippet,
 )
-
 
 # ── Company Ingest ───────────────────────────────────────────────────────────
 
@@ -387,7 +390,7 @@ class NewsSnippetIngestSerializer(serializers.Serializer):
     is_active = serializers.BooleanField(required=False, default=True)
 
     def create(self, validated_data):
-        from django.db import transaction, IntegrityError
+        from django.db import IntegrityError, transaction
 
         snippet_uuid = validated_data.pop('uuid')
         source_url = validated_data.get('source_url')

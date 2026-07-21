@@ -1,14 +1,14 @@
 import hmac
 
-from django.contrib import admin
-from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.contrib import admin
 from django.http import HttpResponseForbidden
+from django.urls import include, path
 
-from analyzer.views_health import health_check
-from analyzer.urls_feed import feed_urlpatterns, dashboard_extra_urlpatterns
+from analyzer.urls_feed import dashboard_extra_urlpatterns, feed_urlpatterns
 from analyzer.urls_skills import skills_urlpatterns
+from analyzer.views_health import health_check
 
 
 def metrics_view(request):

@@ -12,19 +12,21 @@ Covers:
   - Active session limit (5)
 """
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
 from rest_framework import status as http_status
+from rest_framework.test import APIClient
 
-from accounts.models import Plan, Wallet, CreditCost
+from accounts.models import CreditCost, Plan, Wallet
 from analyzer.models import (
-    ResumeChat, ResumeChatMessage, GeneratedResume,
-    Resume, ResumeTemplate,
+    GeneratedResume,
+    Resume,
+    ResumeChat,
+    ResumeChatMessage,
+    ResumeTemplate,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -231,7 +233,7 @@ class ProcessStepServiceTest(TestCase):
         self.user = _create_user()
 
     def test_contact_step_update_and_continue(self):
-        from analyzer.services.resume_chat_service import start_session, process_step
+        from analyzer.services.resume_chat_service import process_step, start_session
         chat = start_session(self.user, 'scratch')
         # chat is now at STEP_CONTACT
         self.assertEqual(chat.current_step, ResumeChat.STEP_CONTACT)
@@ -254,7 +256,7 @@ class ProcessStepServiceTest(TestCase):
         self.assertEqual(chat.current_step, ResumeChat.STEP_TARGET_ROLE)
 
     def test_back_action(self):
-        from analyzer.services.resume_chat_service import start_session, process_step
+        from analyzer.services.resume_chat_service import process_step, start_session
         chat = start_session(self.user, 'scratch')
         # Move forward to education step manually
         chat.current_step = ResumeChat.STEP_EDUCATION

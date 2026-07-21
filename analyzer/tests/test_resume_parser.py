@@ -12,18 +12,16 @@ functionality merged into resume_understanding.py.
 """
 import copy
 import uuid
-from unittest.mock import patch, MagicMock
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
+from django.test import TestCase
 from rest_framework import status
+from rest_framework.test import APIClient
 
 from accounts.models import Plan, Wallet
-from analyzer.models import ResumeAnalysis, Resume, GeneratedResume, LLMResponse
-from analyzer.services.resume_chat_service import _prefill_from_resume, _empty_resume_data
-
+from analyzer.models import GeneratedResume, Resume, ResumeAnalysis
+from analyzer.services.resume_chat_service import _empty_resume_data, _prefill_from_resume
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -204,10 +202,9 @@ class PipelinePhaseB_Tests(TestCase):
         resume.parsed_content = copy.deepcopy(SAMPLE_PARSED_CONTENT)
         resume.save(update_fields=['parsed_content'])
 
-        # Simulate step_parse_result copying parsed_content
-        from analyzer.services.analyzer import ResumeAnalyzer
-        analyzer = ResumeAnalyzer()
-        # _step_parse_result now copies parsed_content from Resume
+        # Simulate _step_parse_result copying parsed_content from the Resume.
+        # (No ResumeAnalyzer construction needed — that required an API key and
+        # was unused; the copy logic under test is exercised directly below.)
         if not analysis.parsed_content and analysis.resume:
             resume_obj = analysis.resume
             if resume_obj.parsed_content:

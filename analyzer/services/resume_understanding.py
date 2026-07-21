@@ -20,8 +20,8 @@ import uuid
 
 from django.conf import settings
 
-from .ai_providers.factory import get_openai_client, llm_retry
 from .ai_providers.base import check_prompt_length
+from .ai_providers.factory import get_openai_client, llm_retry
 from .ai_providers.json_repair import repair_json
 from .resume_generator import validate_resume_output
 

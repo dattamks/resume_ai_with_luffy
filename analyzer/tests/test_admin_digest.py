@@ -6,8 +6,7 @@ Tests for the Admin Daily Digest feature:
   - EmailTemplate seeding
 """
 import uuid
-from datetime import timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -124,7 +123,7 @@ class DigestMetricsTests(TestCase):
 
     def test_analyses_counted(self):
         """Analyses created in last 24h are counted."""
-        from analyzer.models import ResumeAnalysis, Resume
+        from analyzer.models import Resume, ResumeAnalysis
         from analyzer.services.admin_digest import compute_digest_metrics
 
         resume = Resume.objects.create(user=self.user, file='test.pdf')

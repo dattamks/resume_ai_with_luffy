@@ -2,11 +2,11 @@ import logging
 import time
 from decimal import Decimal
 
-from ..models import ResumeAnalysis, LLMResponse
-from .pdf_extractor import PDFExtractor
-from .jd_fetcher import JDFetcher
-from .ai_providers.factory import get_ai_provider
+from ..models import LLMResponse, ResumeAnalysis
 from .ai_providers.base import LLMValidationError
+from .ai_providers.factory import get_ai_provider
+from .jd_fetcher import JDFetcher
+from .pdf_extractor import PDFExtractor
 
 logger = logging.getLogger('analyzer')
 

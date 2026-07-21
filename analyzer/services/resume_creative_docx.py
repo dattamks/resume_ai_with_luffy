@@ -9,10 +9,9 @@ Template: creative — colourful, sidebar-inspired, sans-serif.
 import io
 
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
-
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Cm, Inches, Pt, RGBColor
 
 # ── Colours ──────────────────────────────────────────────────────────────
 
@@ -55,8 +54,8 @@ def _setup_styles(doc):
 
 def _add_purple_bar(doc):
     """Add a purple bottom border to simulate section divider."""
-    from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(4)

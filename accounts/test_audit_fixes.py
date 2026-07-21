@@ -16,14 +16,16 @@ from unittest.mock import patch
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.utils import timezone
-from rest_framework.test import APIClient
 from rest_framework import status
 
 from accounts.models import (
-    Plan, Wallet, WalletTransaction, RazorpaySubscription, RazorpayPayment,
+    RazorpayPayment,
+    RazorpaySubscription,
+    Wallet,
+    WalletTransaction,
     WebhookEvent,
 )
-from accounts.services import refund_credits, add_credits
+from accounts.services import add_credits, refund_credits
 from accounts.test_payments import PaymentTestMixin
 
 
