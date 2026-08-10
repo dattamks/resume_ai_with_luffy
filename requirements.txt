@@ -13,7 +13,7 @@ django-storages[boto3]==1.14.4
 boto3==1.36.14
 
 # Cache (Redis on Railway, in-memory locally)
-django-redis==5.4.0
+django-redis==7.0.0
 
 # WSGI server
 gunicorn==23.0.0
