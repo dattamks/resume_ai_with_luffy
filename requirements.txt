@@ -60,7 +60,7 @@ pdfminer.six==20231228
 pypdfium2==5.5.0
 cffi==2.0.0
 pycparser==3.0
-cryptography==46.0.5
+cryptography==49.0.0
 PyJWT==2.11.0
 sqlparse==0.5.5
 asgiref==3.11.1
